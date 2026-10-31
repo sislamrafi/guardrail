@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Ico } from '../icons';
 import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
+import { previewSplash } from '../splash';
 import { THEMES, useTheme } from '../theme';
+import { SPLASH_GAP_HOURS } from '../theme-boot';
 
 export function SettingsPage() {
   const { data, error } = useStore();
@@ -24,6 +26,7 @@ export function SettingsPage() {
           <Field label="Theme">
             <Seg value={theme} label="Theme" onChange={setTheme} options={THEMES.map(([v, l]) => [v, l] as [typeof v, string])} />
           </Field>
+          <SplashSettings />
         </Section>
       </section>
       <section id="sec-general">
@@ -105,5 +108,65 @@ export function SettingsPage() {
         </Section>
       </section>
     </Page>
+  );
+}
+
+const local = {
+  get: (k: string) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k: string, v: string) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      /* storage unavailable */
+    }
+  },
+};
+
+/** The splash screen shown on the first load, or after a gap: on/off and the gap, per browser. */
+function SplashSettings() {
+  const [on, setOn] = useState(true);
+  const [gap, setGap] = useState(SPLASH_GAP_HOURS);
+  useEffect(() => {
+    setOn(local.get('cx-splash-off') !== '1');
+    setGap(Number(local.get('cx-splash-gap-h')) || SPLASH_GAP_HOURS);
+  }, []);
+  return (
+    <Field label="Splash screen" hint={on ? `A 5–10 second GuardRail loading screen when the console opens after ${gap} hours or more away.` : 'Off in this browser.'}>
+      <div className="cx-form-row center">
+        <Switch
+          on={on}
+          label="Show the splash screen"
+          onChange={(v) => {
+            setOn(v);
+            local.set('cx-splash-off', v ? '0' : '1');
+          }}
+        />
+        <select
+          className="cx-input"
+          aria-label="Show it after"
+          disabled={!on}
+          value={gap}
+          onChange={(e) => {
+            setGap(Number(e.target.value));
+            local.set('cx-splash-gap-h', e.target.value);
+          }}
+        >
+          {[1, 3, 6, 12, 24, 72].map((h) => (
+            <option key={h} value={h}>
+              after {h < 24 ? `${h} hour${h > 1 ? 's' : ''}` : `${h / 24} day${h > 24 ? 's' : ''}`} away
+            </option>
+          ))}
+        </select>
+        <button type="button" className="cx-btn" onClick={previewSplash}>
+          <Ico n="studio" size={13} /> Preview
+        </button>
+      </div>
+    </Field>
   );
 }
