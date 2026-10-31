@@ -37,7 +37,8 @@ export function NavProvider({ children }: { children: ReactNode }) {
   const { view, id } = parsePath(pathname);
   const [tabs, setTabs] = useState<string[]>(() => {
     try {
-      const t = readPref<string[]>(TABS_KEY, []);
+      // A reload starts fresh (just the page in the address bar) unless the viewer chose to reopen tabs.
+      const t = readPref('reopenTabs', false) ? readPref<string[]>(TABS_KEY, []) : [];
       return Array.isArray(t) ? [...new Set(t.filter((x) => typeof x === 'string').map((x) => pathFor(parsePath(x).view, parsePath(x).id)))] : [];
     } catch {
       return [];

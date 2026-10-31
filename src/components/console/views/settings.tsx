@@ -8,7 +8,7 @@ import { useChatMarkdown } from '../md-text';
 import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
-import { resetUiPrefs } from '../prefs';
+import { resetUiPrefs, usePref } from '../prefs';
 import { previewSplash } from '../splash';
 import { THEMES, useTheme } from '../theme';
 import { SPLASH_GAP_HOURS } from '../theme-boot';
@@ -32,6 +32,7 @@ export function SettingsPage() {
           <SplashSettings />
           <AutoSaveSettings />
           <ChatMarkdownSetting />
+          <ReopenTabsSetting />
           <Field label="Layout and views" hint="Panel sizes, open tabs, expanded groups, tree or list views, filters and the tab each group was on are remembered in this browser.">
             <div className="cx-form-row">
               <button
@@ -236,6 +237,16 @@ function ChatMarkdownSetting() {
   return (
     <Field label="Markdown in chats" hint={on ? 'Studio and Activity chats show **bold**, lists, tables and code blocks rendered. Hover a message for Raw.' : 'Chats show the raw text. Hover a message for Rendered.'}>
       <Switch on={on} label="Render Markdown in chats" onChange={setOn} />
+    </Field>
+  );
+}
+
+/** Whether a reload brings back the open editor tabs (off: start with just the page in the address bar). */
+function ReopenTabsSetting() {
+  const [on, setOn] = usePref('reopenTabs', false);
+  return (
+    <Field label="Reopen tabs after a reload" hint={on ? 'A reload brings back the editor tabs you had open.' : 'A reload starts with only the page in the address bar open.'}>
+      <Switch on={on} label="Reopen tabs after a reload" onChange={setOn} />
     </Field>
   );
 }
