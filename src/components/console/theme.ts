@@ -13,11 +13,12 @@ const KEY = 'cx-theme';
 function read(): Theme {
   try {
     const t = localStorage.getItem(KEY);
-    if (t === 'offwhite' || t === 'white') return t;
+    if (t === 'dark' || t === 'white' || t === 'offwhite') return t;
   } catch {
     /* storage unavailable */
   }
-  return 'dark';
+  // No saved choice yet: Off-white.
+  return 'offwhite';
 }
 
 export function applyTheme(t: Theme) {

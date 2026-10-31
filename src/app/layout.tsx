@@ -1,4 +1,5 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
+import { DEFAULT_THEME } from '@/components/console/theme-boot';
 
 export const metadata: Metadata = {
   title: 'GuardRail AI',
@@ -16,9 +17,12 @@ export const metadata: Metadata = {
   },
 };
 
+// Browser chrome matches the default Off-white theme.
+export const viewport: Viewport = { themeColor: '#ebe8e1' };
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-cx-theme={DEFAULT_THEME} suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

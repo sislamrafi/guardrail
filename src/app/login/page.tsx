@@ -15,7 +15,7 @@ export default function Login() {
     window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
   };
   return (
-    <div className="gr">
+    <div className="gr login-wrap">
       <form className="card login stack" onSubmit={submit} style={{ gap: 14 }}>
         <h1 style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
           <Logo size={28} />
