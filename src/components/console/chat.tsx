@@ -5,6 +5,7 @@ import { messageText } from '@/components/prompt-view';
 import type { PromptMessage } from '@/lib/logs';
 import { Ico } from './icons';
 import { Pill, fmt } from './kit';
+import { MdText } from './md-text';
 
 // Cline sends tool output back inside user messages, starting like "[read_file for 'x'] Result:".
 const CLINE_TOOL = /^\s*\[([\w-]+)(?: for [^\]]*)?\] Result:/;
@@ -64,7 +65,7 @@ export function ChatView({ messages, marks, empty, tail }: { messages: PromptMes
               <span>{p.role}</span>
               {p.mark && <Pill tone="info">{p.mark === 'added' ? 'Added by GuardRail' : 'Changed by GuardRail'}</Pill>}
             </div>
-            <div className="cx-turn-body">{p.text}</div>
+            <MdText text={p.text} />
           </div>
         );
       })}

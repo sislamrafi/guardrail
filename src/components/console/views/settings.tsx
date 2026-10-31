@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { SaveState, useAutoSave, useAutoSavePrefs, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
+import { useChatMarkdown } from '../md-text';
 import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
@@ -30,6 +31,7 @@ export function SettingsPage() {
           </Field>
           <SplashSettings />
           <AutoSaveSettings />
+          <ChatMarkdownSetting />
           <Field label="Layout and views" hint="Panel sizes, open tabs, expanded groups, tree or list views, filters and the tab each group was on are remembered in this browser.">
             <div className="cx-form-row">
               <button
@@ -224,6 +226,16 @@ function AutoSaveSettings() {
           ))}
         </select>
       </div>
+    </Field>
+  );
+}
+
+/** Chats render Markdown by default; each message also has its own Raw / Rendered switch. */
+function ChatMarkdownSetting() {
+  const [on, setOn] = useChatMarkdown();
+  return (
+    <Field label="Markdown in chats" hint={on ? 'Studio and Activity chats show **bold**, lists, tables and code blocks rendered. Hover a message for Raw.' : 'Chats show the raw text. Hover a message for Rendered.'}>
+      <Switch on={on} label="Render Markdown in chats" onChange={setOn} />
     </Field>
   );
 }

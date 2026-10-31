@@ -65,6 +65,18 @@ describe('markdown preview', () => {
   });
 });
 
+describe('Markdown in chats', () => {
+  it('renders tables, strikethrough and code blocks with a copy button, still escaping HTML', () => {
+    const html = renderMarkdown('I can help with **frontend** ~~backend~~\n\n| a | b |\n|---|---|\n| 1 | <b>2</b> |\n\n```ts\nconst x = 1;\n```');
+    expect(html).toContain('<strong>frontend</strong>');
+    expect(html).toContain('<del>backend</del>');
+    expect(html).toContain('<th>a</th>');
+    expect(html).toContain('<td>&lt;b&gt;2&lt;/b&gt;</td>');
+    expect(html).toContain('data-md-copy');
+    expect(html).toContain('<span class="md-lang">ts</span>');
+  });
+});
+
 describe('UI preferences', () => {
   it('remembers values per browser and a reset clears only layout prefs', async () => {
     const store = new Map<string, string>();

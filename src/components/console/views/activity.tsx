@@ -13,6 +13,7 @@ import { api, useStore, useUi } from '../store';
 import type { LogEntry } from '../types';
 import { DecisionRow } from './guard';
 import { usePref } from '../prefs';
+import { MdText } from '../md-text';
 
 type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number };
 
@@ -376,7 +377,7 @@ function BlockedTail({ d }: { d: LogEntry }) {
       <div className="cx-turn-head">
         <span>blocked reply</span>
       </div>
-      <div className="cx-turn-body">{d.reason ?? 'Blocked.'}</div>
+      <MdText text={d.reason ?? 'Blocked.'} />
     </div>
   );
 }
@@ -480,7 +481,7 @@ function ReplayView({ r, onClose }: { r: Replay; onClose: () => void }) {
               <span>{r.replay.error ? `error ${r.replay.status}` : 'reply'}</span>
               <span className="cx-muted small">{ms(r.replay.ms)}</span>
             </div>
-            <div className="cx-turn-body">{r.replay.error ?? (r.replay.text || '(empty reply)')}</div>
+            <MdText text={r.replay.error ?? (r.replay.text || '(empty reply)')} />
           </div>
         </div>
       </div>

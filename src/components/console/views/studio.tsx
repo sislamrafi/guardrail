@@ -14,6 +14,7 @@ import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { Data, LogEntry, Scenario } from '../types';
 import { OUTCOME } from './activity';
+import { MdText } from '../md-text';
 
 interface RunResult {
   status: number;
@@ -311,7 +312,7 @@ function Message({ m, turn }: { m: PromptMessage; turn?: Turn }) {
                 {turn?.outcome && <Pill tone={OUTCOME[turn.outcome]?.[1] ?? ''}>{OUTCOME[turn.outcome]?.[0] ?? turn.outcome}</Pill>}
                 {turn && <span className="cx-muted small">{ms(turn.ms)}</span>}
               </div>
-              <div className="cx-turn-body">{p.text || '(empty reply)'}</div>
+              <MdText text={p.text || '(empty reply)'} />
             </div>
           );
         if (p.kind === 'tool-call' || p.kind === 'tool-result')

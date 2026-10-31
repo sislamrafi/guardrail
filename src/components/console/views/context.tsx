@@ -10,6 +10,7 @@ import { api, useStore, useUi } from '../store';
 import type { FileC } from '../types';
 import { readPref, usePref, writePref } from '../prefs';
 import { SaveState, useAutoSave } from '../autosave';
+import { copyCode } from '../md-text';
 
 // ---------------------------------------------------------------- /context
 
@@ -203,7 +204,7 @@ function FileEditor({ f }: { f: FileC }) {
       </div>
       <div className="cx-file-body">
         {preview ? (
-          <article className="cx-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
+          <article className="cx-md" onClick={copyCode} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
         ) : (
           <div className="cx-code">
             <div className="cx-gutter" ref={gutter} aria-hidden="true">
