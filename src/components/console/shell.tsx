@@ -352,16 +352,44 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
   }
 }
 
-function Tabs({ data, onClose }: { data: Data | null; onClose: (p: string) => void }) {
+function Tabs({ data, onClose }: { data: Data | null; onClose: (p: string) => void | Promise<void> }) {
   const nav = useNav();
   const ui = useUi();
   const ref = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState({ l: false, r: false });
+  const [list, setList] = useState<string | null>(null);
+  const edges = () => {
+    const el = ref.current;
+    if (el) setFade({ l: el.scrollLeft > 2, r: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+  };
   // Keep the active tab in view when the strip overflows.
   useEffect(() => {
-    ref.current?.querySelector('.cx-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    ref.current?.querySelector('.cx-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    edges();
   }, [nav.path, nav.tabs.length]);
+  // Like VS Code: the mouse wheel scrolls the strip sideways (trackpads already swipe sideways).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    window.addEventListener('resize', edges);
+    return () => {
+      el.removeEventListener('wheel', wheel);
+      window.removeEventListener('resize', edges);
+    };
+  }, []);
+  const closeMany = async (paths: string[]) => {
+    for (const x of paths) await onClose(x);
+  };
+  const shown = list === null ? [] : nav.tabs.filter((p) => tabInfo(p, data).title.toLowerCase().includes(list.toLowerCase()));
   return (
-    <div ref={ref} className="cx-tabs" role="tablist" aria-label="Open editors">
+    <div className="cx-tabbar">
+    <div ref={ref} className={`cx-tabs ${fade.l ? 'fade-l' : ''} ${fade.r ? 'fade-r' : ''}`} role="tablist" aria-label="Open editors" onScroll={edges}>
       {nav.tabs.map((p) => {
         const t = tabInfo(p, data);
         const on = p === nav.path;
@@ -387,6 +415,9 @@ function Tabs({ data, onClose }: { data: Data | null; onClose: (p: string) => vo
               ui.menu(e.clientX, e.clientY, [
                 { label: 'Close', hint: '⌥⌘W', run: () => onClose(p) },
                 { label: 'Close others', run: () => nav.closeOthers(p) },
+                { label: 'Close to the right', run: () => void closeMany(nav.tabs.slice(nav.tabs.indexOf(p) + 1)) },
+                { label: 'Close all', run: () => void closeMany([...nav.tabs]) },
+                { sep: true, label: '' },
                 { label: 'Copy link', run: () => void navigator.clipboard.writeText(window.location.origin + p).then(() => ui.toast('Link copied')) },
               ]);
             }}
@@ -410,6 +441,58 @@ function Tabs({ data, onClose }: { data: Data | null; onClose: (p: string) => vo
         );
       })}
       <div className="cx-grow" />
+    </div>
+      {nav.tabs.length > 1 && (
+        <div className="cx-tablist">
+          <button type="button" className="cx-tbtn" title="All open editors" aria-label="All open editors" aria-expanded={list !== null} onClick={() => setList(list === null ? '' : null)}>
+            <Ico n="more" size={16} />
+          </button>
+          {list !== null && (
+            <div className="cx-tablist-pop" role="dialog" aria-label="Open editors">
+              <input
+                className="cx-input sm"
+                autoFocus
+                type="search"
+                placeholder={`Search ${nav.tabs.length} open editors`}
+                value={list}
+                onChange={(e) => setList(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setList(null);
+                  if (e.key === 'Enter' && shown[0]) {
+                    nav.go(shown[0]);
+                    setList(null);
+                  }
+                }}
+                onBlur={(e) => !e.currentTarget.parentElement?.contains(e.relatedTarget as Node) && setTimeout(() => setList(null), 150)}
+              />
+              <div className="cx-tablist-items">
+                {shown.map((p) => {
+                  const t = tabInfo(p, data);
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`cx-li ${p === nav.path ? 'sel' : ''}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        nav.go(p);
+                        setList(null);
+                      }}
+                    >
+                      <span className={`cx-ico ${t.cls ?? ''}`}>
+                        <Ico n={t.icon} size={14} />
+                      </span>
+                      <span className="cx-label">{t.title}</span>
+                      {nav.drafts[p] !== undefined && <span className="cx-meta">●</span>}
+                    </button>
+                  );
+                })}
+                {shown.length === 0 && <p className="cx-details-empty">No open editor matches.</p>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
