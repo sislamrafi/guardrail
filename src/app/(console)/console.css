@@ -187,12 +187,9 @@ body.cx-resizing * { cursor: ew-resize !important; }
 /* ---------------- editor ---------------- */
 .cx-editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor); }
 .cx-tabbar { height: 35px; flex: none; display: flex; background: var(--bar); position: relative; }
-.cx-tabs { flex: 1; min-width: 0; height: 35px; display: flex; background: var(--bar); overflow-x: auto; overflow-y: hidden; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: transparent transparent; }
-/* A thin scrollbar on hover, and faded edges while more tabs hide off either side, like VS Code. */
-.cx-tabs:hover { scrollbar-color: var(--edge-2) transparent; }
-.cx-tabs::-webkit-scrollbar { height: 3px; }
-.cx-tabs::-webkit-scrollbar-thumb { background: transparent; }
-.cx-tabs:hover::-webkit-scrollbar-thumb { background: var(--edge-2); }
+.cx-tabs { flex: 1; min-width: 0; height: 35px; display: flex; background: var(--bar); overflow-x: auto; overflow-y: hidden; scroll-behavior: smooth; scrollbar-width: none; }
+/* No scrollbar: the wheel or a swipe scrolls the tabs, and faded edges show more tabs are hidden. */
+.cx-tabs::-webkit-scrollbar { display: none; }
 .cx-tabs.fade-r { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 .cx-tabs.fade-l { mask-image: linear-gradient(to right, transparent, #000 28px); }
 .cx-tabs.fade-l.fade-r { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
