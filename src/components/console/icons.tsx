@@ -39,6 +39,16 @@ const P: Record<string, string> = {
   bell: 'M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 21h4',
   shieldOff: 'M12 3l8 3v6c0 4.6-3.4 8.4-8 9-4.6-.6-8-4.4-8-9V6zM4 4l16 16',
   check: 'M5 12l5 5 9-10',
+  filter: 'M3 4h18l-7 8v6l-4 2v-8z',
+  braces: 'M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1',
+  download: 'M12 3v12M7 10l5 5 5-5M4 21h16',
+  upload: 'M12 21V9M7 14l5-5 5 5M4 3h16',
+  copy: 'M9 9h12v12H9zM5 15H3V3h12v2',
+  history: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4z',
+  model: 'M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5',
+  warning: 'M12 3l10 18H2zM12 10v4M12 17h.01',
 };
 
 export type IconName = keyof typeof P;
