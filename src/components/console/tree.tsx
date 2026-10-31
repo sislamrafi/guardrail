@@ -61,6 +61,11 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
   const [renaming, setRenaming] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  // One selection per tree, like VS Code: the row you last clicked, until the open page changes.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pathSel = rows.find((r) => r.node.selected)?.node.key ?? null;
+  useEffect(() => setPicked(null), [pathSel]);
+  const isSel = (n: TreeNode) => (picked && rows.some((r) => r.node.key === picked) ? n.key === picked : !!n.selected);
   const ref = useRef<HTMLDivElement>(null);
 
   const editingKey = rows.find((r) => r.node.editing)?.node.key ?? renaming;
@@ -116,6 +121,7 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
         break;
       case 'Enter':
       case ' ':
+        setPicked(n.key);
         n.onOpen?.();
         if (n.children?.length && !n.onOpen) onToggle(n.key);
         break;
@@ -157,15 +163,16 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
             role="treeitem"
             aria-level={depth + 1}
             aria-expanded={hasKids ? open : undefined}
-            aria-selected={!!n.selected}
+            aria-selected={isSel(n)}
             tabIndex={n.key === focusKey ? 0 : -1}
-            className={`cx-row ${n.selected ? 'sel' : ''} ${n.dim ? 'dim' : ''} ${over === n.key ? 'drop-on' : ''}`}
-            style={{ paddingLeft: 8 + depth * 8 }}
+            className={`cx-row ${isSel(n) ? 'sel' : ''} ${n.dim ? 'dim' : ''} ${over === n.key ? 'drop-on' : ''}`}
+            style={{ paddingLeft: 8 + depth * 12 }}
             title={n.title}
             draggable={!!n.drag && !editing}
             onFocus={(e) => e.target === e.currentTarget && setFocus(n.key)}
             onClick={() => {
               setFocus(n.key);
+              setPicked(n.key);
               if (n.onOpen) n.onOpen();
               else if (hasKids) onToggle(n.key);
             }}

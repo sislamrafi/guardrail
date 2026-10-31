@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useActions } from './actions';
 import { Ico, type IconName } from './icons';
 import { fmtTokens } from './kit';
@@ -74,6 +74,17 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const selId = selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
   const sel = data.groups.find((g) => g.id === selId) ?? null;
 
+  // Reveal the open key or file: expand every group above it so its row (the selection) is visible.
+  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : mode === 'context' && nav.view === 'context' && nav.id ? `f:${nav.id}` : null;
+  useEffect(() => {
+    if (!openItem) return;
+    const id = Number(openItem.slice(2));
+    const home = openItem.startsWith('k:') ? [data.keys.find((k) => k.id === id)?.groupId] : data.groups.filter((g) => g.own.includes(id)).map((g) => g.id);
+    const keys: string[] = [];
+    for (const gid of home) for (let g = data.groups.find((x) => x.id === gid); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
+    if (keys.length) expand(keys);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openItem]);
   const startCreate = (kind: 'group' | 'file', parent: number | null) => {
     setCreating({ kind, parent });
     // Open the parent and every folder above it so the name box is visible.
@@ -173,7 +184,9 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
             }),
           ),
       );
-    const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : sel?.id === g.id;
+    // One selection per tree: a group is highlighted only while no file or key below it is open.
+    const itemOpen = (mode === 'context' && nav.view === 'context' && !!nav.id) || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
+    const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : !itemOpen && sel?.id === g.id;
     const items = (): MenuItem[] => [
       ...(mode !== 'groups' ? [{ label: 'Open group settings', run: () => nav.go(pathFor('groups', g.id)) }] : []),
       { label: 'New sub-group', run: () => startCreate('group', g.id) },
