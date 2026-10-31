@@ -348,12 +348,9 @@ select.cx-input { padding-right: 4px; }
 .cx-chip span { color: var(--faint); margin-left: 4px; font-family: var(--mono); font-size: 11px; }
 .cx-chip.on { background: var(--sel) !important; border-color: var(--accent) !important; color: var(--fg-hi) !important; }
 .cx-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.cx-subtabs { display: flex; gap: 2px; box-shadow: inset 0 -1px 0 var(--edge); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: transparent transparent; }
-/* Scrolls sideways only when the tabs don't fit; the scrollbar shows on hover, like VS Code. */
-.cx-subtabs:hover { scrollbar-color: var(--edge-2) transparent; }
-.cx-subtabs::-webkit-scrollbar { height: 3px; }
-.cx-subtabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
-.cx-subtabs:hover::-webkit-scrollbar-thumb { background: var(--edge-2); }
+.cx-subtabs { display: flex; gap: 2px; box-shadow: inset 0 -1px 0 var(--edge); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+/* Scrolls sideways only when the tabs don't fit, with no scrollbar (as the editor tabs). */
+.cx-subtabs::-webkit-scrollbar { display: none; }
 .cx-subtabs button { flex: none; height: 30px; padding: 0 12px !important; color: var(--dim) !important; border: 0 !important; white-space: nowrap; }
 .cx-subtabs button:hover { color: var(--fg) !important; }
 .cx-subtabs button.on { color: var(--fg-hi) !important; box-shadow: inset 0 -2px 0 var(--accent); }
