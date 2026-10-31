@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ADAPTERS, type AdapterId, type Decision } from '@/lib/adapters';
+import type { Scan } from '@/lib/guard';
 import { type GuardLayer, LAYER_TYPES, adapterFor, autoAdapter, decisionFor, mappingFor, normalizeLayer } from '@/lib/layers';
 import { type CustomMapping, PRESETS, parseMapped, presetFor, withPreset } from '@/lib/mapping';
 import { ModelPicker } from '../model-picker';
@@ -211,7 +212,7 @@ export function GuardPage() {
         </ol>
       </Section>
       <div className="cx-cols">
-        <Section title="What the layers read">
+        <Section title="What the layers read (default)" hint="Layers that don't choose their own (layer editor › What this layer reads) read this.">
           <div className="cx-checklist">
             {(
               [
@@ -324,6 +325,7 @@ export function DecisionRow({ r }: { r: LayerResult }) {
           </Pill>
         ))}
         <span className="cx-muted small grow">{d?.error ?? d?.reason ?? ''}</span>
+        {r.read && r.read.length > 0 && <span className="cx-muted small" title="What this layer read">read: {r.read.join(', ')}</span>}
       </summary>
       {d && (
         <div className="cx-cols">
@@ -571,6 +573,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
           </Field>
           )}
         </div>
+        <ReadsField l={l} set={set} global={data.settings.guard.scan} />
         {usesThreshold && (
           <div className="cx-form-row center">
             <Field label={<>Counts as a hit at score <b className="mono">{l.threshold.toFixed(2)}</b> or more</>} grow>
@@ -893,5 +896,34 @@ function RoutesEditor({ l, set, data }: { l: GuardLayer; set: (p: Partial<GuardL
         <p className="cx-hint">Used when the answer has no route above, or the decision model fails or times out.</p>
       </div>
     </Section>
+  );
+}
+
+const READS: [keyof Scan, string][] = [
+  ['user', 'New user message'],
+  ['tool', 'New tool results (files, web pages, command output)'],
+  ['system', "The agent's own system prompt"],
+  ['toolCalls', "The agent's tool calls (name and arguments)"],
+  ['history', 'The whole conversation, not only what is new'],
+];
+
+/** What one layer reads: the global default, or its own choice. */
+function ReadsField({ l, set, global }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void; global: { user: boolean; tool: boolean; system: boolean } }) {
+  const own = l.reads ?? null;
+  const shown: Scan = own ?? { ...global, toolCalls: false, history: false };
+  const summary = READS.filter(([k]) => shown[k]).map(([, t]) => t.split(' (')[0].toLowerCase()).join(', ') || 'nothing';
+  return (
+    <Field label="What this layer reads" hint={own ? `Reads: ${summary}. With nothing to read, the layer is skipped.` : `Uses the default on the Guard checks page: ${summary}.`}>
+      <Seg value={own ? 'own' : 'default'} label="What this layer reads" onChange={(v) => set({ reads: v === 'own' ? { ...shown } : null })} options={[['default', 'Default'], ['own', 'Choose for this layer']]} />
+      {own && (
+        <div className="cx-checklist">
+          {READS.map(([k, t]) => (
+            <label key={k} className="cx-check">
+              <input type="checkbox" checked={!!own[k]} onChange={(e) => set({ reads: { ...own, [k]: e.target.checked } })} /> {t}
+            </label>
+          ))}
+        </div>
+      )}
+    </Field>
   );
 }

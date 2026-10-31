@@ -2,8 +2,19 @@ import { getServer, errMsg } from './servers';
 import type { GuardSettings } from './settings';
 
 export interface Segment {
-  source: 'user message' | 'tool result' | 'system prompt';
+  source: 'user message' | 'tool result' | 'system prompt' | 'tool call';
   text: string;
+}
+
+/** What a guard layer reads. The first three are the global setting; the rest only exist per layer. */
+export interface Scan {
+  user: boolean;
+  tool: boolean;
+  system: boolean;
+  /** The agent's latest tool calls (name and arguments), e.g. to approve commands before they run. */
+  toolCalls?: boolean;
+  /** Every user message and tool result in the conversation, not just the ones since the model last answered. */
+  history?: boolean;
 }
 
 type Msg = { role?: string; content?: unknown; tool_call_id?: string };
@@ -46,7 +57,7 @@ export function stripClineEnvironment(text: string): string {
  * Agents resend the whole conversation every turn. Only what arrived since the
  * model last spoke is new, so that is all we scan.
  */
-export function newSegments(messages: Msg[], scan: GuardSettings['scan']): Segment[] {
+export function newSegments(messages: Msg[], scan: Scan): Segment[] {
   const out: Segment[] = [];
   let lastAssistant = -1;
   messages.forEach((m, i) => {
@@ -55,7 +66,11 @@ export function newSegments(messages: Msg[], scan: GuardSettings['scan']): Segme
   if (scan.system) {
     for (const m of messages) if (m.role === 'system' || m.role === 'developer') push(out, 'system prompt', contentText(m.content));
   }
-  for (const m of messages.slice(lastAssistant + 1)) {
+  if (scan.toolCalls && lastAssistant >= 0) {
+    const calls = (messages[lastAssistant] as { tool_calls?: { function?: { name?: string; arguments?: string } }[] }).tool_calls;
+    for (const c of Array.isArray(calls) ? calls : []) push(out, 'tool call', `${c.function?.name ?? 'tool'}(${c.function?.arguments ?? ''})`);
+  }
+  for (const m of scan.history ? messages : messages.slice(lastAssistant + 1)) {
     if (m.role === 'user' && scan.user) {
       // Cline puts tool output inside user messages; treat tagged blocks as tool results.
       const text = stripClineEnvironment(contentText(m.content));

@@ -2,7 +2,7 @@
 // access and custom rules are checked, and ends right before context is added and the model is called.
 import { type Decision, callAdapter } from './adapters';
 import type { Effective, Resolution } from './groups';
-import { type Segment, builtinScore, judgeInput, windows } from './guard';
+import { type Scan, type Segment, builtinScore, judgeInput, windows } from './guard';
 import { type GuardLayer, type ModelMeta, adapterFor, decisionFor, mappingFor } from './layers';
 import type { Server } from './servers';
 
@@ -20,6 +20,8 @@ export interface LayerResult {
   fellBack: boolean;
   /** Off because a group turned it off (not the layer's own default). */
   bypassed: boolean;
+  /** What the layer read (sources), when it ran. */
+  read?: string[];
   /** Router layers: the answer and the model it picked (null: keep the client's model). */
   route?: { label: string | null; model: string | null };
 }
@@ -88,6 +90,8 @@ export interface PipelineInput {
   escalate: { quote: string } | null;
   unresolvedFlag: 'block' | 'allow';
   serverOf: (id: number) => Server | undefined;
+  /** The request's text for a layer with its own "reads" setting; without it every layer gets `segments`. */
+  segmentsFor?: (scan: Scan) => Segment[];
   /** What the server said about a model (Decisions API, structured output), for Auto. */
   metaOf?: (serverId: number | null, model: string) => ModelMeta | null;
 }
@@ -116,8 +120,11 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       results.push({ ...base, action: 'skipped' });
       continue;
     }
-    if (!segments.length && !flagged) {
-      results.push({ ...base, action: 'nothing' });
+    // A layer with its own "reads" setting gets only those parts of the request.
+    const segs = layer.reads && input.segmentsFor ? input.segmentsFor(layer.reads) : segments;
+    const read = [...new Set(segs.map((x) => x.source))];
+    if (!segs.length && !flagged) {
+      results.push({ ...base, action: 'nothing', read });
       if (layer.scope === 'all') screened = true;
       continue;
     }
@@ -125,8 +132,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     const opts = eff.layer_opts[layer.id];
     const threshold = opts?.threshold ?? layer.threshold;
     let d: Decision;
-    if (layer.type === 'patterns') d = patternsDecision(segments, threshold);
-    else if (layer.type === 'redactor') d = redactorDecision(segments);
+    if (layer.type === 'patterns') d = patternsDecision(segs, threshold);
+    else if (layer.type === 'redactor') d = redactorDecision(segs);
     else {
       const server = layer.serverId ? serverOf(layer.serverId) : undefined;
       const prompt = [
@@ -148,8 +155,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
             apiKey: server.api_key,
             model: layer.model,
             prompt,
-            content: judgeInput(segments, flagged ? flagQuote : null),
-            windows: windows(segments).map((w) => w.text),
+            content: judgeInput(segs, flagged ? flagQuote : null),
+            windows: windows(segs).map((w) => w.text),
             labelIndex: layer.labelIndex,
             threshold,
             timeoutMs: layer.timeoutMs,
@@ -161,14 +168,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       // A router never blocks: its answer picks the model; a failed decision uses the fallback.
       const label = d.error ? null : (d.label ?? d.categories[0] ?? null);
       const target = (label && layer.routes?.[label]) || layer.fallbackModel || null;
-      results.push({ ...base, action: 'route', decision: d, fellBack: !!d.error, route: { label, model: target } });
+      results.push({ ...base, read, action: 'route', decision: d, fellBack: !!d.error, route: { label, model: target } });
       if (target && !route) route = { model: target, label, layer: layer.name };
       continue;
     }
     let fellBack = false;
     if (d.error) {
       fellBack = true;
-      if (layer.onError === 'patterns') d = { ...patternsDecision(segments, threshold), error: d.error, raw: d.raw, latency_ms: d.latency_ms };
+      if (layer.onError === 'patterns') d = { ...patternsDecision(segs, threshold), error: d.error, raw: d.raw, latency_ms: d.latency_ms };
       else d = { ...d, verdict: layer.onError === 'block' ? 'block' : 'allow' };
     }
     if (layer.scope === 'all') screened = true;
@@ -178,24 +185,24 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       if (flagged && layer.scope === 'flagged') {
         flagged = false;
         cleared = cleared || flaggedByLayer;
-        results.push({ ...base, action: 'cleared', decision: d, fellBack });
-      } else results.push({ ...base, action: 'pass', decision: d, fellBack });
+        results.push({ ...base, read, action: 'cleared', decision: d, fellBack });
+      } else results.push({ ...base, read, action: 'pass', decision: d, fellBack });
       continue;
     }
     const act = d.verdict === 'flag' && layer.onFail === 'block' ? 'flag' : layer.onFail;
     if (act === 'block') {
-      results.push({ ...base, action: 'block', decision: d, fellBack });
+      results.push({ ...base, read, action: 'block', decision: d, fellBack });
       return { results, block: { reason: d.reason, layer: layer.name }, cleared: false, redact, unresolved: false, route };
     }
     if (act === 'redact') {
       for (const [name, re] of REDACT_PATTERNS) if (d.categories.includes(name)) redact.push(re);
-      results.push({ ...base, action: 'redact', decision: d, fellBack });
+      results.push({ ...base, read, action: 'redact', decision: d, fellBack });
       continue;
     }
     flagged = true;
     flaggedByLayer = true;
     flagQuote = d.quote ?? flagQuote;
-    results.push({ ...base, action: 'flag', decision: d, fellBack });
+    results.push({ ...base, read, action: 'flag', decision: d, fellBack });
   }
   if (flagged) {
     if (input.unresolvedFlag === 'block') return { results, block: { reason: 'It was flagged and no later check cleared it.', layer: 'unresolved flag' }, cleared: false, redact, unresolved: true, route };

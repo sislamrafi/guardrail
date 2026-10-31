@@ -232,6 +232,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     escalate: escHit ? { quote: escHit.match } : null,
     unresolvedFlag: settings.guard.unresolvedFlag,
     serverOf: (sid) => getServer(sid),
+    segmentsFor: (scan) => newSegments(messages, scan),
     metaOf: modelMeta,
   });
   log.decisions = pipe.results;

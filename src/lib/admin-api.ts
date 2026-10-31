@@ -302,7 +302,9 @@ const routes: Record<string, Handler> = {
     const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
     // Optionally try unsaved layers from the editor.
     const layers = Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers;
-    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta });
+    // A layer with its own "reads" only sees the sample if it reads that kind of text.
+    const segmentsFor = (scan: { user: boolean; tool: boolean }) => segments.filter((x) => (x.source === 'user message' ? scan.user : scan.tool));
+    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta, segmentsFor });
     return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
   },
 

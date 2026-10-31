@@ -313,6 +313,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
                   ['Reason', r.decision.reason || '–'],
                   ['Time', ms(r.decision.latency_ms)],
                   ['Fallback used', r.fellBack ? 'yes' : 'no'],
+                  ['Read', r.read?.length ? r.read.join(', ') : '–'],
                   ...(r.decision.error ? ([['Error', r.decision.error]] as [string, ReactNode][]) : []),
                 ]}
               />

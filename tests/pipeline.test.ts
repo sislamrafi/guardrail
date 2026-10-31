@@ -220,3 +220,28 @@ describe('decision models (Decisions API)', () => {
     expect(autoAdapter({ type: 'judge', model: 'meta-llama/llama-guard-4-12b' }).adapter).toBe('llama_guard');
   });
 });
+
+describe('what each layer reads', () => {
+  it('reads tool calls and the whole conversation when asked', async () => {
+    const { newSegments } = await import('@/lib/guard');
+    const msgs = [
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'execute_command', arguments: '{"command":"rm -rf /"}' } }] },
+      { role: 'tool', content: 'command output' },
+    ];
+    expect(newSegments(msgs, { user: true, tool: true, system: false }).map((s) => s.source)).toEqual(['tool result']);
+    const all = newSegments(msgs, { user: true, tool: true, system: false, toolCalls: true, history: true });
+    expect(all.map((s) => s.source)).toEqual(['tool call', 'user message', 'tool result']);
+    expect(all[0].text).toContain('rm -rf /');
+  });
+
+  it('gives a layer with its own reads only those parts, and skips it with nothing to read', async () => {
+    const userOnly = normalizeLayer({ id: 'u', name: 'User only', type: 'patterns', reads: { user: true, tool: false, system: false } });
+    const r = await runPipeline({ segments: attack, layers: [userOnly], resolution: res(), escalate: null, unresolvedFlag: 'block', serverOf: () => undefined, segmentsFor: (scan) => attack.filter((x) => (x.source === 'user message' ? scan.user : scan.tool)) });
+    expect(r.results[0]).toMatchObject({ action: 'nothing', read: [] });
+    const both = normalizeLayer({ id: 'b', name: 'Both', type: 'patterns' });
+    const r2 = await runPipeline({ segments: attack, layers: [both], resolution: res(), escalate: null, unresolvedFlag: 'block', serverOf: () => undefined });
+    expect(r2.results[0].read).toEqual(['tool result']);
+    expect(r2.results[0].action).not.toBe('nothing');
+  });
+});

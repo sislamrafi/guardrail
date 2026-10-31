@@ -3,6 +3,7 @@
 import { type AdapterId, ADAPTERS, detectAdapter } from './adapters';
 import { DECISION_DEFAULT, type DecisionSchema, ROUTING_PRESET, normalizeDecision } from './decisions';
 import { type CustomMapping, normalizeMapping, presetFor, withPreset, MAPPING_DEFAULT } from './mapping';
+import type { Scan } from './guard';
 
 export const LAYER_TYPES = {
   classifier: 'Classifier model (PIGuard, Llama Guard, moderation…)',
@@ -43,6 +44,8 @@ export interface GuardLayer {
   mapping?: CustomMapping | null;
   /** For decision models: the question asked and what each answer means (null: the default injection question). */
   decision?: DecisionSchema | null;
+  /** What this layer reads; null uses the global "What the layers read" setting. */
+  reads?: Scan | null;
   /** Router layers: the model each answer sends the request to. */
   routes?: Record<string, string> | null;
   /** Router layers: the model when the answer has no route or the decision fails; empty keeps the client's model. */
@@ -98,6 +101,7 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     decision: raw.decision ? normalizeDecision(raw.decision) : null,
     routes: raw.routes && typeof raw.routes === 'object' ? Object.fromEntries(Object.entries(raw.routes as Record<string, unknown>).filter(([k, v]) => k.trim() && typeof v === 'string' && v.trim()).map(([k, v]) => [k.trim().slice(0, 80), String(v).trim()])) : null,
     fallbackModel: String(raw.fallbackModel ?? '').trim(),
+    reads: raw.reads && typeof raw.reads === 'object' ? { user: !!raw.reads.user, tool: !!raw.reads.tool, system: !!raw.reads.system, toolCalls: !!raw.reads.toolCalls, history: !!raw.reads.history } : null,
   };
 }
 
