@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openDb, setDb, getDb } from '@/lib/db';
 import { createServer } from '@/lib/servers';
 import { createKey, listKeys } from '@/lib/keys';
-import { createGroup, listGroups, setGroupSetting } from '@/lib/groups';
+import { createGroup, listGroups, setGroupSetting, updateGroup } from '@/lib/groups';
 import { createFile } from '@/lib/context';
 import { getSettings, updateSettings } from '@/lib/settings';
 import { resetRateLimits } from '@/lib/limits';
@@ -350,6 +350,18 @@ describe('gateway', () => {
     // Logged as test traffic from the admin's own address.
     expect(lastLog().ip).toBe('192.168.1.7');
     expect(lastLog().test).toBeTruthy();
+  });
+
+  it('keeps sibling group names unique, case-insensitively', () => {
+    const root = listGroups().find((g) => g.parentId === null)!;
+    const a = createGroup({ name: 'Sib A', parentId: root.id });
+    expect(() => createGroup({ name: 'sib a', parentId: root.id })).toThrow(/already there/);
+    const child = createGroup({ name: 'Sib A', parentId: a.id });
+    expect(child.parentId).toBe(a.id);
+    const b = createGroup({ name: 'Sib B', parentId: root.id });
+    expect(() => updateGroup(b.id, { name: 'SIB A' })).toThrow(/already there/);
+    expect(() => updateGroup(b.id, { name: '  ' })).toThrow(/name/);
+    expect(updateGroup(b.id, { name: 'Sib C' }).name).toBe('Sib C');
   });
 
   it('plans a Studio request: group chain, models, context and layers', () => {

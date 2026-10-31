@@ -81,6 +81,9 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     for (let g = data.groups.find((x) => x.id === parent); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
     expand(keys);
   };
+  // Group names must be unique among siblings (the server checks too).
+  const groupName = (parent: number | null, self?: number) => (name: string) =>
+    data.groups.some((x) => x.parentId === parent && x.id !== self && x.name.toLowerCase() === name.toLowerCase()) ? `A group named "${name}" is already here.` : null;
   const newNode = (kind: 'group' | 'file', parent: number | null): TreeNode => ({
     key: `new:${kind}`,
     label: '',
@@ -88,6 +91,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     icon: kind === 'group' ? 'folder' : 'file',
     iconClass: kind === 'group' ? 'folder' : 'md',
     editing: true,
+    validate: kind === 'group' ? groupName(parent) : undefined,
     onRename: async (name) => {
       setCreating(null);
       if (kind === 'group') {
@@ -194,6 +198,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
         if (mode === 'groups') nav.go(pathFor('groups', g.id));
       },
       onRename: isRoot ? undefined : (name) => void act.renameGroup(g, name),
+      validate: groupName(g.parentId, g.id),
       onDelete: isRoot ? undefined : () => void act.deleteGroup(g),
       drag: isRoot ? undefined : `group:${g.id}`,
       canDrop: (p) => {

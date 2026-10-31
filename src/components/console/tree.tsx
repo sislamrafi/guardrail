@@ -21,6 +21,8 @@ export interface TreeNode {
   editing?: boolean;
   onOpen?: () => void;
   onRename?: (name: string) => void;
+  /** Checks a new name; a message keeps the box open and is shown under it. */
+  validate?: (name: string) => string | null;
   onCancelEdit?: () => void;
   onDelete?: () => void;
   menu?: () => MenuItem[];
@@ -57,6 +59,7 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
   const rows = useMemo(() => flatten(nodes, expanded), [nodes, expanded]);
   const [focus, setFocus] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [nameErr, setNameErr] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -225,14 +228,20 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
                 spellCheck={false}
                 onClick={(e) => e.stopPropagation()}
                 onFocus={(e) => {
-                  // Select the name without its extension, like VS Code.
+                  // Select the name without its extension, like VS Code (folders: the whole name).
                   const v = e.target.value;
-                  const dot = v.lastIndexOf('.');
+                  const dot = n.icon === 'folder' ? -1 : v.lastIndexOf('.');
                   e.target.setSelectionRange(0, dot > 0 ? dot : v.length);
                 }}
+                onChange={() => nameErr && setNameErr(null)}
                 onKeyDown={(e) => {
                   e.stopPropagation();
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  if (e.key === 'Enter') {
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    const err = v && !(!n.editing && v === n.text) ? (n.validate?.(v) ?? null) : null;
+                    if (err) return setNameErr(err);
+                    (e.target as HTMLInputElement).blur();
+                  }
                   if (e.key === 'Escape') {
                     (e.target as HTMLInputElement).dataset.cancel = '1';
                     (e.target as HTMLInputElement).blur();
@@ -241,14 +250,22 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   const cancelled = e.target.dataset.cancel === '1';
+                  const bad = !cancelled && v && !(!n.editing && v === n.text) ? (n.validate?.(v) ?? null) : null;
                   setRenaming(null);
-                  if (cancelled || !v || (!n.editing && v === n.text)) n.onCancelEdit?.();
+                  setNameErr(null);
+                  if (bad) ui.toast(bad, true);
+                  if (cancelled || bad || !v || (!n.editing && v === n.text)) n.onCancelEdit?.();
                   else n.onRename?.(v);
                   ref.current?.focus();
                 }}
               />
             ) : (
               <span className="cx-label">{n.label}</span>
+            )}
+            {editing && nameErr && (
+              <span className="cx-inline-err" role="alert">
+                {nameErr}
+              </span>
             )}
             {!editing && n.badge !== undefined && n.badge !== null && n.badge !== 0 && <span className="cx-badge">{n.badge}</span>}
             {!editing && n.meta && <span className="cx-meta">{n.meta}</span>}

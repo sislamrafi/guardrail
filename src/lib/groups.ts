@@ -250,9 +250,16 @@ export function isDescendant(id: number, ancestorId: number, all = listGroups())
   return chainOf(id, all).some((g) => g.id === ancestorId);
 }
 
+/** Sibling groups need different names, or the tree and paths become ambiguous. */
+function checkSiblingName(name: string, parentId: number | null, self?: number) {
+  const clash = listGroups().some((g) => g.parentId === parentId && g.id !== self && g.name.toLowerCase() === name.toLowerCase());
+  if (clash) throw new Error(`A group named "${name}" is already there.`);
+}
+
 export function createGroup(input: { name: string; parentId: number | null; description?: string }): Group {
   const name = input.name.trim();
   if (!name) throw new Error('Give the group a name.');
+  checkSiblingName(name, input.parentId);
   if (input.parentId !== null && !getGroup(input.parentId)) throw new Error('Parent group not found.');
   if (input.parentId === null) throw new Error('Pick a parent group. There is only one root group.');
   const r = getDb()
@@ -271,9 +278,12 @@ export function updateGroup(id: number, patch: { name?: string; description?: st
     if (isDescendant(patch.parentId, id)) throw new Error('A group cannot move under one of its own sub-groups.');
     parentId = patch.parentId;
   }
+  if (patch.name !== undefined && !patch.name.trim()) throw new Error('Give the group a name.');
+  const name = patch.name?.trim() || g.name;
+  if (name !== g.name || parentId !== g.parentId) checkSiblingName(name, parentId, id);
   getDb()
     .prepare('UPDATE groups SET name = ?, description = ?, parent_id = ? WHERE id = ?')
-    .run(patch.name?.trim() || g.name, patch.description ?? g.description, parentId, id);
+    .run(name, patch.description ?? g.description, parentId, id);
   return getGroup(id)!;
 }
 
