@@ -52,6 +52,7 @@ export interface KeyC {
   createdAt: number;
   requestsToday: number;
   ipAllow: string[];
+  canReveal: boolean;
   groupName: string;
   groupPath: string;
 }
@@ -92,6 +93,7 @@ export interface Summary {
   blockedToday: number;
   name: string;
   authEnabled: boolean;
+  weakSecret: boolean;
 }
 
 export interface Data {

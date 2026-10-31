@@ -1,7 +1,8 @@
 import { estimateTokens, createFile, deleteFile, fileHistory, getFile, listFiles, updateFile } from './context';
 import { builtinScore, runCheck1, runCheck2 } from './guard';
 import { SETTING_DEFS, SettingKey, chainOf, createGroup, deleteGroup, getGroup, groupPath, listGroups, resolveGroup, setGroupSetting, updateGroup } from './groups';
-import { cleanExceptions, createKey, deleteKey, getKey, listKeys, requestsToday, updateKey } from './keys';
+import { cleanExceptions, createKey, deleteKey, getKey, listKeys, requestsToday, revealKey, rotateKey, updateKey } from './keys';
+import { weakSecret } from './secret-box';
 import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './limits';
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
@@ -191,6 +192,12 @@ const routes: Record<string, Handler> = {
       ipAllow: body.ipAllow,
     }),
   'DELETE keys/:id': ({ params }) => deleteKey(num(params[0])),
+  'GET keys/:id/secret': ({ params }) => {
+    const secret = revealKey(num(params[0]));
+    if (!secret) throw new HttpError(409, 'This key was created before secrets could be shown again, or with a different GUARDRAIL_SECRET. Rotate it to get a new secret you can view.');
+    return { secret };
+  },
+  'POST keys/:id/rotate': ({ params }) => rotateKey(num(params[0])),
   'GET keys/:id': ({ params }) => {
     const k = getKey(num(params[0]));
     if (!k) throw new HttpError(404, 'Key not found.');
@@ -379,6 +386,7 @@ const routes: Record<string, Handler> = {
       blockedToday: countByFilter(Date.now() - 86400_000).blocked,
       name: process.env.GUARDRAIL_ADMIN_NAME || 'Admin',
       authEnabled: !!process.env.GUARDRAIL_ADMIN_PASSWORD,
+      weakSecret: weakSecret(),
     };
   },
 };

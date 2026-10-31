@@ -414,6 +414,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
         </>
       }
     >
+      <SecretBox k={k} weak={data.summary.weakSecret} />
       <div className="cx-stats wide">
         <Stat label="Requests today" value={fmt(k.requestsToday)} />
         <Stat label="Last used" value={ago(k.lastUsedAt)} />
@@ -462,5 +463,75 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
         <Preview groupId={groupId} exceptions={ex.value} data={data} />
       </div>
     </Page>
+  );
+}
+
+function SecretBox({ k, weak }: { k: KeyC; weak: boolean }) {
+  const ui = useUi();
+  const [secret, setSecret] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const reveal = async () => {
+    if (secret) return setSecret(null);
+    setBusy(true);
+    await ui.run(async () => setSecret((await api<{ secret: string }>(`keys/${k.id}/secret`)).secret), undefined, { reload: false });
+    setBusy(false);
+  };
+  const copy = async () => {
+    let s = secret;
+    if (!s) {
+      try {
+        s = (await api<{ secret: string }>(`keys/${k.id}/secret`)).secret;
+      } catch (e) {
+        return ui.toast((e as Error).message, true);
+      }
+    }
+    navigator.clipboard.writeText(s).then(
+      () => ui.toast('Key copied'),
+      () => {
+        setSecret(s);
+        ui.toast('Copy blocked: the key is shown, select it and copy', true);
+      },
+    );
+  };
+  const rotate = async () => {
+    const ok = await ui.confirm({ title: `Rotate the key ${k.name}?`, body: 'A new secret replaces the current one. Clients using the old secret stop working right away.', ok: 'Rotate key', danger: true });
+    if (!ok) return;
+    await ui.run(async () => {
+      const r = await api<{ secret: string }>(`keys/${k.id}/rotate`, { body: {} });
+      setSecret(r.secret);
+    }, 'Key rotated. Update your clients with the new secret.');
+  };
+  return (
+    <Section title="Secret">
+      {weak && <Note tone="warn">GUARDRAIL_SECRET is still the default &quot;change-me&quot;, so stored secrets are only weakly protected. Set a long random GUARDRAIL_SECRET (or GUARDRAIL_KEY_SECRET) in .env, then rotate your keys.</Note>}
+      {k.canReveal ? (
+        <div className="cx-form-row center">
+          <code className="cx-secret">{secret ?? `${k.prefix}${'•'.repeat(30)}`}</code>
+          <button type="button" className="cx-btn" disabled={busy} onClick={() => void reveal()}>
+            {secret ? 'Hide' : 'Reveal'}
+          </button>
+          <button type="button" className="cx-btn pri" onClick={() => void copy()}>
+            <Ico n="copy" size={14} /> Copy
+          </button>
+          <button type="button" className="cx-btn" onClick={() => void rotate()}>
+            <Ico n="refresh" size={14} /> Rotate
+          </button>
+        </div>
+      ) : (
+        <div className="cx-form-row center">
+          <code className="cx-secret">{secret ?? `${k.prefix}…`}</code>
+          {secret ? (
+            <button type="button" className="cx-btn pri" onClick={() => void copy()}>
+              <Ico n="copy" size={14} /> Copy
+            </button>
+          ) : (
+            <span className="cx-muted small">Created before reveal was available. Rotate to get a secret you can view.</span>
+          )}
+          <button type="button" className="cx-btn" onClick={() => void rotate()}>
+            <Ico n="refresh" size={14} /> Rotate
+          </button>
+        </div>
+      )}
+    </Section>
   );
 }

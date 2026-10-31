@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDb, now } from './db';
 import { parseIpList } from './ip';
+import { open, seal } from './secret-box';
 import { GroupSettings, SETTING_DEFS, SettingKey, StoredSetting, getGroup, normalizeSetting } from './groups';
 
 export interface ApiKeyRow {
@@ -16,6 +17,7 @@ export interface ApiKeyRow {
   last_used_at: number | null;
   created_at: number;
   ip_allow: string;
+  secret_enc: string | null;
 }
 
 export interface ApiKey {
@@ -31,6 +33,8 @@ export interface ApiKey {
   createdAt: number;
   /** IPs and CIDR ranges this key may be used from; empty means anywhere. */
   ipAllow: string[];
+  /** Whether the secret was stored encrypted and can be shown again. */
+  canReveal: boolean;
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -72,6 +76,7 @@ function parse(r: ApiKeyRow): ApiKey {
     lastUsedAt: r.last_used_at,
     createdAt: r.created_at,
     ipAllow: safeList(r.ip_allow),
+    canReveal: !!r.secret_enc,
   };
 }
 
@@ -96,10 +101,10 @@ export function createKey(input: { name: string; owner: string; groupId: number;
   const secret = generateSecret();
   const r = getDb()
     .prepare(
-      `INSERT INTO api_keys (name, owner, group_id, prefix, hash, exceptions, expires_at, created_at, ip_allow)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO api_keys (name, owner, group_id, prefix, hash, exceptions, expires_at, created_at, ip_allow, secret_enc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(name, owner, input.groupId, secret.slice(0, 13), hashKey(secret), JSON.stringify(cleanExceptions(input.exceptions)), input.expiresAt ?? null, now(), JSON.stringify(ipAllow));
+    .run(name, owner, input.groupId, secret.slice(0, 13), hashKey(secret), JSON.stringify(cleanExceptions(input.exceptions)), input.expiresAt ?? null, now(), JSON.stringify(ipAllow), seal(secret));
   return { key: getKey(Number(r.lastInsertRowid))!, secret };
 }
 
@@ -129,6 +134,21 @@ export function updateKey(id: number, patch: { name?: string; owner?: string; gr
       id,
     );
   return getKey(id)!;
+}
+
+/** The full secret of a key created with reveal support; null for older keys (rotate them to get one). */
+export function revealKey(id: number): string | null {
+  const r = getDb().prepare('SELECT secret_enc FROM api_keys WHERE id = ?').get(id) as { secret_enc: string | null } | undefined;
+  if (!r) throw new Error('Key not found.');
+  return open(r.secret_enc);
+}
+
+/** Replace a key's secret. The old one stops working at once. */
+export function rotateKey(id: number) {
+  if (!getKey(id)) throw new Error('Key not found.');
+  const secret = generateSecret();
+  getDb().prepare('UPDATE api_keys SET prefix = ?, hash = ?, secret_enc = ? WHERE id = ?').run(secret.slice(0, 13), hashKey(secret), seal(secret), id);
+  return { key: getKey(id)!, secret };
 }
 
 export function deleteKey(id: number) {

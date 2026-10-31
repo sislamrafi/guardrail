@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -180,6 +180,8 @@ function migrate(db: Database.Database) {
   const keyCols = new Set((db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map((c) => c.name));
   // Optional IP allow-list per key: JSON list of IPs and CIDR ranges; empty means any address.
   if (!keyCols.has('ip_allow')) db.exec("ALTER TABLE api_keys ADD COLUMN ip_allow TEXT NOT NULL DEFAULT '[]'");
+  // The secret, encrypted (see secret-box.ts), so admins can reveal it. Older keys have only a hash.
+  if (!keyCols.has('secret_enc')) db.exec('ALTER TABLE api_keys ADD COLUMN secret_enc TEXT');
 }
 
 // A fresh install gets one root group so keys can be created right away.
