@@ -44,7 +44,7 @@ export default function GuardPage() {
   return (
     <>
       <PageHead step="Step 5 of 5" title="Guard checks" sub="Two checks run before a request reaches the model. These are the defaults; any group can change them.">
-        <Link href="/groups?tab=guard" className="btn">Group overrides ({overrides})</Link>
+        <Link href="/old/groups?tab=guard" className="btn">Group overrides ({overrides})</Link>
         <button type="button" className="btn pri" disabled={!dirty || busy} onClick={save}>Save defaults</button>
       </PageHead>
       {!data || !g ? (

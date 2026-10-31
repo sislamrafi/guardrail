@@ -98,7 +98,7 @@ function Activity() {
             <section className="card" style={{ flex: '999 1 560px', padding: '8px 8px 4px' }}>
               {rows.length === 0 ? (
                 <div className="empty">
-                  No requests yet. Point a client at <span className="mono">/v1</span> with a key from <Link href="/keys">API keys</Link>.
+                  No requests yet. Point a client at <span className="mono">/v1</span> with a key from <Link href="/old/keys">API keys</Link>.
                 </div>
               ) : (
                 <div className="scroll">
@@ -291,7 +291,7 @@ function Detail({ d, onFeedback }: { d: LogEntry; onFeedback: () => void }) {
             {d.feedback === fb[0] ? `Marked: ${fb[1].toLowerCase()}` : fb[1]}
           </button>
         )}
-        <Link className="btn sm" href="/guard">
+        <Link className="btn sm" href="/old/guard">
           Tune checks
         </Link>
       </div>

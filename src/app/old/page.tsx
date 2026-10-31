@@ -130,7 +130,7 @@ function Body({ d, range }: { d: Overview; range: string }) {
         <section className="card" style={{ flex: '2 1 560px' }}>
           <div className="hd">
             <h2>Recent blocks</h2>
-            <Link href="/activity?filter=blocked" className="small">
+            <Link href="/old/activity?filter=blocked" className="small">
               Open activity
             </Link>
           </div>
@@ -150,7 +150,7 @@ function Body({ d, range }: { d: Overview; range: string }) {
                 </thead>
                 <tbody>
                   {d.recentBlocks.map((r) => (
-                    <tr key={r.id} className="click" onClick={() => (window.location.href = `/activity?id=${r.id}`)}>
+                    <tr key={r.id} className="click" onClick={() => (window.location.href = `/old/activity?id=${r.id}`)}>
                       <td className="mono">{clock(r.ts)}</td>
                       <td>
                         {r.owner ?? <span className="muted">no key · {r.ip ?? '?'}</span>} {r.key_name && <span className="mono muted">{r.key_name}</span>}
@@ -194,14 +194,14 @@ function Body({ d, range }: { d: Overview; range: string }) {
           <section className="card">
             <div className="hd">
               <h2>Servers</h2>
-              <Link href="/servers" className="small">
+              <Link href="/old/servers" className="small">
                 Manage
               </Link>
             </div>
             <div className="stack small" style={{ gap: 10 }}>
               {d.servers.length === 0 && (
                 <div className="muted">
-                  No servers yet. <Link href="/servers">Add a vLLM server</Link>.
+                  No servers yet. <Link href="/old/servers">Add a vLLM server</Link>.
                 </div>
               )}
               {d.servers.map((s) => (

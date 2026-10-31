@@ -78,7 +78,7 @@ export default function ContextPage() {
                   <span className="lbl" style={{ margin: 0, display: 'inline' }}>Group </span>
                   <b>{g?.path}</b>
                 </span>
-                <Link href="/groups" className="small" style={{ color: 'var(--muted)' }}>+ Another group</Link>
+                <Link href="/old/groups" className="small" style={{ color: 'var(--muted)' }}>+ Another group</Link>
               </div>
               <GroupTree groups={data.groups} selectedId={g?.id ?? null} onSelect={setGid} counts={false} />
             </div>
@@ -236,7 +236,7 @@ function Body({ data, g, fileId, setDoc, reload, onDrop }: { data: Data; g: Grou
             <span className="lbl">Keys in the {g.name} group</span>
             <div className="wrap">
               {g.keys.map((k) => <span key={k} className="pill info mono" style={{ fontSize: 12 }}>{k}</span>)}
-              <Link className="btn sm dash" href={`/groups?id=${g.id}&tab=ctx`}>Manage group</Link>
+              <Link className="btn sm dash" href={`/old/groups?id=${g.id}&tab=ctx`}>Manage group</Link>
             </div>
           </div>
           <div>

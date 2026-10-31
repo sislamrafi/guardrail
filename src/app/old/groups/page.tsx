@@ -67,7 +67,7 @@ function Groups() {
         <button type="button" className="btn" onClick={() => setCreating(selId)}>
           + New group
         </button>
-        <Link href="/keys" className="btn blk">
+        <Link href="/old/keys" className="btn blk">
           Next: API keys
         </Link>
       </PageHead>
@@ -423,7 +423,7 @@ function Context({ list, one, save }: { list: List; one: One; save: Save }) {
         <button type="button" className="btn sm" disabled={!add} onClick={() => { void setOwn([...ownIds, Number(add)]); setAdd(''); }}>
           Add
         </button>
-        <Link className="btn sm dash" href="/context">
+        <Link className="btn sm dash" href="/old/context">
           + New context file
         </Link>
       </div>
@@ -459,7 +459,7 @@ function Guard({ one, save }: { one: One; save: Save }) {
       <div>
         <span className="lbl">Checks for {g.name}</span>
         <div className="muted small" style={{ marginBottom: 10 }}>
-          Every group is checked the way the <Link href="/guard">Guard checks page</Link> says. Turn a check off here to let {g.name}{isRoot ? '' : ' and its sub-groups'} skip it. A sub-group can switch it back on.
+          Every group is checked the way the <Link href="/old/guard">Guard checks page</Link> says. Turn a check off here to let {g.name}{isRoot ? '' : ' and its sub-groups'} skip it. A sub-group can switch it back on.
         </div>
         <CheckRow k="piguard_enabled" title="PIGuard (check 1)" sub="Scores every new message and tool result. Clean ones go straight to the model." one={one} save={save} />
         <CheckRow k="oss_enabled" title="Second check (OSS judge)" sub="Reads what PIGuard flagged and decides to block or allow it." one={one} save={save} />
@@ -509,7 +509,7 @@ function Guard({ one, save }: { one: One; save: Save }) {
       </label>
       <div className="wrap">
         <button type="button" className="btn sm blk" onClick={() => void save('oss_prompt', prompt.trim() ? { mode: 'add', value: prompt } : null, 'Prompt saved')}>Save prompt lines</button>
-        <Link href="/guard" className="small">See how the two checks work together</Link>
+        <Link href="/old/guard" className="small">See how the two checks work together</Link>
       </div>
 
       <div className="row" style={{ gap: 16 }}>
@@ -568,7 +568,7 @@ function Keys({ one }: { one: One }) {
           {k.revoked && <span className="pill bad">Revoked</span>}
         </div>
       ))}
-      <Link className="btn sm dash" style={{ alignSelf: 'flex-start' }} href={`/keys?group=${one.group.id}#create`}>
+      <Link className="btn sm dash" style={{ alignSelf: 'flex-start' }} href={`/old/keys?group=${one.group.id}#create`}>
         + Create a key in {one.group.name}
       </Link>
     </div>

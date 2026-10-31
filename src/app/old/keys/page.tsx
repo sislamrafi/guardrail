@@ -46,7 +46,7 @@ function Keys() {
   return (
     <>
       <PageHead step="Step 3 of 5" title="API keys" sub="Each key belongs to one person or bot and one group, so every request can be traced back to them.">
-        <Link href="/context" className="btn blk">
+        <Link href="/old/context" className="btn blk">
           Next: context files
         </Link>
       </PageHead>
@@ -219,7 +219,7 @@ function Preview({ groupId, exceptions, look, groupName }: { groupId: number; ex
           <dt>Rate limit</dt><dd>{e.rate_limit} per minute</dd>
         </dl>
       )}
-      <Link href={`/groups?id=${groupId}`} className="small">See where each rule comes from</Link>
+      <Link href={`/old/groups?id=${groupId}`} className="small">See where each rule comes from</Link>
     </div>
   );
 }

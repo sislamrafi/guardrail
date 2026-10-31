@@ -30,7 +30,7 @@ export default function ServersPage() {
   return (
     <>
       <PageHead step="Step 1 of 5" title="Servers and models" sub="Paste a vLLM server address. GuardRail finds the models it serves on its own.">
-        <Link href="/groups" className="btn blk">
+        <Link href="/old/groups" className="btn blk">
           Next: groups
         </Link>
       </PageHead>
@@ -195,7 +195,7 @@ function Limits({ data, onAdd, reload }: { data: Data; onAdd: (l: Partial<LimitV
         + Add a rule
       </button>
       <div className="muted" style={{ fontSize: 12 }}>
-        Who may use a server or model is set on <Link href="/groups">groups</Link>. These rules are limits that apply on top, to everyone.
+        Who may use a server or model is set on <Link href="/old/groups">groups</Link>. These rules are limits that apply on top, to everyone.
       </div>
     </aside>
   );

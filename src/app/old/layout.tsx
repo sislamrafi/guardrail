@@ -1,3 +1,4 @@
+import '../globals.css';
 import { Shell } from '@/components/shell';
 
 export const dynamic = 'force-dynamic';

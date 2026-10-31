@@ -17,20 +17,20 @@ interface Summary {
 }
 
 const MONITOR = [
-  { href: '/', label: 'Overview', icon: 'grid' },
-  { href: '/activity', label: 'Activity', icon: 'list' },
-  { href: '/studio', label: 'Studio', icon: 'send' },
+  { href: '/old', label: 'Overview', icon: 'grid' },
+  { href: '/old/activity', label: 'Activity', icon: 'list' },
+  { href: '/old/studio', label: 'Studio', icon: 'send' },
 ];
 const SETUP = [
-  { href: '/servers', label: 'Servers and models' },
-  { href: '/groups', label: 'Groups' },
-  { href: '/keys', label: 'API keys' },
-  { href: '/context', label: 'Context files' },
-  { href: '/guard', label: 'Guard checks' },
+  { href: '/old/servers', label: 'Servers and models' },
+  { href: '/old/groups', label: 'Groups' },
+  { href: '/old/keys', label: 'API keys' },
+  { href: '/old/context', label: 'Context files' },
+  { href: '/old/guard', label: 'Guard checks' },
 ];
 const ADVANCED = [
-  { href: '/rules', label: 'Custom rules', icon: 'filter' },
-  { href: '/schemas', label: 'Schemas', icon: 'braces' },
+  { href: '/old/rules', label: 'Custom rules', icon: 'filter' },
+  { href: '/old/schemas', label: 'Schemas', icon: 'braces' },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -44,23 +44,23 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     api<Summary>('summary').then(setSum).catch(() => undefined);
   }, [path]);
-  const on = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+  const on = (href: string) => (href === '/old' ? path === '/old' : path.startsWith(href));
 
   return (
     <ToastProvider>
       <div className="gr">
         <div className="app">
           <header className="topbar">
-            <Link href="/" className="brand">
+            <Link href="/old" className="brand">
               <Icon name="shieldCheck" size={24} stroke={2.2} color="#3A1FD1" />
               <b>GuardRail AI</b>
               <span className="chip">gateway</span>
             </Link>
             <div className="wrap" style={{ gap: 12 }}>
-              <Link href="/keys#create" className="btn blk">
+              <Link href="/old/keys#create" className="btn blk">
                 New API key
               </Link>
-              <Link href="/activity?filter=blocked" className="iconbtn" aria-label={`Blocked requests today: ${sum?.blockedToday ?? 0}`} title={`${sum?.blockedToday ?? 0} blocked in the last 24 hours`}>
+              <Link href="/old/activity?filter=blocked" className="iconbtn" aria-label={`Blocked requests today: ${sum?.blockedToday ?? 0}`} title={`${sum?.blockedToday ?? 0} blocked in the last 24 hours`}>
                 <Icon name="shieldAlert" size={18} />
                 {!!sum?.blockedToday && <span className="dotbadge" />}
               </Link>
