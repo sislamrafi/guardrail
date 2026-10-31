@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSetting, resolveLayers } from '@/lib/groups';
+import { type Layer, normalizeSetting, resolveLayers } from '@/lib/groups';
 import { detectSchema } from '@/lib/schemas';
 import { builtinScore, newSegments, parseVerdict, renderBlocked, stripClineEnvironment } from '@/lib/guard';
 import { injectContext } from '@/lib/gateway';
@@ -9,13 +9,13 @@ import { mergeKnown, DEFAULT_SETTINGS } from '@/lib/settings';
 import { takeToken } from '@/lib/limits';
 import { parsePromptFile, renderPromptFile } from '@/lib/prompt-files';
 
-const defaults = { piguard_enabled: true, oss_enabled: true, piguard_threshold: 0.7, oss_prompt: 'BASE', blocked_reply: 'Blocked: {reason}', rate_limit: 120 };
+const defaults = { blocked_reply: 'Blocked: {reason}', rate_limit: 120 };
 
 describe('group inheritance', () => {
-  const layers = [
+  const layers: Layer[] = [
     { name: 'Company', settings: { models: { mode: 'set' as const, value: ['small'] }, context: { mode: 'set' as const, value: [1, 2] } } },
-    { name: 'Engineering', settings: { models: { mode: 'add' as const, value: ['large'] }, rate_limit: { mode: 'override' as const, value: 200 }, oss_prompt: { mode: 'add' as const, value: 'Infra files are fine.' } } },
-    { name: 'Frontend', settings: { context: { mode: 'add' as const, value: [3] }, piguard_threshold: { mode: 'override' as const, value: 0.6 } } },
+    { name: 'Engineering', settings: { models: { mode: 'add' as const, value: ['large'] }, rate_limit: { mode: 'override' as const, value: 200 }, layer_opts: { mode: 'override' as const, value: { judge: { prompt: 'Infra files are fine.' } } } } },
+    { name: 'Frontend', settings: { context: { mode: 'add' as const, value: [3] }, layer_opts: { mode: 'override' as const, value: { scorer: { threshold: 0.6 } } } } },
   ];
 
   it('adds, overrides and inherits down the chain', () => {
@@ -23,9 +23,9 @@ describe('group inheritance', () => {
     expect(r.effective.models).toEqual(['small', 'large']);
     expect(r.effective.context).toEqual([1, 2, 3]);
     expect(r.effective.rate_limit).toBe(200);
-    expect(r.effective.piguard_threshold).toBe(0.6);
+    expect(r.effective.layer_opts.scorer.threshold).toBe(0.6);
     expect(r.effective.servers).toBeNull();
-    expect(r.effective.oss_prompt).toBe('BASE\n\n# Added by Engineering\nInfra files are fine.');
+    expect(r.effective.layer_opts.judge.prompt_parts).toEqual([{ from: 'Engineering', text: 'Infra files are fine.' }]);
     expect(r.sources.models).toEqual(['Company', 'Engineering']);
     expect(r.sources.rate_limit).toEqual(['Engineering']);
     expect(r.sources.blocked_reply).toEqual(['Default']);
@@ -45,37 +45,34 @@ describe('group inheritance', () => {
     expect(r.effective.context).toEqual([1, 2, 3, 9]);
   });
 
-  describe('turning the checks off for a group', () => {
-    const off = { mode: 'override' as const, value: false };
-    const on = { mode: 'override' as const, value: true };
-
-    it('starts from the Guard checks page: every group is checked unless it says otherwise', () => {
-      const r = resolveLayers([{ name: 'Company', settings: {} }, { name: 'Dev', settings: {} }], defaults);
-      expect([r.effective.piguard_enabled, r.effective.oss_enabled]).toEqual([true, true]);
-      const offEverywhere = resolveLayers([{ name: 'Company', settings: {} }], { ...defaults, piguard_enabled: false, oss_enabled: false });
-      expect([offEverywhere.effective.piguard_enabled, offEverywhere.effective.oss_enabled]).toEqual([false, false]);
-    });
-
-    it('lets a group bypass either check and a sub-group switch one back on', () => {
+  describe('per-group guard layer settings', () => {
+    it('turns layers on or off by id, the nearest group winning', () => {
       const r = resolveLayers(
         [
           { name: 'Company', settings: {} },
-          { name: 'Contractors', settings: { piguard_enabled: off, oss_enabled: off } },
-          { name: 'Reviewed', settings: { oss_enabled: on } },
+          { name: 'Contractors', settings: { layers: { mode: 'override', value: { scan: false, judge: false } } } },
+          { name: 'Reviewed', settings: { layers: { mode: 'override', value: { judge: true } } } },
         ],
         defaults,
       );
-      expect(r.effective.piguard_enabled).toBe(false);
-      expect(r.effective.oss_enabled).toBe(true);
-      expect(r.sources.piguard_enabled).toEqual(['Contractors']);
-      expect(r.sources.oss_enabled).toEqual(['Reviewed']);
-      expect(r.matrix.find((m) => m.key === 'piguard_enabled')!.cells.map((c) => c.state)).toEqual(['inherited', 'override', 'inherited']);
+      expect(r.effective.layers).toEqual({ scan: false, judge: true });
     });
 
-    it('stores a flag as a plain on/off value and rejects anything else', () => {
-      expect(normalizeSetting('piguard_enabled', { mode: 'add', value: false }, false)).toEqual({ mode: 'override', value: false });
-      expect(normalizeSetting('oss_enabled', { mode: 'override', value: true }, true)).toEqual({ mode: 'set', value: true });
-      expect(() => normalizeSetting('oss_enabled', { mode: 'override', value: 'yes' }, false)).toThrow(/on or off/);
+    it('keeps the nearest threshold and every group\'s prompt lines, in order', () => {
+      const r = resolveLayers(
+        [
+          { name: 'Company', settings: { layer_opts: { mode: 'set', value: { scan: { threshold: 0.7 }, judge: { prompt: 'A' } } } } },
+          { name: 'Dev', settings: { layer_opts: { mode: 'override', value: { scan: { threshold: 0.5 }, judge: { prompt: 'B' } } } } },
+        ],
+        defaults,
+      );
+      expect(r.effective.layer_opts.scan).toMatchObject({ threshold: 0.5, thresholdFrom: 'Dev' });
+      expect(r.effective.layer_opts.judge.prompt_parts.map((p) => p.text)).toEqual(['A', 'B']);
+    });
+
+    it('stores layer settings cleanly and rejects a threshold outside 0-1', () => {
+      expect(normalizeSetting('layer_opts', { mode: 'add', value: { scan: { threshold: 0.4, prompt: '  ' } } }, false)).toEqual({ mode: 'override', value: { scan: { threshold: 0.4 } } });
+      expect(() => normalizeSetting('layer_opts', { mode: 'override', value: { scan: { threshold: 2 } } }, false)).toThrow(/between 0 and 1/);
     });
   });
 });
@@ -241,5 +238,27 @@ describe('prompt files', () => {
     const md = renderPromptFile({ ...base, prompt, forwarded: null });
     expect(md).toContain('Nothing was sent to the model.');
     expect(parsePromptFile(md)).toEqual({ prompt, forwarded: null });
+  });
+});
+
+describe('old group guard settings move onto layers', () => {
+  it('maps PIGuard/OSS keys to layer on/off, thresholds and prompt lines, then drops them', async () => {
+    const { openDb } = await import('@/lib/db');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gr-mig-')), 'g.db');
+    const db = openDb(file);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('app', ?)").run(JSON.stringify({ guard: { layers: [{ id: 'piguard', type: 'classifier' }, { id: 'judge', type: 'judge' }] } }));
+    const legacy = { piguard_enabled: { mode: 'override', value: false }, piguard_threshold: { mode: 'override', value: 0.6 }, oss_prompt: { mode: 'add', value: 'Fixtures are fake.' }, rate_limit: { mode: 'override', value: 50 } };
+    const root = db.prepare('SELECT id FROM groups WHERE parent_id IS NULL').get() as { id: number };
+    const id = Number(db.prepare("INSERT INTO groups (name, parent_id, description, settings, created_at) VALUES ('Old', ?, '', ?, 0)").run(root.id, JSON.stringify(legacy)).lastInsertRowid);
+    db.close();
+    const reopened = openDb(file);
+    const st = JSON.parse((reopened.prepare('SELECT settings FROM groups WHERE id = ?').get(id) as { settings: string }).settings);
+    reopened.close();
+    expect(Object.keys(st).sort()).toEqual(['layer_opts', 'layers', 'rate_limit']);
+    expect(st.layers.value).toEqual({ piguard: false });
+    expect(st.layer_opts.value).toEqual({ piguard: { threshold: 0.6 }, judge: { prompt: 'Fixtures are fake.' } });
   });
 });

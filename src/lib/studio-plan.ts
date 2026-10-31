@@ -20,7 +20,7 @@ export interface Plan {
   models: { allowed: string[]; picked: string; ok: boolean; servers: string[] };
   rules: { id: number; name: string; action: string; target: string; match: string; pattern: string; from: string }[];
   context: { placement: 'top' | 'end'; policy: string; tokens: number; files: { id: number; name: string; version: number; tokens: number; from: string; body: string }[] };
-  layers: { id: string; n: number; name: string; type: string; on: boolean; why: string; model: string; server: string | null; adapter: string; scope: string; onFail: string; onError: string; threshold: number; timeoutMs: number }[];
+  layers: { id: string; n: number; name: string; type: string; on: boolean; why: string; model: string; server: string | null; adapter: string; scope: string; onFail: string; onError: string; threshold: number; timeoutMs: number; groupLines: string[] }[];
   unresolvedFlag: string;
   blockedReply: string;
   rateLimit: number;
@@ -34,6 +34,10 @@ const show = (v: unknown, names: Map<number, string>, key: string): string => {
   if (key === 'servers' && Array.isArray(v)) return v.map((id) => getServer(Number(id))?.name ?? `#${id}`).join(', ') || 'none';
   if (Array.isArray(v)) return v.join(', ') || 'none';
   if (typeof v === 'boolean') return v ? 'on' : 'off';
+  if (key === 'layer_opts' && typeof v === 'object') {
+    const parts = Object.entries(v as Record<string, { threshold?: number | null; prompt?: string; prompt_parts?: unknown[] }>).flatMap(([id, o]) => [o.threshold != null ? `${id} at ${Number(o.threshold).toFixed(2)}` : '', o.prompt || o.prompt_parts?.length ? `${id} + prompt lines` : ''].filter(Boolean));
+    return parts.join(', ') || 'layer defaults';
+  }
   if (typeof v === 'object') return Object.entries(v as Record<string, boolean>).map(([k, on]) => `${k}: ${on ? 'on' : 'off'}`).join(', ') || 'none';
   return String(v);
 };
@@ -54,7 +58,7 @@ export function planFor(input: { keyId?: number; groupId?: number; model: string
   const params = res.matrix.map((row) => ({
     key: row.key,
     label: row.label,
-    value: row.key === 'oss_prompt' ? (eff.oss_prompt_parts.length ? `default + ${eff.oss_prompt_parts.length} added part(s)` : 'default') : show(eff[row.key as keyof typeof eff], names, row.key),
+    value: show(eff[row.key as keyof typeof eff], names, row.key),
     from: res.sources[row.key],
     cells: row.cells.map((c, i) => ({ group: layerNames[i] ?? '?', state: c.state, value: c.state === 'inherited' ? '' : show(c.value, names, row.key) })),
   }));
@@ -84,9 +88,9 @@ export function planFor(input: { keyId?: number; groupId?: number; model: string
   const picked = input.layers ? all.filter((l) => input.layers!.includes(l.id)) : all;
   const layers = picked.map((l, i) => {
     const on = layerOn(l, eff);
-    const groupChoice = l.id in eff.layers || l.id === 'piguard' || l.id === 'judge';
-    const why = !on ? (l.enabled && groupChoice ? `Turned off by ${res.sources[l.id === 'piguard' ? 'piguard_enabled' : l.id === 'judge' ? 'oss_enabled' : 'layers'].join(' › ')}` : 'Switched off on the Guard checks page') : l.enabled ? 'On' : `Turned on by ${res.sources.layers.join(' › ')}`;
-    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: l.threshold, timeoutMs: l.timeoutMs };
+    const why = !on ? (l.enabled && l.id in eff.layers ? `Turned off by ${res.sources.layers.join(' › ')}` : 'Switched off on the Guard checks page') : l.enabled ? 'On' : `Turned on by ${res.sources.layers.join(' › ')}`;
+    const o = eff.layer_opts[l.id];
+    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: o?.threshold ?? l.threshold, timeoutMs: l.timeoutMs, groupLines: (o?.prompt_parts ?? []).map((p) => `${p.from}: ${p.text}`) };
   });
 
   return {

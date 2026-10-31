@@ -393,7 +393,7 @@ const routes: Record<string, Handler> = {
       servers: servers.length,
       groups: listGroups().length,
       keys: listKeys().filter((k) => !k.revoked).length,
-      guard: getSettings().guard.piguard.enabled || getSettings().guard.oss.enabled,
+      guard: getSettings().guard.layers.some((l) => l.enabled),
       blockedToday: countByFilter(Date.now() - 86400_000).blocked,
       name: process.env.GUARDRAIL_ADMIN_NAME || 'Admin',
       authEnabled: !!process.env.GUARDRAIL_ADMIN_PASSWORD,

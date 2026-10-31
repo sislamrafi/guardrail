@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { display } from '@/components/format-setting';
 import { GroupTree } from '@/components/group-tree';
@@ -201,9 +201,8 @@ function Detail({ list, one, tab, setTab, reload, onSelect }: { list: List; one:
 
 function effValue(key: SettingKey, r: Resolution): SettingValue {
   const e = r.effective;
-  if (key === 'oss_prompt') return e.oss_prompt_parts.length ? `Default + ${e.oss_prompt_parts.map((p) => p.from).join(' + ')}` : 'Default security policy';
   if (key === 'blocked_reply') return e.blocked_reply.split('\n')[0];
-  return e[key] as SettingValue;
+  return e[key] as unknown as SettingValue;
 }
 
 function Effective({ list, one }: { list: List; one: One }) {
@@ -433,85 +432,18 @@ function Context({ list, one, save }: { list: List; one: One; save: Save }) {
 
 function Guard({ one, save }: { one: One; save: Save }) {
   const g = one.group;
-  const isRoot = g.parentId === null;
   const eff = one.resolution.effective;
-  const src = one.resolution.sources;
-  const ownT = g.settings.piguard_threshold;
-  const [t, setT] = useState(Number(ownT?.value ?? eff.piguard_threshold));
-  const ownPrompt = g.settings.oss_prompt;
-  const [prompt, setPrompt] = useState(String(ownPrompt?.value ?? ''));
   const [reply, setReply] = useState(String(g.settings.blocked_reply?.value ?? ''));
   const [rate, setRate] = useState(String(g.settings.rate_limit?.value ?? ''));
   useEffect(() => {
-    setT(Number(g.settings.piguard_threshold?.value ?? one.resolution.effective.piguard_threshold));
-    setPrompt(String(g.settings.oss_prompt?.value ?? ''));
     setReply(String(g.settings.blocked_reply?.value ?? ''));
     setRate(String(g.settings.rate_limit?.value ?? ''));
-  }, [g, one.resolution.effective.piguard_threshold]);
-  const inherited = useMemo(() => {
-    const parts = eff.oss_prompt_parts.filter((p) => p.from !== g.name);
-    const base = ownPrompt?.mode === 'override' ? '' : '# Default (Guard checks page)\n…';
-    return [base, ...parts.map((p) => `# from ${p.from}\n${p.text}`)].filter(Boolean).join('\n\n');
-  }, [eff, g.name, ownPrompt]);
-
+  }, [g]);
   return (
     <div className="stack" style={{ gap: 18 }}>
-      <div>
-        <span className="lbl">Checks for {g.name}</span>
-        <div className="muted small" style={{ marginBottom: 10 }}>
-          Every group is checked the way the <Link href="/old/guard">Guard checks page</Link> says. Turn a check off here to let {g.name}{isRoot ? '' : ' and its sub-groups'} skip it. A sub-group can switch it back on.
-        </div>
-        <CheckRow k="piguard_enabled" title="PIGuard (check 1)" sub="Scores every new message and tool result. Clean ones go straight to the model." one={one} save={save} />
-        <CheckRow k="oss_enabled" title="Second check (OSS judge)" sub="Reads what PIGuard flagged and decides to block or allow it." one={one} save={save} />
-        {!eff.piguard_enabled && !eff.oss_enabled && <div className="exc" style={{ marginTop: 10 }}>Both checks are off for {g.name}. Requests from its keys go straight to the model, so nothing is screened for prompt injection.</div>}
-        {!eff.piguard_enabled && eff.oss_enabled && <div className="note" style={{ marginTop: 10 }}>PIGuard is off, so every request with new content goes to the second check, which decides alone.</div>}
-        {eff.piguard_enabled && !eff.oss_enabled && <div className="note" style={{ marginTop: 10 }}>The second check is off, so a request PIGuard flags is handled by the &quot;if it fails or times out&quot; setting on the Guard checks page.</div>}
+      <div className="note">
+        Guard checks are now layers. Turn layers on or off for {g.name}, and change their thresholds and prompt lines, on this group&apos;s page in the <Link href={`/groups/${g.id}`}>new console</Link>.
       </div>
-
-      <div className="grid-kpi" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-        <div className="cell c-res" style={{ padding: 14 }}>
-          <span className="lbl" style={{ margin: 0 }}>PIGuard flags at score</span>
-          <span style={{ fontSize: 20, fontWeight: 700 }}>{eff.piguard_threshold.toFixed(2)}</span>
-          <span className="muted" style={{ fontSize: 12 }}>From {src.piguard_threshold.join(' + ')}</span>
-        </div>
-        <div className="cell c-res" style={{ padding: 14 }}>
-          <span className="lbl" style={{ margin: 0 }}>{eff.piguard_enabled ? 'When PIGuard flags' : 'How requests are checked'}</span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>
-            {!eff.piguard_enabled && !eff.oss_enabled ? 'Not checked, straight to the model' : !eff.piguard_enabled ? 'Every request goes to check 2' : !eff.oss_enabled ? 'Flagged requests follow the failure setting' : 'Ask the OSS check'}
-          </span>
-          <span className="muted" style={{ fontSize: 12 }}>From the checks below and the Guard checks page</span>
-        </div>
-        <div className="cell c-res" style={{ padding: 14 }}>
-          <span className="lbl" style={{ margin: 0 }}>Rate limit</span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{eff.rate_limit} per minute per key</span>
-          <span className="muted" style={{ fontSize: 12 }}>From {src.rate_limit.join(' + ')}</span>
-        </div>
-      </div>
-
-      <div className="stack">
-        <div className="between">
-          <span className="lbl" style={{ margin: 0 }}>PIGuard score for {g.name}: <span className="mono" style={{ color: 'var(--ink)' }}>{t.toFixed(2)}</span></span>
-          {ownT && <button type="button" className="btn sm" onClick={() => void save('piguard_threshold', null, 'Back to the inherited score')}>Use inherited</button>}
-        </div>
-        <input type="range" min={0.3} max={0.95} step={0.05} value={t} onChange={(e) => setT(Number(e.target.value))} onMouseUp={() => void save('piguard_threshold', { mode: 'override', value: t }, `${g.name} flags at ${t.toFixed(2)}`)} onKeyUp={() => void save('piguard_threshold', { mode: 'override', value: t })} aria-label="PIGuard threshold" />
-        <div className="muted small">{eff.piguard_enabled ? 'Lower catches more but sends more requests to check 2.' : `PIGuard is off for ${g.name}, so this score is not used until it is switched back on.`}</div>
-      </div>
-
-      {!isRoot && (
-        <div>
-          <span className="lbl">OSS check system prompt, inherited part</span>
-          <div className="inhbox">{inherited || 'Nothing inherited.'}</div>
-        </div>
-      )}
-      <label>
-        <span className="lbl">{isRoot ? 'Lines this group adds to the default OSS prompt' : `Added by ${g.name} (appended to the inherited prompt)`}</span>
-        <textarea className="own" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="For example: Files in tests/fixtures contain fake secrets on purpose." />
-      </label>
-      <div className="wrap">
-        <button type="button" className="btn sm blk" onClick={() => void save('oss_prompt', prompt.trim() ? { mode: 'add', value: prompt } : null, 'Prompt saved')}>Save prompt lines</button>
-        <Link href="/old/guard" className="small">See how the two checks work together</Link>
-      </div>
-
       <div className="row" style={{ gap: 16 }}>
         <label style={{ flex: '2 1 320px' }}>
           <span className="lbl">Blocked reply for {g.name} (empty = inherited: {display('blocked_reply', eff.blocked_reply, { files: [], servers: [] })})</span>
@@ -523,33 +455,6 @@ function Guard({ one, save }: { one: One; save: Save }) {
           <input className="inp" type="number" min={1} value={rate} onChange={(e) => setRate(e.target.value)} />
           <button type="button" className="btn sm" style={{ marginTop: 8 }} onClick={() => void save('rate_limit', rate ? { mode: 'override', value: Number(rate) } : null, 'Rate limit saved')}>Save limit</button>
         </label>
-      </div>
-    </div>
-  );
-}
-
-function CheckRow({ k, title, sub, one, save }: { k: 'piguard_enabled' | 'oss_enabled'; title: string; sub: string; one: One; save: Save }) {
-  const g = one.group;
-  const isRoot = g.parentId === null;
-  const stored = g.settings[k];
-  const cur = !stored ? 'inherit' : stored.value === true ? 'on' : 'off';
-  const effective = one.resolution.effective[k];
-  return (
-    <div className="chk">
-      <div>
-        <h3>{title}</h3>
-        <div className="sub">{sub}</div>
-        <div className="state">
-          <span className={effective ? 'pill ok' : 'pill warn'}>{effective ? 'On' : 'Off'}</span>
-          <span className="muted">for {g.name} · from {one.resolution.sources[k].join(' + ')}</span>
-        </div>
-      </div>
-      <div className="seg" role="group" aria-label={title}>
-        <button type="button" className={cur === 'inherit' ? 'on' : ''} onClick={() => void save(k, null, `${title}: ${isRoot ? 'back to the Guard checks page' : 'same as the parent group'}`)}>
-          {isRoot ? 'Guard checks page' : 'Same as parent'}
-        </button>
-        <button type="button" className={cur === 'on' ? 'on' : ''} onClick={() => void save(k, { mode: 'override', value: true }, `${title} is on for ${g.name}`)}>On</button>
-        <button type="button" className={cur === 'off' ? 'on' : ''} onClick={() => void save(k, { mode: 'override', value: false }, `${title} is off for ${g.name}`)}>Off (bypass)</button>
       </div>
     </div>
   );

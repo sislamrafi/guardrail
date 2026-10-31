@@ -12,7 +12,7 @@ interface Overview {
   counts: { all: number; blocked: number; false_alarm: number; clean: number; error: number };
   change: number | null;
   overheadP95: number | null;
-  ossP50: number | null;
+  guardP50: number | null;
   buckets: { t: number; label: string; total: number; blocked: number }[];
   stages: { key: string; name: string; p50: number }[];
   recentBlocks: LogEntry[];
@@ -68,8 +68,8 @@ export function OverviewPage() {
             <Stat label="Blocked" value={fmt(d.counts.blocked)} tone={d.counts.blocked ? 'bad' : undefined} />
             <Stat label="False alarms corrected" value={fmt(d.counts.false_alarm)} tone={d.counts.false_alarm ? 'warn' : undefined} />
             <Stat label="Errors" value={fmt(d.counts.error)} tone={d.counts.error ? 'bad' : undefined} />
-            <Stat label="Guard overhead p95" value={ms(d.overheadP95)} hint="Time GuardRail adds before the model, excluding check 2" />
-            <Stat label="Check 2 p50" value={ms(d.ossP50)} />
+            <Stat label="Guard overhead p95" value={ms(d.overheadP95)} hint="Time GuardRail adds before the model: checks, guard layers and context" />
+            <Stat label="Guard layers p50" value={ms(d.guardP50)} hint="Time all guard layers take together on a typical request" />
           </div>
           <Section title="Requests" hint="Red is the share that was blocked.">
             {d.counts.all === 0 ? (

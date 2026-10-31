@@ -24,9 +24,7 @@ export function layerState(layer: GuardLayer, g: GroupC, groups: GroupC[]): { on
   let own: boolean | null = null;
   for (const c of chain) {
     const map = (c.settings.layers?.value ?? null) as Record<string, boolean> | null;
-    let v: boolean | undefined = map && layer.id in map ? map[layer.id] : undefined;
-    if (v === undefined && layer.id === 'piguard' && c.settings.piguard_enabled) v = c.settings.piguard_enabled.value === true;
-    if (v === undefined && layer.id === 'judge' && c.settings.oss_enabled) v = c.settings.oss_enabled.value === true;
+    const v: boolean | undefined = map && layer.id in map ? map[layer.id] : undefined;
     if (v !== undefined) {
       on = v;
       from = c.name;

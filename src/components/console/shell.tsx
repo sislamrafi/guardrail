@@ -25,9 +25,9 @@ import { ScenarioChat, StudioHome } from './views/studio';
 const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'overview', label: 'Overview', icon: 'overview' },
   { view: 'activity', label: 'Activity', icon: 'activity' },
-  { view: 'guard', label: 'Guard checks', icon: 'guard' },
   { view: 'groups', label: 'Groups', icon: 'groups' },
   { view: 'keys', label: 'API keys', icon: 'keys' },
+  { view: 'guard', label: 'Guard checks', icon: 'guard' },
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
   { view: 'schemas', label: 'Schemas', icon: 'braces' },

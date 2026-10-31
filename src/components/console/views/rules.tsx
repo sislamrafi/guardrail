@@ -9,7 +9,7 @@ import { api, useStore, useUi } from '../store';
 import type { Rule } from '../types';
 
 const TARGET = { any: 'any new text', user: 'the user message', tool: 'a tool result' } as const;
-const ACTION = { block: 'Block with a reply', redact: 'Redact the match', escalate: 'Send to check 2' } as const;
+const ACTION = { block: 'Block with a reply', redact: 'Redact the match', escalate: 'Flag for the guard layers' } as const;
 const TONE = { block: 'bad', redact: 'warn', escalate: 'info' } as const;
 
 export function RulesHome() {
@@ -142,7 +142,7 @@ function RuleForm({ r }: { r: Partial<Rule> }) {
             </Field>
           )}
           {v.action === 'redact' && <p className="cx-hint">The matching text is replaced with [REDACTED] and the request goes on.</p>}
-          {v.action === 'escalate' && <p className="cx-hint">The request goes to check 2 even if PIGuard scores it clean.</p>}
+          {v.action === 'escalate' && <p className="cx-hint">The request is marked flagged, so guard layers set to judge only flagged requests look at it, even if no earlier layer flagged it.</p>}
         </Section>
         <Field label="Try it on sample text" hint={test ?? undefined}>
           <input className="cx-input mono" value={sample} onChange={(e) => setSample(e.target.value)} />

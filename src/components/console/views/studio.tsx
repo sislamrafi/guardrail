@@ -463,7 +463,7 @@ function MetaDialog({ sc, onClose }: { sc: Scenario; onClose: () => void }) {
         <input className="cx-input" value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
       <Field label="Expected outcome / notes">
-        <textarea className="cx-input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Should be blocked by the OSS judge." />
+        <textarea className="cx-input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Should be blocked by the judge layer." />
       </Field>
       <Field label="Tags (comma separated)">
         <input className="cx-input" value={tags} onChange={(e) => setTags(e.target.value)} />

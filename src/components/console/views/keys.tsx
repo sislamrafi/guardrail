@@ -10,7 +10,7 @@ import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { Data, GroupSettings, KeyC, Resolution } from '../types';
 
-const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })) });
+const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
 
 function excText(e: GroupSettings, data: Data) {
   const L = lookups(data);
@@ -18,8 +18,16 @@ function excText(e: GroupSettings, data: Data) {
   if (e.context) parts.push(`+ ${display('context', e.context.value, L)}`);
   if (e.models) parts.push(`+ ${display('models', e.models.value, L)}`);
   if (e.rate_limit) parts.push(`${e.rate_limit.value}/min`);
-  if (e.piguard_threshold) parts.push(`PIGuard ${Number(e.piguard_threshold.value).toFixed(2)}`);
   return parts.join(', ');
+}
+
+/** Which guard layers run for this key's group, in order, with any threshold a group changed. */
+function guardText(e: Resolution['effective'], data: Data) {
+  const layers = data.settings.guard.layers;
+  if (!layers.length) return 'No guard layers yet';
+  const on = layers.filter((l) => (l.id in e.layers ? e.layers[l.id] : l.enabled));
+  if (!on.length) return <b>All off (bypassed)</b>;
+  return on.map((l) => `${l.name}${e.layer_opts[l.id]?.threshold != null ? ` at ${e.layer_opts[l.id].threshold!.toFixed(2)}` : ''}`).join(' → ');
 }
 
 const status = (k: KeyC) => {
@@ -243,10 +251,8 @@ function Preview({ groupId, exceptions, data }: { groupId: number; exceptions: G
           <dd className="mono">{display('models', e.models, L)}</dd>
           <dt>Context</dt>
           <dd className="mono">{display('context', e.context, L)}</dd>
-          <dt>Check 1</dt>
-          <dd>{e.piguard_enabled ? `PIGuard, flags at ${e.piguard_threshold.toFixed(2)}` : <b>Off (bypassed)</b>}</dd>
-          <dt>Check 2</dt>
-          <dd>{e.oss_enabled ? `OSS judge${e.oss_prompt_parts.length ? ` + ${e.oss_prompt_parts.map((p) => p.from).join(', ')} lines` : ''}` : <b>Off (bypassed)</b>}</dd>
+          <dt>Guard layers</dt>
+          <dd>{guardText(e, data)}</dd>
           <dt>Rate limit</dt>
           <dd>{e.rate_limit} per minute</dd>
         </dl>

@@ -53,19 +53,19 @@ setGroupSetting(root.id, 'context', { mode: 'set', value: [overview.id, security
 const eng = createGroup({ name: 'Engineering', parentId: root.id, description: 'All developers. Adds the large model and a higher rate limit.' });
 setGroupSetting(eng.id, 'models', { mode: 'add', value: ['gpt-oss-120b'] });
 setGroupSetting(eng.id, 'rate_limit', { mode: 'override', value: 200 });
-setGroupSetting(eng.id, 'oss_prompt', { mode: 'add', value: 'Developers may read infra/ and deploy/ config files.' });
+setGroupSetting(eng.id, 'layer_opts', { mode: 'override', value: { judge: { prompt: 'Developers may read infra/ and deploy/ config files.' } } });
 
 const fe = createGroup({ name: 'Frontend', parentId: eng.id, description: 'Web app developers. Adds the frontend context and a stricter first check.' });
 setGroupSetting(fe.id, 'context', { mode: 'add', value: [frontend.id] });
-setGroupSetting(fe.id, 'piguard_threshold', { mode: 'override', value: 0.6 });
+setGroupSetting(fe.id, 'layer_opts', { mode: 'override', value: { piguard: { threshold: 0.6 } } });
 
 const be = createGroup({ name: 'Backend', parentId: eng.id, description: 'API and database developers.' });
 setGroupSetting(be.id, 'context', { mode: 'add', value: [backend.id] });
-setGroupSetting(be.id, 'oss_prompt', { mode: 'add', value: 'Database migration files may contain example passwords; these are test data.' });
+setGroupSetting(be.id, 'layer_opts', { mode: 'override', value: { judge: { prompt: 'Database migration files may contain example passwords; these are test data.' } } });
 
 const qaG = createGroup({ name: 'QA', parentId: root.id, description: 'Test writers. Small model only.' });
 setGroupSetting(qaG.id, 'context', { mode: 'add', value: [qa.id] });
-setGroupSetting(qaG.id, 'oss_prompt', { mode: 'add', value: 'Files in tests/fixtures contain fake secrets on purpose.' });
+setGroupSetting(qaG.id, 'layer_opts', { mode: 'override', value: { judge: { prompt: 'Files in tests/fixtures contain fake secrets on purpose.' } } });
 
 const ci = createGroup({ name: 'CI bots', parentId: root.id, description: 'Automated runners, high rate limit.' });
 setGroupSetting(ci.id, 'rate_limit', { mode: 'override', value: 600 });

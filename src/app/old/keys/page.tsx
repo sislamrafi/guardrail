@@ -124,7 +124,6 @@ function excText(e: GroupSettings, look: Lookups) {
   if (e.context) parts.push(`+ ${display('context', e.context.value, look)}`);
   if (e.models) parts.push(`+ ${display('models', e.models.value, look)}`);
   if (e.rate_limit) parts.push(`Rate ${e.rate_limit.value} per min`);
-  if (e.piguard_threshold) parts.push(`PIGuard ${Number(e.piguard_threshold.value).toFixed(2)}`);
   return parts.join(', ');
 }
 
@@ -214,8 +213,7 @@ function Preview({ groupId, exceptions, look, groupName }: { groupId: number; ex
           <dt>Servers</dt><dd>{display('servers', e.servers, look)}</dd>
           <dt>Models</dt><dd className="mono">{display('models', e.models, look)}</dd>
           <dt>Context</dt><dd className="mono">{display('context', e.context, look)}</dd>
-          <dt>First check</dt><dd>{e.piguard_enabled ? `PIGuard, flags at ${e.piguard_threshold.toFixed(2)}` : <b>Off for this group (bypassed)</b>}</dd>
-          <dt>Second check</dt><dd>{e.oss_enabled ? `OSS check with ${e.oss_prompt_parts.length ? `${e.oss_prompt_parts.map((p) => p.from).join(' + ')} lines` : 'the default prompt'}` : <b>Off for this group (bypassed)</b>}</dd>
+          <dt>Guard layers</dt><dd>{Object.keys(e.layers).length ? display('layers', e.layers, look) : 'Layer defaults'}</dd>
           <dt>Rate limit</dt><dd>{e.rate_limit} per minute</dd>
         </dl>
       )}

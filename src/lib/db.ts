@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -174,6 +174,7 @@ function migrate(db: Database.Database) {
   if (!have.has('decisions')) db.exec('ALTER TABLE request_logs ADD COLUMN decisions TEXT');
   if (!have.has('injected')) db.exec('ALTER TABLE request_logs ADD COLUMN injected TEXT');
   if (!have.has('test')) db.exec('ALTER TABLE request_logs ADD COLUMN test INTEGER NOT NULL DEFAULT 0');
+  migrateGroupGuardSettings(db);
   // Test traffic used to log "Studio"/"Replay" as its address and "Studio" as its person.
   db.exec("UPDATE request_logs SET ip = NULL WHERE test = 1 AND ip IN ('Studio', 'Replay')");
   db.exec("UPDATE request_logs SET owner = 'Admin' WHERE test = 1 AND owner = 'Studio'");
@@ -225,3 +226,48 @@ function bootstrap(db: Database.Database) {
 }
 
 export const now = () => Date.now();
+
+/**
+ * Groups once stored fixed settings for two checks (PIGuard on/off and threshold, the OSS judge on/off
+ * and prompt lines). Guard checks are now layers, so move each value onto the matching layers' per-group
+ * settings (on/off by layer id, threshold for scoring layers, prompt lines for judges) and drop the old keys.
+ */
+function migrateGroupGuardSettings(db: Database.Database) {
+  const LEGACY = ['piguard_enabled', 'piguard_threshold', 'oss_enabled', 'oss_prompt'];
+  const rows = db.prepare('SELECT id, parent_id, settings FROM groups').all() as { id: number; parent_id: number | null; settings: string }[];
+  if (!rows.some((r) => LEGACY.some((k) => r.settings.includes(`"${k}"`)))) return;
+  let layers: { id: string; type: string }[] = [];
+  try {
+    const app = db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined;
+    layers = (app ? JSON.parse(app.value)?.guard?.layers : null) ?? [];
+  } catch {
+    layers = [];
+  }
+  const ids = (pred: (l: { id: string; type: string }) => boolean) => layers.filter(pred).map((l) => l.id);
+  const update = db.prepare('UPDATE groups SET settings = ? WHERE id = ?');
+  for (const r of rows) {
+    let st: Record<string, { mode: string; value: unknown } | undefined>;
+    try {
+      st = JSON.parse(r.settings);
+    } catch {
+      continue;
+    }
+    if (!LEGACY.some((k) => k in st)) continue;
+    const mode = r.parent_id === null ? 'set' : 'override';
+    const onOff = { ...((st.layers?.value as Record<string, boolean>) ?? {}) };
+    const opts = { ...((st.layer_opts?.value as Record<string, { threshold?: number; prompt?: string }>) ?? {}) };
+    const flag = (key: string, layerId: string) => {
+      if (st[key] && layers.some((l) => l.id === layerId) && !(layerId in onOff)) onOff[layerId] = st[key]!.value === true;
+    };
+    flag('piguard_enabled', 'piguard');
+    flag('oss_enabled', 'judge');
+    const t = Number(st.piguard_threshold?.value);
+    if (t > 0 && t < 1) for (const id of ids((l) => l.type === 'classifier' || l.type === 'patterns')) opts[id] = { ...opts[id], threshold: opts[id]?.threshold ?? t };
+    const lines = st.oss_prompt?.mode !== 'override' ? String(st.oss_prompt?.value ?? '').trim() : '';
+    if (lines) for (const id of ids((l) => l.type === 'judge')) opts[id] = { ...opts[id], prompt: opts[id]?.prompt ?? lines };
+    for (const k of LEGACY) delete st[k];
+    if (Object.keys(onOff).length) st.layers = { mode, value: onOff };
+    if (Object.keys(opts).length) st.layer_opts = { mode, value: opts };
+    update.run(JSON.stringify(st), r.id);
+  }
+}

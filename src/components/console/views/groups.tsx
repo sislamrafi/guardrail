@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { display } from '@/components/format-setting';
 import { useActions } from '../actions';
 import { Ico } from '../icons';
@@ -9,6 +9,8 @@ import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { Data, GroupC, Resolution, SettingKey } from '../types';
 import { layerState, useLayerToggle } from './guard';
+import type { GuardLayer } from '@/lib/layers';
+import type { LayerOpt } from '@/lib/groups';
 
 type StoredSetting = { mode: 'set' | 'add' | 'override'; value: unknown };
 
@@ -152,7 +154,7 @@ export function GroupEditor({ id }: { id: number }) {
             ['eff', 'Effective rules'],
             ['access', 'Servers and models'],
             ['ctx', `Context (${g.context.length})`],
-            ['guard', 'Guard and limits'],
+            ['guard', 'Guard layers and limits'],
             ['keys', `Keys (${g.keyCount})`],
           ] as [Tab, string][]
         ).map(([t, l]) => (
@@ -214,11 +216,10 @@ function GroupDetails({ g, data }: { g: GroupC; data: Data }) {
   );
 }
 
-const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })) });
+const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
 
 function effValue(key: SettingKey, r: Resolution): unknown {
   const e = r.effective;
-  if (key === 'oss_prompt') return e.oss_prompt_parts.length ? `Default + ${e.oss_prompt_parts.map((p) => p.from).join(' + ')}` : 'Default security policy';
   if (key === 'blocked_reply') return e.blocked_reply.split('\n')[0];
   return e[key as keyof typeof e];
 }
@@ -463,92 +464,53 @@ function Context({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save
 
 function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: Save }) {
   const nav = useNav();
-  const toggle = useLayerToggle();
   const eff = res.resolution.effective;
   const src = res.resolution.sources;
   const st = g.settings as Record<string, StoredSetting | undefined>;
-  const [t, setT] = useState(Number(st.piguard_threshold?.value ?? eff.piguard_threshold));
-  const [prompt, setPrompt] = useState(String(st.oss_prompt?.value ?? ''));
+  const layers = data.settings.guard.layers;
+  const own = (st.layer_opts?.value ?? {}) as Record<string, LayerOpt>;
   const [reply, setReply] = useState(String(st.blocked_reply?.value ?? ''));
   const [rate, setRate] = useState(String(st.rate_limit?.value ?? ''));
   useEffect(() => {
-    setT(Number(st.piguard_threshold?.value ?? eff.piguard_threshold));
-    setPrompt(String(st.oss_prompt?.value ?? ''));
     setReply(String(st.blocked_reply?.value ?? ''));
     setRate(String(st.rate_limit?.value ?? ''));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [g.id, JSON.stringify(g.settings), eff.piguard_threshold]);
-  const inherited = useMemo(() => {
-    const parts = eff.oss_prompt_parts.filter((p) => p.from !== g.name);
-    return [st.oss_prompt?.mode === 'override' ? '' : '# Default prompt (Guard checks)', ...parts.map((p) => `# from ${p.from}\n${p.text}`)].filter(Boolean).join('\n\n');
-  }, [eff, g.name, st.oss_prompt]);
+  }, [g.id, JSON.stringify(g.settings)]);
+  const onCount = layers.filter((l) => layerState(l, g, data.groups).on).length;
+  // Save this group's own settings for one layer, keeping its settings for the others.
+  const saveOpt = (layer: GuardLayer, patch: LayerOpt, ok: string) => {
+    const next = { ...own, [layer.id]: { ...own[layer.id], ...patch } };
+    const o = next[layer.id];
+    if (o.threshold == null) delete o.threshold;
+    if (!o.prompt?.trim()) delete o.prompt;
+    if (!Object.keys(o).length) delete next[layer.id];
+    return save('layer_opts', Object.keys(next).length || g.parentId === null ? { mode: g.parentId === null ? 'set' : 'override', value: next as never } : null, ok);
+  };
   return (
     <>
-      <Section title="Guard layers" hint={<>Each layer is on or off for {g.name} and its sub-groups. Edit the layers themselves in <button type="button" className="cx-link" onClick={() => nav.go('/guard')}>Guard checks</button>.</>}>
-        <div className="cx-list">
-          {data.settings.guard.layers.map((l, i) => {
-            const st = layerState(l, g, data.groups);
-            return (
-              <div key={l.id} className="cx-list-row tall">
-                <span className="cx-layer-n">{i + 1}</span>
-                <div className="grow">
-                  <button type="button" className="cx-link" onClick={() => nav.go(`/guard/${l.id}`)}>
-                    <b>{l.name}</b>
-                  </button>
-                  <div className="small">
-                    <Pill tone={st.on ? 'ok' : 'warn'}>{st.on ? 'On' : 'Off'}</Pill> <span className="cx-muted">from {st.from}</span>
-                  </div>
-                </div>
-                <Seg
-                  value={st.own === null ? 'inherit' : st.own ? 'on' : 'off'}
-                  label={`${l.name} for ${g.name}`}
-                  onChange={(v) => void toggle(g, l, v)}
-                  options={[
-                    ['inherit', g.parentId === null ? 'Layer default' : 'Same as parent'],
-                    ['on', 'On'],
-                    ['off', 'Off (bypass)'],
-                  ]}
-                />
-              </div>
-            );
-          })}
-        </div>
-        {data.settings.guard.layers.every((l) => !layerState(l, g, data.groups).on) && <Note tone="bad">Every guard layer is off for {g.name}. Its requests go straight to the model unscreened.</Note>}
+      <Section title="Guard layers" hint={<>In pipeline order. Each layer can be on or off for {g.name} and its sub-groups, and some take a group setting of their own. Add or edit layers in <button type="button" className="cx-link" onClick={() => nav.go('/guard')}>Guard checks</button>.</>}>
+        {layers.length === 0 ? (
+          <Note>
+            No guard layers yet. Add one in{' '}
+            <button type="button" className="cx-link" onClick={() => nav.go('/guard')}>
+              Guard checks
+            </button>
+            .
+          </Note>
+        ) : (
+          <div className="cx-list">
+            {layers.map((l, i) => (
+              <GroupLayerRow key={l.id} n={i + 1} layer={l} g={g} data={data} eff={eff} own={own[l.id]} saveOpt={saveOpt} />
+            ))}
+          </div>
+        )}
+        {layers.length > 0 && onCount === 0 && <Note tone="bad">Every guard layer is off for {g.name}. Its requests go straight to the model unscreened.</Note>}
       </Section>
       <div className="cx-stats wide">
-        <Stat label="PIGuard flags at" value={eff.piguard_threshold.toFixed(2)} hint={`From ${src.piguard_threshold.join(' + ')}`} />
+        <Stat label="Layers on" value={layers.length ? `${onCount} of ${layers.length}` : '–'} />
         <Stat label="Rate limit" value={`${eff.rate_limit}/min`} hint={`From ${src.rate_limit.join(' + ')}`} />
-        <Stat label="Prompt lines added" value={eff.oss_prompt_parts.length} />
+        <Stat label="Layer settings changed" value={Object.keys(eff.layer_opts).length} hint="Layers whose threshold or prompt this group or a parent changed" />
       </div>
-      <Section title="PIGuard threshold" actions={st.piguard_threshold && <button type="button" className="cx-btn sm" onClick={() => void save('piguard_threshold', null, 'Back to the inherited threshold')}>Use inherited</button>}>
-        <div className="cx-form-row center">
-          <input
-            type="range"
-            className="grow"
-            min={0.3}
-            max={0.95}
-            step={0.05}
-            value={t}
-            aria-label="PIGuard threshold"
-            onChange={(e) => setT(Number(e.target.value))}
-            onPointerUp={() => void save('piguard_threshold', { mode: 'override', value: t }, `${g.name} flags at ${t.toFixed(2)}`)}
-            onKeyUp={(e) => (e.key.startsWith('Arrow') ? void save('piguard_threshold', { mode: 'override', value: t }) : undefined)}
-          />
-          <b className="mono">{t.toFixed(2)}</b>
-        </div>
-        <p className="cx-hint">Lower catches more but sends more requests to check 2.</p>
-      </Section>
-      <Section title="OSS check prompt">
-        {g.parentId !== null && <pre className="cx-pre">{inherited || 'Nothing inherited.'}</pre>}
-        <Field label={g.parentId === null ? 'Lines this group adds to the default prompt' : `Lines ${g.name} adds`}>
-          <textarea className="cx-input mono" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="For example: Files in tests/fixtures contain fake secrets on purpose." />
-        </Field>
-        <div className="cx-form-row end">
-          <button type="button" className="cx-btn pri" disabled={prompt === String(st.oss_prompt?.value ?? '')} onClick={() => void save('oss_prompt', prompt.trim() ? { mode: 'add', value: prompt } : null, 'Prompt lines saved')}>
-            Save prompt lines
-          </button>
-        </div>
-      </Section>
       <div className="cx-form-row">
         <Section title="Blocked reply">
           <textarea className="cx-input" rows={4} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Empty uses the inherited reply. Use {reason} and {request_id}.`} />
@@ -570,6 +532,77 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
         </Section>
       </div>
     </>
+  );
+}
+
+/** One guard layer on a group's page: on/off for the group, plus the settings its type takes. */
+function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; layer: GuardLayer; g: GroupC; data: Data; eff: Resolution['effective']; own?: LayerOpt; saveOpt: (l: GuardLayer, p: LayerOpt, ok: string) => Promise<unknown> }) {
+  const nav = useNav();
+  const toggle = useLayerToggle();
+  const ls = layerState(layer, g, data.groups);
+  const scoring = layer.type === 'classifier' || layer.type === 'patterns';
+  const judge = layer.type === 'judge';
+  const opt = eff.layer_opts[layer.id];
+  const [t, setT] = useState(own?.threshold != null ? String(own.threshold) : '');
+  const [lines, setLines] = useState(own?.prompt ?? '');
+  useEffect(() => {
+    setT(own?.threshold != null ? String(own.threshold) : '');
+    setLines(own?.prompt ?? '');
+  }, [own?.threshold, own?.prompt]);
+  // What applies without this group's own value: a parent's, else the layer's.
+  const parentT = opt?.thresholdFrom && opt.thresholdFrom !== g.name ? opt.threshold : null;
+  const inheritedT = parentT ?? layer.threshold;
+  const inheritedLines = (opt?.prompt_parts ?? []).filter((p) => p.from !== g.name);
+  return (
+    <div className="cx-list-row tall cx-glayer">
+      <span className="cx-layer-n">{n}</span>
+      <div className="grow">
+        <div className="cx-form-row center nowrap">
+          <div className="grow">
+            <button type="button" className="cx-link" onClick={() => nav.go(`/guard/${layer.id}`)}>
+              <b>{layer.name}</b>
+            </button>{' '}
+            <span className="cx-muted small">{layer.type}</span>
+            <div className="small">
+              <Pill tone={ls.on ? 'ok' : 'warn'}>{ls.on ? 'On' : 'Off'}</Pill> <span className="cx-muted">from {ls.from}</span>
+            </div>
+          </div>
+          <Seg
+            value={ls.own === null ? 'inherit' : ls.own ? 'on' : 'off'}
+            label={`${layer.name} for ${g.name}`}
+            onChange={(v) => void toggle(g, layer, v)}
+            options={[
+              ['inherit', g.parentId === null ? 'Layer default' : 'Same as parent'],
+              ['on', 'On'],
+              ['off', 'Off (bypass)'],
+            ]}
+          />
+        </div>
+        {scoring && (
+          <div className="cx-form-row center">
+            <Field label={`${layer.name} flags at`} hint={`Empty uses ${inheritedT.toFixed(2)}${parentT != null ? ` from ${opt!.thresholdFrom}` : ' (the layer’s own)'}. Lower catches more.`}>
+              <input className="cx-input" type="number" min={0.05} max={0.99} step={0.05} value={t} placeholder={inheritedT.toFixed(2)} onChange={(e) => setT(e.target.value)} />
+            </Field>
+            <button type="button" className="cx-btn" disabled={t === (own?.threshold != null ? String(own.threshold) : '')} onClick={() => void saveOpt(layer, { threshold: t === '' ? null : Number(t) }, t === '' ? `${layer.name} uses the inherited threshold` : `${layer.name} flags at ${Number(t).toFixed(2)} for ${g.name}`)}>
+              Save
+            </button>
+          </div>
+        )}
+        {judge && (
+          <>
+            {inheritedLines.length > 0 && <pre className="cx-pre small">{inheritedLines.map((p) => `# from ${p.from}\n${p.text}`).join('\n\n')}</pre>}
+            <Field label={`Lines ${g.name} adds to ${layer.name}’s prompt`}>
+              <textarea className="cx-input mono" rows={3} value={lines} onChange={(e) => setLines(e.target.value)} placeholder="For example: Files in tests/fixtures contain fake secrets on purpose." />
+            </Field>
+            <div className="cx-form-row end">
+              <button type="button" className="cx-btn" disabled={lines === (own?.prompt ?? '')} onClick={() => void saveOpt(layer, { prompt: lines }, 'Prompt lines saved')}>
+                Save prompt lines
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

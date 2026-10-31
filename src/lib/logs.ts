@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { LayerResult } from './pipeline';
 import { getDb } from './db';
+import { getSettings } from './settings';
 import { prunePromptFiles, readPromptFile, retentionDays, writePromptFile } from './prompt-files';
 
 export type Outcome = 'answered' | 'false_alarm' | 'blocked' | 'redacted' | 'rejected' | 'error';
@@ -256,10 +257,11 @@ export const STAGE_LABELS: Record<string, string> = {
   schema: 'Schema detection',
   access: 'Model access and limits',
   rules: 'Custom rules',
-  piguard: 'Check 1 · PIGuard',
-  oss: 'Check 2 · OSS (when flagged)',
   context: 'Context injection',
 };
+
+/** Guard layer timings are stored as layer_<id> (older requests: piguard, oss). */
+const layerOfStage = (k: string) => (k.startsWith('layer_') ? k.slice(6) : k === 'piguard' ? 'piguard' : k === 'oss' ? 'judge' : null);
 
 export function overview(range = '24h', at = Date.now(), groups?: number[]) {
   const R = RANGES[range] ?? RANGES['24h'];
@@ -279,29 +281,45 @@ export function overview(range = '24h', at = Date.now(), groups?: number[]) {
   const req = Array.from({ length: n }, (_, i) => ({ t: first + i * R.bucket, label: R.label(new Date(first + i * R.bucket)), total: 0, blocked: 0 }));
   const stageVals: Record<string, number[]> = {};
   const overhead: number[] = [];
+  const guardTimes: number[] = [];
   for (const r of rows) {
     const i = Math.min(n - 1, Math.max(0, Math.floor((r.ts - first) / R.bucket)));
     req[i].total++;
     if (r.outcome === 'blocked' || r.outcome === 'rejected') req[i].blocked++;
     const st = safeJson<Record<string, number>>(r.stages, {});
     let o = 0;
+    let g = 0;
     for (const [k, v] of Object.entries(st)) {
       if (k === 'upstream') continue;
       (stageVals[k] ??= []).push(v);
-      if (k !== 'oss') o += v;
+      o += v;
+      if (layerOfStage(k)) g += v;
     }
     overhead.push(o);
+    if (g) guardTimes.push(g);
   }
-  const stages = Object.keys(STAGE_LABELS)
+  // Fixed stages, then each guard layer in pipeline order (named as on the Guard checks page), then context.
+  const layers = getSettings().guard.layers;
+  const layerKeys = Object.keys(stageVals)
+    .filter((k) => layerOfStage(k))
+    .sort((a, b) => layers.findIndex((l) => l.id === layerOfStage(a)) - layers.findIndex((l) => l.id === layerOfStage(b)));
+  const order = ['auth', 'schema', 'access', 'rules', ...layerKeys, 'context'];
+  const stages = order
     .filter((k) => stageVals[k]?.length)
-    .map((k) => ({ key: k, name: STAGE_LABELS[k], p50: median(stageVals[k])! }));
+    .map((k) => {
+      const id = layerOfStage(k);
+      const name = id ? `Guard layer · ${layers.find((l) => l.id === id)?.name ?? id}` : STAGE_LABELS[k];
+      return { key: k, name, p50: median(stageVals[k])! };
+    });
   const recentBlocks = queryLogs({ filter: 'blocked', limit: 6, groups });
   return {
     range,
     counts,
     change: prevAll > 0 ? Math.round(((counts.all - prevAll) / prevAll) * 100) : null,
     overheadP95: pct(overhead, 0.95),
-    ossP50: median(stageVals.oss ?? []),
+    guardP50: median(guardTimes),
+    /** Kept for the old UI. */
+    ossP50: median(guardTimes),
     buckets: req,
     stages,
     recentBlocks,

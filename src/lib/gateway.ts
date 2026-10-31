@@ -236,7 +236,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   for (const r of pipe.results) {
     const d = r.decision;
     const label = `Check ${r.n} · ${r.name}`;
-    const key = r.id === 'piguard' ? 'piguard' : r.id === 'judge' ? 'oss' : `layer_${r.id}`;
+    const key = `layer_${r.id}`;
     if (d) stages[key] = d.latency_ms;
     const score = d?.score != null ? ` (${d.score.toFixed(2)})` : '';
     if (d?.error) steps.push({ tone: 'warn', head: `${label} failed`, ms: at(), text: `${d.error}. ${r.action === 'block' ? 'Blocked by its fallback setting.' : r.fellBack && d.raw === '' && d.reason.startsWith('Built-in') ? 'Used the built-in patterns instead.' : 'Its fallback setting decided.'}` });

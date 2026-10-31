@@ -36,18 +36,12 @@ export interface PipelineResult {
 
 /** Is this layer on for a group? Group choices win; the old PIGuard/OSS switches still count for those two. */
 export function layerOn(layer: GuardLayer, eff: Effective): boolean {
-  if (layer.id in eff.layers) return eff.layers[layer.id];
-  if (layer.id === 'piguard') return eff.piguard_enabled;
-  if (layer.id === 'judge') return eff.oss_enabled;
-  return layer.enabled;
+  return layer.id in eff.layers ? eff.layers[layer.id] : layer.enabled;
 }
 
 /** Was the layer switched off by a group rather than by its own default? */
 function bypassedByGroup(layer: GuardLayer, eff: Effective): boolean {
-  if (layer.id in eff.layers) return eff.layers[layer.id] === false && layer.enabled;
-  if (layer.id === 'piguard') return !eff.piguard_enabled && layer.enabled;
-  if (layer.id === 'judge') return !eff.oss_enabled && layer.enabled;
-  return false;
+  return layer.id in eff.layers && eff.layers[layer.id] === false && layer.enabled;
 }
 
 // Secrets and personal data the built-in redactor removes.
@@ -95,7 +89,6 @@ export interface PipelineInput {
 export async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
   const { segments, layers, resolution, serverOf } = input;
   const eff = resolution.effective;
-  const groupThreshold = resolution.sources.piguard_threshold?.[0] !== 'Default' ? eff.piguard_threshold : null;
   const results: LayerResult[] = [];
   const redact: RegExp[] = [];
   let flagged = !!input.escalate;
@@ -121,7 +114,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       if (layer.scope === 'all') screened = true;
       continue;
     }
-    const threshold = layer.type === 'classifier' || layer.type === 'patterns' ? (groupThreshold ?? layer.threshold) : layer.threshold;
+    // A group can change a layer's threshold and add lines to its prompt (see the group's Guard tab).
+    const opts = eff.layer_opts[layer.id];
+    const threshold = opts?.threshold ?? layer.threshold;
     let d: Decision;
     if (layer.type === 'patterns') d = patternsDecision(segments, threshold);
     else if (layer.type === 'redactor') d = redactorDecision(segments);
@@ -131,7 +126,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         layer.prompt.trim(),
         layer.failHint.trim() && `Block when: ${layer.failHint.trim()}`,
         layer.passHint.trim() && `Allow when: ${layer.passHint.trim()}`,
-        ...(layer.type === 'judge' ? eff.oss_prompt_parts.map((p) => `# Added by ${p.from}\n${p.text}`) : []),
+        ...(opts?.prompt_parts ?? []).map((p) => `# Added by ${p.from}\n${p.text}`),
       ]
         .filter(Boolean)
         .join('\n\n');

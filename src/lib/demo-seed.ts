@@ -139,8 +139,7 @@ export function seedDemo(opts: { mockUrl?: string; logs?: number } = {}): DemoSu
   set('Backend', 'context', { mode: 'add', value: [F('api-conventions.md'), F('release-checklist.md')] });
   set('Mobile', 'context', { mode: 'add', value: [F('mobile-guidelines.md')] });
   set('QA', 'context', { mode: 'add', value: [F('testing-guide.md')] });
-  set('QA', 'oss_prompt', { mode: 'add', value: 'Files under tests/fixtures contain fake credentials on purpose; do not block for them.' });
-  set('QA', 'piguard_threshold', { mode: 'override', value: 0.8 });
+  set('QA', 'layer_opts', { mode: 'override', value: { piguard: { threshold: 0.8 }, judge: { prompt: 'Files under tests/fixtures contain fake credentials on purpose; do not block for them.' } } });
   set('Data science', 'models', { mode: 'add', value: ['openai/gpt-6.1-mini', 'BAAI/bge-m3'] });
   set('Data science', 'context', { mode: 'override', value: [F('security-policy.md'), F('data-handling.md')] });
   set('Data science', 'rate_limit', { mode: 'override', value: 300 });

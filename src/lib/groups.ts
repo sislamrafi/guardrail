@@ -9,12 +9,12 @@ import { getSettings } from './settings';
  * A setting a group doesn't store is inherited unchanged.
  */
 export type Mode = 'set' | 'add' | 'override';
-export type SettingKey = 'servers' | 'models' | 'context' | 'layers' | 'piguard_enabled' | 'piguard_threshold' | 'oss_enabled' | 'oss_prompt' | 'blocked_reply' | 'rate_limit';
+export type SettingKey = 'servers' | 'models' | 'context' | 'layers' | 'layer_opts' | 'blocked_reply' | 'rate_limit';
 
 export interface SettingDef {
   key: SettingKey;
   label: string;
-  kind: 'list' | 'number' | 'text' | 'flag' | 'map';
+  kind: 'list' | 'number' | 'text' | 'map' | 'opts';
   canAdd: boolean;
 }
 
@@ -23,15 +23,17 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'models', label: 'Models', kind: 'list', canAdd: true },
   { key: 'context', label: 'Context files', kind: 'list', canAdd: true },
   { key: 'layers', label: 'Guard layers on/off', kind: 'map', canAdd: false },
-  { key: 'piguard_enabled', label: 'PIGuard check (check 1)', kind: 'flag', canAdd: false },
-  { key: 'piguard_threshold', label: 'PIGuard flags at', kind: 'number', canAdd: false },
-  { key: 'oss_enabled', label: 'Second check (OSS)', kind: 'flag', canAdd: false },
-  { key: 'oss_prompt', label: 'OSS check prompt', kind: 'text', canAdd: true },
+  { key: 'layer_opts', label: 'Guard layer settings', kind: 'opts', canAdd: false },
   { key: 'blocked_reply', label: 'Blocked reply', kind: 'text', canAdd: false },
   { key: 'rate_limit', label: 'Rate limit', kind: 'number', canAdd: false },
 ];
 
-export type SettingValue = number[] | string[] | number | string | boolean | null | Record<string, boolean>;
+/** A group's own settings for one guard layer: a score threshold (scoring layers), extra prompt lines (judges). */
+export interface LayerOpt {
+  threshold?: number | null;
+  prompt?: string;
+}
+export type SettingValue = number[] | string[] | number | string | boolean | null | Record<string, boolean> | Record<string, LayerOpt>;
 export interface StoredSetting {
   mode: Mode;
   value: SettingValue;
@@ -73,15 +75,8 @@ export interface Effective {
   context: number[];
   /** Per-layer on/off chosen by this group or a parent; a layer not listed follows its own default. */
   layers: Record<string, boolean>;
-  /** Is check 1 (PIGuard) on for this group? Starts from the Guard checks page; a group can turn it off or on. */
-  piguard_enabled: boolean;
-  piguard_threshold: number;
-  /** Is check 2 (the judge) on for this group? Same rules as check 1. */
-  oss_enabled: boolean;
-  /** Full prompt for check 2: the default plus every group's lines, in order. */
-  oss_prompt: string;
-  /** Just the parts groups added, with where each came from. */
-  oss_prompt_parts: { from: string; text: string }[];
+  /** Per-layer settings groups changed: a threshold (the nearest group's wins) and prompt lines (every group's, in order). */
+  layer_opts: Record<string, { threshold: number | null; thresholdFrom: string | null; prompt_parts: { from: string; text: string }[] }>;
   blocked_reply: string;
   rate_limit: number;
 }
@@ -93,10 +88,6 @@ export interface Resolution {
 }
 
 export interface Defaults {
-  piguard_enabled: boolean;
-  oss_enabled: boolean;
-  piguard_threshold: number;
-  oss_prompt: string;
   blocked_reply: string;
   rate_limit: number;
 }
@@ -104,10 +95,6 @@ export interface Defaults {
 export function defaultsFromSettings(): Defaults {
   const s = getSettings();
   return {
-    piguard_enabled: s.guard.piguard.enabled,
-    oss_enabled: s.guard.oss.enabled,
-    piguard_threshold: s.guard.threshold,
-    oss_prompt: s.guard.oss.prompt,
     blocked_reply: s.guard.reply.template,
     rate_limit: s.defaultRateLimit,
   };
@@ -122,11 +109,7 @@ export function resolveLayers(layers: Layer[], defaults: Defaults): Resolution {
     models: [],
     context: [],
     layers: {},
-    piguard_enabled: defaults.piguard_enabled,
-    oss_enabled: defaults.oss_enabled,
-    piguard_threshold: defaults.piguard_threshold,
-    oss_prompt: defaults.oss_prompt,
-    oss_prompt_parts: [],
+    layer_opts: {},
     blocked_reply: defaults.blocked_reply,
     rate_limit: defaults.rate_limit,
   };
@@ -144,7 +127,7 @@ export function resolveLayers(layers: Layer[], defaults: Defaults): Resolution {
       const additive = s.mode === 'add' && def.canAdd;
       row.cells.push({ state: additive ? 'add' : s.mode === 'set' ? 'set' : 'override', value: s.value });
       apply(eff, row.key, s.value, additive, layer.name);
-      if (additive) sources[row.key] = sources[row.key][0] === 'Default' && row.key !== 'oss_prompt' ? [layer.name] : [...sources[row.key], layer.name];
+      if (additive) sources[row.key] = sources[row.key][0] === 'Default' ? [layer.name] : [...sources[row.key], layer.name];
       else sources[row.key] = [layer.name];
     }
   });
@@ -174,25 +157,21 @@ function apply(eff: Effective, key: SettingKey, value: SettingValue, additive: b
       if (value && typeof value === 'object' && !Array.isArray(value)) eff.layers = { ...eff.layers, ...(value as Record<string, boolean>) };
       break;
     }
-    case 'piguard_enabled':
-    case 'oss_enabled':
-      eff[key] = value === true;
-      break;
-    case 'piguard_threshold':
-    case 'rate_limit': {
-      const n = Number(value);
-      if (Number.isFinite(n) && n > 0) eff[key] = n;
+    case 'layer_opts': {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) break;
+      for (const [id, o] of Object.entries(value as Record<string, LayerOpt>)) {
+        const cur = eff.layer_opts[id] ?? { threshold: null, thresholdFrom: null, prompt_parts: [] };
+        const t = Number(o?.threshold);
+        if (o?.threshold != null && t > 0 && t < 1) Object.assign(cur, { threshold: t, thresholdFrom: from });
+        const text = String(o?.prompt ?? '').trim();
+        if (text) cur.prompt_parts = [...cur.prompt_parts, { from, text }];
+        eff.layer_opts[id] = cur;
+      }
       break;
     }
-    case 'oss_prompt': {
-      const t = String(value ?? '').trim();
-      if (!additive) {
-        eff.oss_prompt = t;
-        eff.oss_prompt_parts = [];
-      } else if (t) {
-        eff.oss_prompt_parts.push({ from, text: t });
-        eff.oss_prompt = `${eff.oss_prompt}\n\n# Added by ${from}\n${t}`;
-      }
+    case 'rate_limit': {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) eff.rate_limit = n;
       break;
     }
     case 'blocked_reply': {
@@ -312,15 +291,26 @@ export function normalizeSetting(key: SettingKey, s: StoredSetting, isRoot: bool
   } else if (def.kind === 'number') {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${def.label} must be a positive number.`);
-    if (key === 'piguard_threshold' && n >= 1) throw new Error('The PIGuard score must be between 0 and 1.');
     value = key === 'rate_limit' ? Math.round(n) : n;
   } else if (def.kind === 'map') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${def.label} must be a list of layers switched on or off.`);
     value = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>;
     mode = isRoot ? 'set' : 'override';
-  } else if (def.kind === 'flag') {
-    if (typeof value !== 'boolean') throw new Error(`${def.label} must be on or off.`);
-    mode = isRoot ? 'set' : 'override'; // on/off flags replace, they never add
+  } else if (def.kind === 'opts') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${def.label} must be a list of layers.`);
+    const out: Record<string, LayerOpt> = {};
+    for (const [id, raw] of Object.entries(value as Record<string, LayerOpt>)) {
+      const o: LayerOpt = {};
+      if (raw?.threshold != null && raw.threshold !== ('' as never)) {
+        const t = Number(raw.threshold);
+        if (!(t > 0 && t < 1)) throw new Error('A layer threshold must be between 0 and 1.');
+        o.threshold = t;
+      }
+      if (String(raw?.prompt ?? '').trim()) o.prompt = String(raw.prompt).trim();
+      if (Object.keys(o).length) out[id] = o;
+    }
+    value = out;
+    mode = isRoot ? 'set' : 'override';
   } else value = String(value ?? '');
   return { mode, value };
 }
