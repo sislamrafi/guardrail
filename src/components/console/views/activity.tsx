@@ -416,6 +416,7 @@ function Summary({ d }: { d: LogEntry }) {
     ['Schema', d.schema ?? '–'],
     ['Outcome', <Outcome key="o" r={d} />],
     ['Reason', d.reason ?? '–'],
+    ...(d.injected?.identity ? ([['Caller identity', <span key="ci" className="mono">{d.injected.identity}</span>]] as [string, React.ReactNode][]) : []),
     ['Total time', ms(d.latency_ms)],
     ['Tokens out', fmt(d.tokens_out)],
     ...((): [string, React.ReactNode][] => {

@@ -232,6 +232,7 @@ const routes: Record<string, Handler> = {
       expiresAt: body.expiresAt === undefined ? undefined : body.expiresAt === null ? null : num(body.expiresAt),
       revoked: body.revoked === undefined ? undefined : !!body.revoked,
       ipAllow: body.ipAllow,
+      identity: body.identity && typeof body.identity === 'object' ? (body.identity as { key?: boolean; owner?: boolean }) : undefined,
     }),
   'DELETE keys/:id': ({ params }) => deleteKey(num(params[0])),
   'GET keys/:id/secret': ({ params }) => {

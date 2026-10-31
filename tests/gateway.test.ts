@@ -96,10 +96,23 @@ describe('gateway', () => {
     const res = await chat(secret, { model: 'qwen3-coder-30b', messages: [{ role: 'system', content: 'You are Cline.' }, { role: 'user', content: 'write a unit test' }] });
     expect(res.status).toBe(200);
     const j = await res.json();
-    expect(j.choices[0].message.content).toContain('House rules');
+    // The caller line comes first, then the context file.
+    expect(j.choices[0].message.content).toContain('Request from: rafi (API key: dev)');
     const log = lastLog();
     expect(log.outcome).toBe('answered');
     expect(log.server).toBe('spark-01');
+    const first = String(getLog(String(log.id))!.forwarded![0].content);
+    expect(first.indexOf('Request from: rafi (API key: dev)')).toBe(0);
+    expect(first).toContain('House rules');
+  });
+
+  it('sends the caller line only with the parts the key allows, and nothing when both are off', async () => {
+    const { identityLine } = await import('@/lib/keys');
+    const base = { name: 'dev', owner: 'rafi' };
+    expect(identityLine({ ...base, identity: { key: true, owner: true } })).toBe('Request from: rafi (API key: dev)');
+    expect(identityLine({ ...base, identity: { key: false, owner: true } })).toBe('Request from: rafi');
+    expect(identityLine({ ...base, identity: { key: true, owner: false } })).toBe('Request from API key: dev');
+    expect(identityLine({ ...base, identity: { key: false, owner: false } })).toBe('');
   });
 
   it('writes the prompt to a Markdown file and keeps only its path in the database', async () => {
@@ -313,7 +326,7 @@ describe('gateway', () => {
     expect((await chat(bound, body, { 'x-forwarded-for': '10.0.0.1', 'x-guardrail-peer': '203.0.113.9' })).status).toBe(403);
   });
 
-  it('adds nothing at all when a group has no context and the policy prompt is empty', async () => {
+  it('adds nothing at all when a group has no context, the policy prompt is empty and the key sends no caller line', async () => {
     const root = listGroups().find((g) => g.parentId === null)!;
     const plain = createGroup({ name: 'Plain', parentId: root.id });
     setGroupSetting(plain.id, 'context', { mode: 'override', value: [] });
@@ -328,7 +341,7 @@ describe('gateway', () => {
       ],
     };
     const trace: Trace = {};
-    const res = await handleCompletion(new Request('http://studio/v1/chat/completions', { method: 'POST', body: JSON.stringify(sent) }), 'chat', { key: { ...key, groupId: plain.id }, trace, source: 'Studio' });
+    const res = await handleCompletion(new Request('http://studio/v1/chat/completions', { method: 'POST', body: JSON.stringify(sent) }), 'chat', { key: { ...key, groupId: plain.id, identity: { key: false, owner: false } }, trace, source: 'Studio' });
     expect(res.status).toBe(200);
     expect(trace.forwarded).toEqual(sent);
     expect(trace.contextTokens).toBe(0);

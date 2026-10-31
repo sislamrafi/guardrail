@@ -54,6 +54,8 @@ export interface KeyC {
   requestsToday: number;
   ipAllow: string[];
   canReveal: boolean;
+  /** Tell the model who is calling (key name, owner), first in the context. */
+  identity: { key: boolean; owner: boolean };
   groupName: string;
   groupPath: string;
 }

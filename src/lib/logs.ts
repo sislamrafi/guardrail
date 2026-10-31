@@ -77,7 +77,7 @@ export interface LogEntry {
   /** Each guard layer's result, in order (see pipeline.ts). */
   decisions?: LayerResult[] | null;
   /** What GuardRail added to the request: context files, policy prompt, tokens, placement. */
-  injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string } | null;
+  injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string; identity?: string } | null;
   /** Studio or replay traffic, kept out of normal lists and stats. */
   test?: boolean;
 }

@@ -6,7 +6,7 @@ import { contentText, newSegments, renderBlocked, Segment } from './guard';
 import { type GuardLayer, RETRY_PROMPT } from './layers';
 import { type LayerResult, applyRedactions, layerOn, runPipeline } from './pipeline';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
-import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
+import { ApiKey, checkKey, identityLine, lookupKey, touchKey } from './keys';
 import { groupAllowed, limitsFor, listLimits, takeToken } from './limits';
 import { LogEntry, Outcome, Step, newRequestId, promptForLog, updateLog, writeLog } from './logs';
 import { countHit, matchRules, redactMessages } from './rules';
@@ -264,7 +264,9 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // The context block and the message list the model gets, built once by one function, so a
   // "suffix" guard layer sends exactly the same prefix as the real call (and shares its cache).
   const files = filesByIds(eff.context);
-  const ctx = buildContextBlock(settings.policyPrompt, files);
+  // The caller line (key's own setting) goes first, then the policy prompt and the context files.
+  const identity = identityLine(key);
+  const ctx = [identity, buildContextBlock(settings.policyPrompt, files)].filter(Boolean).join('\n\n');
   const suffixOn = kind === 'chat' && allLayers.some((l) => (l.placement === 'suffix' || l.stage === 'output') && layerOn(l, eff));
   const forwardMessages = (msgs: Msg[]) => {
     const m = ctx ? injectContext(msgs, ctx, settings.contextPlacement) : msgs;
@@ -344,16 +346,16 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   trace.context = files.map((f) => ({ name: f.name, tokens: estimateTokens(f.body) }));
   trace.contextTokens = ctx ? estimateTokens(ctx) : 0;
   trace.placement = settings.contextPlacement;
-  log.injected = ctx ? { files: trace.context, policy: !!settings.policyPrompt.trim(), tokens: trace.contextTokens, placement: settings.contextPlacement } : null;
+  log.injected = ctx ? { files: trace.context, policy: !!settings.policyPrompt.trim(), tokens: trace.contextTokens, placement: settings.contextPlacement, ...(identity ? { identity } : {}) } : null;
   if (ctx) {
     if (kind === 'chat') body.messages = forwardMessages(messages);
     else body.prompt = `${ctx}\n\n${contentText(messages[0].content)}`;
-    steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${files.map((f) => f.name).join(', ') || 'Policy prompt'} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
+    steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${[identity && 'caller identity', ...files.map((f) => f.name), settings.policyPrompt.trim() && 'policy prompt'].filter(Boolean).join(', ')} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
   } else {
     // Nothing selected: the request goes on exactly as the client sent it (after any redaction).
     if (kind === 'chat') body.messages = forwardMessages(messages);
     else if (redacted) body.prompt = contentText(messages[0].content);
-    steps.push({ tone: 'neutral', head: 'No context added', ms: at(), text: `${groupName} has no context files and the policy prompt is empty, so nothing was added to the request.` });
+    steps.push({ tone: 'neutral', head: 'No context added', ms: at(), text: `${groupName} has no context files, the policy prompt is empty and this key doesn't send its caller identity, so nothing was added to the request.` });
   }
   stages.context = lap();
   trace.forwarded = body;

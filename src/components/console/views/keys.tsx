@@ -222,7 +222,7 @@ function Exceptions({ ex, data }: { ex: ReturnType<typeof useExceptions>; data: 
   );
 }
 
-function Preview({ groupId, exceptions, data }: { groupId: number; exceptions: GroupSettings; data: Data }) {
+function Preview({ groupId, exceptions, data, caller }: { groupId: number; exceptions: GroupSettings; data: Data; caller?: string }) {
   const [r, setR] = useState<Resolution | null>(null);
   const key = JSON.stringify(exceptions);
   useEffect(() => {
@@ -252,6 +252,8 @@ function Preview({ groupId, exceptions, data }: { groupId: number; exceptions: G
           <dd className="mono">{display('models', e.models, L)}</dd>
           <dt>Context</dt>
           <dd className="mono">{display('context', e.context, L)}</dd>
+          <dt>Caller line</dt>
+          <dd className="mono">{caller || 'off'}</dd>
           <dt>Guard layers</dt>
           <dd>{guardText(e, data)}</dd>
           <dt>Rate limit</dt>
@@ -365,7 +367,7 @@ export function KeyNew() {
               </button>
             </div>
           </form>
-          {gid && <Preview groupId={gid} exceptions={ex.value} data={data} />}
+          {gid && <Preview groupId={gid} exceptions={ex.value} data={data} caller={owner.trim() && name.trim() ? `Request from: ${owner.trim()} (API key: ${name.trim()})` : owner.trim() ? `Request from: ${owner.trim()}` : name.trim() ? `Request from API key: ${name.trim()}` : 'on (fill in the name and person)'} />}
         </div>
       )}
     </Page>
@@ -464,6 +466,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
               </Field>
             </div>
           </Section>
+          <IdentitySection k={k} name={name} owner={owner} />
           <Section title="Allowed IPs" hint="Requests from any other address are rejected with a 403. Empty allows any address.">
             <textarea className="cx-input mono" rows={2} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.10, 10.0.0.0/8" aria-label="Allowed IPs" />
           </Section>
@@ -477,7 +480,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
             </button>
           </div>
         </form>
-        <Preview groupId={groupId} exceptions={ex.value} data={data} />
+        <Preview groupId={groupId} exceptions={ex.value} data={data} caller={(() => { const i = k.identity ?? { key: true, owner: true }; const w = i.owner ? owner.trim() : ''; const n = i.key ? name.trim() : ''; return w && n ? `Request from: ${w} (API key: ${n})` : w ? `Request from: ${w}` : n ? `Request from API key: ${n}` : ''; })()} />
       </div>
     </Page>
   );
@@ -549,6 +552,32 @@ function SecretBox({ k, weak }: { k: KeyC; weak: boolean }) {
           </button>
         </div>
       )}
+    </Section>
+  );
+}
+
+/** Whether this key tells the model who is calling. Saved on click, like a switch. */
+function IdentitySection({ k, name, owner }: { k: KeyC; name: string; owner: string }) {
+  const ui = useUi();
+  const id = k.identity ?? { key: true, owner: true };
+  const set = (patch: Partial<KeyC['identity']>) => {
+    const next = { ...id, ...patch };
+    void ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { identity: next } }), next.key || next.owner ? 'Caller line updated' : 'The model is no longer told who is calling');
+  };
+  const who = id.owner && owner.trim() ? owner.trim() : '';
+  const kn = id.key && name.trim() ? name.trim() : '';
+  const line = who && kn ? `Request from: ${who} (API key: ${kn})` : who ? `Request from: ${who}` : kn ? `Request from API key: ${kn}` : '';
+  return (
+    <Section title="Tell the model who is calling" hint="Put one short line first in the context of every request from this key, before the context files and policy. It never contains the secret, and it stays the same on every request, so prompt caching still works.">
+      <div className="cx-form-row center">
+        <label className="cx-check">
+          <input type="checkbox" checked={id.owner} onChange={(e) => set({ owner: e.target.checked })} /> Person or bot ({owner || '–'})
+        </label>
+        <label className="cx-check">
+          <input type="checkbox" checked={id.key} onChange={(e) => set({ key: e.target.checked })} /> Key name ({name || '–'})
+        </label>
+      </div>
+      {line ? <pre className="cx-pre small">{line}</pre> : <span className="cx-muted small">Off: nothing about the caller is added.</span>}
     </Section>
   );
 }

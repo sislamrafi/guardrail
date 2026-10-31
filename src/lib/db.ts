@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -175,6 +175,10 @@ function migrate(db: Database.Database) {
   if (!have.has('injected')) db.exec('ALTER TABLE request_logs ADD COLUMN injected TEXT');
   if (!have.has('test')) db.exec('ALTER TABLE request_logs ADD COLUMN test INTEGER NOT NULL DEFAULT 0');
   migrateGroupGuardSettings(db);
+  // Each key can tell the model who is calling (key name, owner); on by default for every key.
+  const idCols = new Set((db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map((c) => c.name));
+  if (!idCols.has('id_key')) db.exec('ALTER TABLE api_keys ADD COLUMN id_key INTEGER NOT NULL DEFAULT 1');
+  if (!idCols.has('id_owner')) db.exec('ALTER TABLE api_keys ADD COLUMN id_owner INTEGER NOT NULL DEFAULT 1');
   // Autosaved file versions are updated in place while someone keeps typing (see updateFile).
   const verCols = new Set((db.prepare('PRAGMA table_info(context_file_versions)').all() as { name: string }[]).map((c) => c.name));
   if (!verCols.has('auto')) db.exec('ALTER TABLE context_file_versions ADD COLUMN auto INTEGER NOT NULL DEFAULT 0');

@@ -18,6 +18,8 @@ export interface ApiKeyRow {
   created_at: number;
   ip_allow: string;
   secret_enc: string | null;
+  id_key: number;
+  id_owner: number;
 }
 
 export interface ApiKey {
@@ -35,6 +37,18 @@ export interface ApiKey {
   ipAllow: string[];
   /** Whether the secret was stored encrypted and can be shown again. */
   canReveal: boolean;
+  /** Tell the model who is calling: the key's name and/or its owner, at the very start of the context. */
+  identity: { key: boolean; owner: boolean };
+}
+
+/** The caller line GuardRail puts first in the context, or '' when the key has it off. Byte-stable per key. */
+export function identityLine(k: Pick<ApiKey, 'name' | 'owner' | 'identity'>): string {
+  const who = k.identity.owner && k.owner.trim() ? k.owner.trim() : '';
+  const key = k.identity.key && k.name.trim() ? k.name.trim() : '';
+  if (who && key) return `Request from: ${who} (API key: ${key})`;
+  if (who) return `Request from: ${who}`;
+  if (key) return `Request from API key: ${key}`;
+  return '';
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -77,6 +91,7 @@ function parse(r: ApiKeyRow): ApiKey {
     createdAt: r.created_at,
     ipAllow: safeList(r.ip_allow),
     canReveal: !!r.secret_enc,
+    identity: { key: r.id_key !== 0, owner: r.id_owner !== 0 },
   };
 }
 
@@ -117,12 +132,12 @@ export function listKeys(): ApiKey[] {
   return (getDb().prepare('SELECT * FROM api_keys ORDER BY created_at DESC').all() as ApiKeyRow[]).map(parse);
 }
 
-export function updateKey(id: number, patch: { name?: string; owner?: string; groupId?: number; exceptions?: unknown; expiresAt?: number | null; revoked?: boolean; ipAllow?: unknown }) {
+export function updateKey(id: number, patch: { name?: string; owner?: string; groupId?: number; exceptions?: unknown; expiresAt?: number | null; revoked?: boolean; ipAllow?: unknown; identity?: { key?: boolean; owner?: boolean } }) {
   const k = getKey(id);
   if (!k) throw new Error('Key not found.');
   if (patch.groupId !== undefined && !getGroup(patch.groupId)) throw new Error('Group not found.');
   getDb()
-    .prepare('UPDATE api_keys SET name = ?, owner = ?, group_id = ?, exceptions = ?, expires_at = ?, revoked = ?, ip_allow = ? WHERE id = ?')
+    .prepare('UPDATE api_keys SET name = ?, owner = ?, group_id = ?, exceptions = ?, expires_at = ?, revoked = ?, ip_allow = ?, id_key = ?, id_owner = ? WHERE id = ?')
     .run(
       patch.name?.trim() || k.name,
       patch.owner?.trim() || k.owner,
@@ -131,6 +146,8 @@ export function updateKey(id: number, patch: { name?: string; owner?: string; gr
       patch.expiresAt === undefined ? k.expiresAt : patch.expiresAt,
       (patch.revoked ?? k.revoked) ? 1 : 0,
       JSON.stringify(patch.ipAllow === undefined ? k.ipAllow : parseIpList(patch.ipAllow)),
+      (patch.identity?.key ?? k.identity.key) ? 1 : 0,
+      (patch.identity?.owner ?? k.identity.owner) ? 1 : 0,
       id,
     );
   return getKey(id)!;

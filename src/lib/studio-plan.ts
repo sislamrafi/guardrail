@@ -5,7 +5,7 @@ import { groupKey } from './client-run';
 import { buildContextBlock, estimateTokens, listFiles } from './context';
 import { allowedRoutes } from './gateway';
 import { SETTING_DEFS, chainOf, listGroups, resolveGroup } from './groups';
-import { getKey } from './keys';
+import { getKey, identityLine } from './keys';
 import { adapterFor } from './layers';
 import { layerOn } from './pipeline';
 import { listRules } from './rules';
@@ -19,7 +19,7 @@ export interface Plan {
   params: { key: string; label: string; value: string; from: string[]; cells: { group: string; state: string; value: string }[] }[];
   models: { allowed: string[]; picked: string; ok: boolean; servers: string[] };
   rules: { id: number; name: string; action: string; target: string; match: string; pattern: string; from: string }[];
-  context: { placement: 'top' | 'end'; policy: string; tokens: number; files: { id: number; name: string; version: number; tokens: number; from: string; body: string }[] };
+  context: { placement: 'top' | 'end'; policy: string; identity: string; tokens: number; files: { id: number; name: string; version: number; tokens: number; from: string; body: string }[] };
   layers: { id: string; n: number; name: string; type: string; on: boolean; why: string; model: string; server: string | null; adapter: string; scope: string; onFail: string; onError: string; threshold: number; timeoutMs: number; groupLines: string[]; stage: string; retries: number }[];
   unresolvedFlag: string;
   blockedReply: string;
@@ -99,7 +99,7 @@ export function planFor(input: { keyId?: number; groupId?: number; model: string
     params: params.filter((p) => SETTING_DEFS.some((d) => d.key === p.key)),
     models: { allowed, picked: input.model, ok: routes.length > 0, servers: routes.map((r) => r.server.name) },
     rules,
-    context: { placement: settings.contextPlacement, policy: settings.policyPrompt, tokens: block ? estimateTokens(block) : 0, files: ctxFiles.map((f) => ({ id: f.id, name: f.name, version: f.version, tokens: estimateTokens(f.body), from: fileFrom.get(f.id) ?? '?', body: f.body })) },
+    context: { placement: settings.contextPlacement, policy: settings.policyPrompt, identity: identityLine(key), tokens: (block ? estimateTokens(block) : 0) + (identityLine(key) ? estimateTokens(identityLine(key)) : 0), files: ctxFiles.map((f) => ({ id: f.id, name: f.name, version: f.version, tokens: estimateTokens(f.body), from: fileFrom.get(f.id) ?? '?', body: f.body })) },
     layers,
     unresolvedFlag: settings.guard.unresolvedFlag,
     blockedReply: eff.blocked_reply,

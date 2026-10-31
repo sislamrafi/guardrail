@@ -337,6 +337,9 @@ function PlanView({ settings, rev }: { settings: ScenarioSettings; rev: number }
       <div className="cx-dbg-sec">
         CONTEXT ADDED · {fmtTokens(plan.context.tokens)} TOKENS
       </div>
+      <Stage mark={plan.context.identity ? 'pass' : 'skip'} title="Caller identity" answer={plan.context.identity ? 'first line' : 'off for this key'}>
+        {plan.context.identity ? <pre className="cx-pre small">{plan.context.identity}</pre> : undefined}
+      </Stage>
       <Stage mark={plan.context.policy.trim() ? 'pass' : 'skip'} title="Policy prompt" answer={plan.context.policy.trim() ? `${fmt(plan.context.policy.length)} chars` : 'empty'}>
         {plan.context.policy.trim() ? <pre className="cx-pre small">{plan.context.policy}</pre> : undefined}
       </Stage>
@@ -454,6 +457,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
         {log.injected ? (
           <KV
             rows={[
+              ...(log.injected.identity ? ([['Caller identity', log.injected.identity]] as [string, ReactNode][]) : []),
               ['Files', log.injected.files.map((f) => `${f.name} (${fmtTokens(f.tokens)})`).join(', ') || '–'],
               ['Policy prompt', log.injected.policy ? 'yes' : 'no'],
               ['Placement', log.injected.placement === 'top' ? 'top (cacheable)' : 'before the last message'],
