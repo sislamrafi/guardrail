@@ -708,3 +708,4 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-mpick-table td { white-space: nowrap; padding-top: 4px; padding-bottom: 4px; }
 .cx-mpick-table tr.active td { background: var(--hover); }
 .cx-mpick-table tr.sel td { background: var(--sel); }
+.cx-route-label { min-width: 90px; font-size: 12px; }

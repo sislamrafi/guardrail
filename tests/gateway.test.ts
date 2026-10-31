@@ -11,6 +11,7 @@ import { createKey, listKeys } from '@/lib/keys';
 import { createGroup, listGroups, setGroupSetting, updateGroup } from '@/lib/groups';
 import { createFile, fileHistory, updateFile } from '@/lib/context';
 import { getSettings, updateSettings } from '@/lib/settings';
+import { normalizeLayer } from '@/lib/layers';
 import { resetRateLimits } from '@/lib/limits';
 import { handleCompletion, handleModels, type Trace } from '@/lib/gateway';
 import { getLog, prunePrompts } from '@/lib/logs';
@@ -373,6 +374,26 @@ describe('gateway', () => {
     // An autosave after an explicit save starts a new version instead of rewriting it.
     expect(updateFile(f.id, { body: 'more typing', autosave: true }).version).toBe(v0 + 3);
     expect(fileHistory(f.id).find((h) => h.version === v0 + 2)?.body).toBe('saved on purpose');
+  });
+
+  it('routes to the model a router layer picks, only when the group may use it', async () => {
+    const root = listGroups().find((g) => g.parentId === null)!;
+    const big = createGroup({ name: 'Routed', parentId: root.id });
+    setGroupSetting(big.id, 'models', { mode: 'add', value: ['gpt-oss-120b'] });
+    const key = listKeys().find((k) => k.name === 'dev')!;
+    const bigKey = { ...createKey({ name: 'routed-key', owner: 'r', groupId: big.id }).key };
+    // No server on the router: the decision fails, so its fallback model is used.
+    const router = normalizeLayer({ id: 'route', name: 'Router', type: 'router', fallbackModel: 'gpt-oss-120b', onError: 'allow' });
+    const send = (k: typeof key) =>
+      handleCompletion(new Request('http://gw/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'route me' }] }) }), 'chat', { key: k, layers: [router], source: 'Studio' });
+    expect((await send(bigKey as never)).status).toBe(200);
+    const routed = lastLog();
+    expect(routed.model).toBe('gpt-oss-120b');
+    expect(JSON.stringify(routed.steps)).toContain('Routed to gpt-oss-120b');
+    expect((await send(key)).status).toBe(200);
+    const kept = lastLog();
+    expect(kept.model).toBe('qwen3-coder-30b');
+    expect(JSON.stringify(kept.steps)).toContain('kept qwen3-coder-30b');
   });
 
   it('keeps sibling group names unique, case-insensitively', () => {

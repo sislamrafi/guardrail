@@ -403,6 +403,12 @@ function Summary({ d }: { d: LogEntry }) {
     ['Group', d.group_name ?? '–'],
     ['IP address', d.ip ? <span key="ip" className="mono">{d.ip}</span> : <span key="ip" className="cx-muted">Not recorded</span>],
     ['Model · server', <span key="m" className="mono">{`${d.model ?? '–'}${d.server ? ` · ${d.server}` : ''}`}</span>],
+    ...((): [string, React.ReactNode][] => {
+      const r = (d.decisions ?? []).find((x) => x.action === 'route' && x.route);
+      if (!r?.route) return [];
+      const text = r.route.model ? `${r.name} answered "${r.route.label ?? 'no answer'}" → ${r.route.model}` : `${r.name} answered "${r.route.label ?? 'no answer'}" → kept the client's model`;
+      return [['Routed', <span key="rt" className="mono">{text}</span>]];
+    })(),
     ['Schema', d.schema ?? '–'],
     ['Outcome', <Outcome key="o" r={d} />],
     ['Reason', d.reason ?? '–'],

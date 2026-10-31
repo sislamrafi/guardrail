@@ -458,6 +458,7 @@ const OUTLINES: Record<string, [string, string][]> = {
   schemas: [
     ['policy', 'Schema policy'],
     ['known', 'Known schemas'],
+    ['decisions', 'Decision schemas'],
     ['tester', 'Detection tester'],
   ],
   settings: [

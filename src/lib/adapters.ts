@@ -21,6 +21,8 @@ export interface Decision {
   error?: string;
   /** The part of the input that triggered it, when known. */
   quote?: string | null;
+  /** The option a decision model chose (choice questions), used by router layers. */
+  label?: string;
 }
 
 export const ADAPTERS = {

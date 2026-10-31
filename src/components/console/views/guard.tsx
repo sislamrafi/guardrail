@@ -5,7 +5,7 @@ import { ADAPTERS, type AdapterId, type Decision } from '@/lib/adapters';
 import { type GuardLayer, LAYER_TYPES, adapterFor, autoAdapter, decisionFor, mappingFor, normalizeLayer } from '@/lib/layers';
 import { type CustomMapping, PRESETS, parseMapped, presetFor, withPreset } from '@/lib/mapping';
 import { ModelPicker } from '../model-picker';
-import { DECISION_PRESETS, type DecisionSchema, schemaProblem } from '@/lib/decisions';
+import { DECISION_PRESETS, type DecisionSchema, ROUTING_PRESET, schemaProblem } from '@/lib/decisions';
 import type { LayerResult } from '@/lib/pipeline';
 import type { GuardSettings } from '@/lib/settings';
 import { SaveState, useAutoSave, useQuietSave } from '../autosave';
@@ -52,7 +52,7 @@ export function useLayerToggle() {
 
 const saveLayers = (layers: GuardLayer[]) => api('settings', { method: 'PATCH', body: { guard: { layers } } });
 
-const TYPE_ICON: Record<GuardLayer['type'], 'guard' | 'filter' | 'shieldOff' | 'model'> = { classifier: 'model', judge: 'guard', patterns: 'filter', redactor: 'shieldOff' };
+const TYPE_ICON: Record<GuardLayer['type'], 'guard' | 'filter' | 'shieldOff' | 'model'> = { classifier: 'model', judge: 'guard', patterns: 'filter', redactor: 'shieldOff', router: 'model' };
 const ON_FAIL = { block: 'Block', flag: 'Flag for later layers', redact: 'Redact and continue' } as const;
 const ON_ERROR = { block: 'Block', allow: 'Allow', patterns: 'Use built-in patterns' } as const;
 
@@ -266,8 +266,8 @@ function Reply({ g, set }: { g: GuardSettings; set: (p: Partial<GuardSettings>) 
 
 // ---------------------------------------------------------------- tester
 
-export const ACTION_TONE: Record<string, 'ok' | 'warn' | 'bad' | ''> = { pass: 'ok', cleared: 'ok', flag: 'warn', redact: 'warn', block: 'bad', off: '', skipped: '', nothing: '' };
-export const ACTION_LABEL: Record<string, string> = { pass: 'Pass', cleared: 'Cleared the flag', flag: 'Flagged', redact: 'Redacted', block: 'Blocked', off: 'Off', skipped: 'Skipped', nothing: 'Nothing new' };
+export const ACTION_TONE: Record<string, 'ok' | 'warn' | 'bad' | 'info' | ''> = { pass: 'ok', cleared: 'ok', flag: 'warn', redact: 'warn', block: 'bad', off: '', skipped: '', nothing: '', route: 'info' };
+export const ACTION_LABEL: Record<string, string> = { pass: 'Pass', cleared: 'Cleared the flag', flag: 'Flagged', redact: 'Redacted', block: 'Blocked', off: 'Off', skipped: 'Skipped', nothing: 'Nothing new', route: 'Routed' };
 
 export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Data; layers?: GuardLayer[]; title?: string }) {
   const nav = useNav();
@@ -362,7 +362,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
   const [adding, setAdding] = useState(false);
   const set = (p: Partial<GuardLayer>) => setL({ ...l, ...p });
   const dirty = JSON.stringify(l) !== JSON.stringify(orig);
-  const needsModel = l.type === 'classifier' || l.type === 'judge';
+  const needsModel = l.type === 'classifier' || l.type === 'judge' || l.type === 'router';
+  const router = l.type === 'router';
 
 
   const save = async (next = l) => {
@@ -472,6 +473,12 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
             </button>
           </div>
           <div className="cx-form-row">
+            {router ? (
+              <Field label="Response format" grow hint="A router asks a decision model one question; its answer picks the model.">
+                <input className="cx-input" value={ADAPTERS.decisions} disabled />
+              </Field>
+            ) : (
+            <>
             <Field label="Response format (adapter)" grow>
               <select className="cx-input" value={l.adapter} onChange={(e) => set({ adapter: e.target.value as AdapterId | 'auto' })}>
                 <option value="auto">Auto: {ADAPTERS[autoPick.adapter]}</option>
@@ -486,6 +493,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
             <button type="button" className="cx-btn tall" disabled={!l.serverId || !l.model || probe?.busy} title="Sends one short, harmless message to the model and reads the answer's shape. Costs one call." onClick={() => void detect()}>
               {probe?.busy ? 'Detecting…' : 'Detect format (1 call)'}
             </button>
+            </>
+            )}
             <Field label="Time limit (seconds)">
               <input className="cx-input" type="number" min={0.2} step={0.1} value={l.timeoutMs / 1000} onChange={(e) => set({ timeoutMs: Math.round(Number(e.target.value) * 1000) })} />
             </Field>
@@ -506,7 +515,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
             </Note>
           )}
           {fmt === 'custom' && <MappingEditor l={l} set={set} />}
-          {fmt === 'decisions' && <DecisionEditor l={l} set={set} />}
+          {fmt === 'decisions' && <DecisionEditor l={l} set={set} data={data} />}
+          {router && <RoutesEditor l={l} set={set} data={data} />}
         </Section>
       )}
 
@@ -538,6 +548,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
           <Field label="Runs on">
             <Seg value={l.scope} label="Runs on" onChange={(v) => set({ scope: v })} options={[['all', 'Every request'], ['flagged', 'Only flagged requests']]} />
           </Field>
+          {!router && (
           <Field label="When it says no">
             <select className="cx-input" value={l.onFail} onChange={(e) => set({ onFail: e.target.value as GuardLayer['onFail'] })}>
               {Object.entries(ON_FAIL).map(([k, v]) => (
@@ -547,6 +558,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               ))}
             </select>
           </Field>
+          )}
+          {!router && (
           <Field label="If it fails or times out">
             <select className="cx-input" value={l.onError} onChange={(e) => set({ onError: e.target.value as GuardLayer['onError'] })}>
               {Object.entries(ON_ERROR).map(([k, v]) => (
@@ -556,6 +569,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               ))}
             </select>
           </Field>
+          )}
         </div>
         {usesThreshold && (
           <div className="cx-form-row center">
@@ -746,8 +760,15 @@ function MappingEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>
 }
 
 /** A decision model's question (what to ask, its options) and what each answer means for the request. */
-function DecisionEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void }) {
+function DecisionEditor({ l, set, data }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void; data: Data }) {
+  const ui = useUi();
   const d = decisionFor(l);
+  const saved = data.settings.decisionSchemas ?? [];
+  const [naming, setNaming] = useState<string | null>(null);
+  const saveAs = async (name: string) => {
+    const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'schema'}-${Date.now().toString(36)}`;
+    if (await ui.run(() => api('settings', { method: 'PATCH', body: { decisionSchemas: [...saved, { id, name, schema: d }] } }), `Saved "${name}" as a decision schema`)) setNaming(null);
+  };
   const put = (p: Partial<DecisionSchema>) => set({ decision: { ...d, ...p } });
   const problem = schemaProblem(d);
   const CRITERIA_HINT = { noul: 'Two lines: "true = when the answer is yes" and "false = when it is no".', choice: 'One option per line: label = when to pick it.', score: 'One level per line, lowest first.' } as const;
@@ -760,18 +781,57 @@ function DecisionEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer
       </Note>
       <div className="cx-form-row center">
         <Field label="Start from" hint={l.decision ? 'Your own question. Picking a preset replaces it.' : 'Using the default prompt-injection question.'}>
-          <select className="cx-input" value="" onChange={(e) => e.target.value && set({ decision: { ...DECISION_PRESETS[e.target.value].schema } })}>
-            <option value="">Pick a preset…</option>
-            {Object.entries(DECISION_PRESETS).map(([k, p]) => (
-              <option key={k} value={k}>
-                {p.label}
-              </option>
-            ))}
+          <select
+            className="cx-input"
+            value=""
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v.startsWith('saved:')) set({ decision: { ...saved.find((x) => x.id === v.slice(6))!.schema } });
+              else if (v === 'routing') set({ decision: { ...ROUTING_PRESET } });
+              else if (v) set({ decision: { ...DECISION_PRESETS[v].schema } });
+            }}
+          >
+            <option value="">Pick a preset or saved schema…</option>
+            {saved.length > 0 && (
+              <optgroup label="Saved decision schemas">
+                {saved.map((x) => (
+                  <option key={x.id} value={`saved:${x.id}`}>
+                    {x.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="Presets">
+              {Object.entries(DECISION_PRESETS).map(([k, p]) => (
+                <option key={k} value={k}>
+                  {p.label}
+                </option>
+              ))}
+              <option value="routing">Routing (simple / complex)</option>
+            </optgroup>
           </select>
         </Field>
         <Field label="Question type">
           <Seg value={d.question} label="Question type" onChange={(q) => put({ question: q })} options={[['noul', 'Yes / no'], ['choice', 'Choice'], ['score', 'Score']]} />
         </Field>
+        {naming === null ? (
+          <button type="button" className="cx-btn tall" title="Keep this question to reuse in other guard and router layers (Schemas page)" onClick={() => setNaming('')}>
+            Save as schema
+          </button>
+        ) : (
+          <form
+            className="cx-form-row center nowrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (naming.trim()) void saveAs(naming.trim());
+            }}
+          >
+            <input className="cx-input" autoFocus placeholder="Schema name" value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setNaming(null)} />
+            <button type="submit" className="cx-btn pri" disabled={!naming.trim()}>
+              Save
+            </button>
+          </form>
+        )}
       </div>
       <Field label="Question" hint="{policy} is replaced by the layer prompt below (group lines included).">
         <textarea className="cx-input" rows={2} value={d.instructions} onChange={(e) => put({ instructions: e.target.value })} />
@@ -780,11 +840,58 @@ function DecisionEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer
         <Field label={d.question === 'choice' ? 'Options' : d.question === 'score' ? 'Levels' : 'Meaning of true and false'} grow hint={CRITERIA_HINT[d.question]}>
           <textarea className="cx-input mono" rows={4} value={d.criteria} onChange={(e) => put({ criteria: e.target.value })} />
         </Field>
-        <Field label="What each answer does" grow hint={OUTCOME_HINT[d.question]}>
-          <textarea className="cx-input mono" rows={4} value={d.outcomes} onChange={(e) => put({ outcomes: e.target.value })} />
-        </Field>
+        {l.type !== 'router' && (
+          <Field label="What each answer does" grow hint={OUTCOME_HINT[d.question]}>
+            <textarea className="cx-input mono" rows={4} value={d.outcomes} onChange={(e) => put({ outcomes: e.target.value })} />
+          </Field>
+        )}
       </div>
       {problem && <Note tone="warn">{problem}</Note>}
     </div>
+  );
+}
+
+/** The answers a decision question can give, for routing: choice labels, true/false, or score levels. */
+export function answerLabels(d: DecisionSchema): string[] {
+  const rows = d.criteria
+    .split('\n')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (d.question === 'noul') return ['true', 'false'];
+  if (d.question === 'score') return rows.map((_, i) => String(i));
+  return rows.map((x) => x.split('=')[0].trim()).filter(Boolean);
+}
+
+/** Router layers: which model each answer sends the request to, and the fallback. */
+function RoutesEditor({ l, set, data }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void; data: Data }) {
+  const d = decisionFor(l);
+  const labels = answerLabels(d);
+  const routes = l.routes ?? {};
+  const clientModel = (r: { enabled: boolean }) => r.enabled;
+  return (
+    <Section title="Routes" hint="The model each answer sends the request to. Only models the key's group may use are switched to; otherwise the client's model stays. Empty keeps the client's model.">
+      {d.question === 'score' && <Note>Score answers are rounded to the nearest level.</Note>}
+      <div className="cx-form">
+        {labels.map((lab) => (
+          <div key={lab} className="cx-form-row center nowrap">
+            <span className="mono cx-route-label">{lab}</span>
+            <span className="cx-muted">→</span>
+            <div className="grow">
+              <ModelPicker servers={data.servers} only={clientModel} value={{ serverId: null, model: routes[lab] ?? '' }} placeholder="Keep the client's model" onPick={(_, m) => set({ routes: { ...routes, [lab]: m } })} />
+            </div>
+            {routes[lab] && <IconBtn icon="close" label={`Clear the route for ${lab}`} onClick={() => set({ routes: Object.fromEntries(Object.entries(routes).filter(([k]) => k !== lab)) })} />}
+          </div>
+        ))}
+        <div className="cx-form-row center nowrap">
+          <span className="cx-route-label">Otherwise</span>
+          <span className="cx-muted">→</span>
+          <div className="grow">
+            <ModelPicker servers={data.servers} only={clientModel} value={{ serverId: null, model: l.fallbackModel ?? '' }} placeholder="Keep the client's model" onPick={(_, m) => set({ fallbackModel: m })} />
+          </div>
+          {l.fallbackModel && <IconBtn icon="close" label="Clear the fallback" onClick={() => set({ fallbackModel: '' })} />}
+        </div>
+        <p className="cx-hint">Used when the answer has no route above, or the decision model fails or times out.</p>
+      </div>
+    </Section>
   );
 }

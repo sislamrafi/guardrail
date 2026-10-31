@@ -6,7 +6,7 @@ import { type Segment, builtinScore, judgeInput, windows } from './guard';
 import { type GuardLayer, type ModelMeta, adapterFor, decisionFor, mappingFor } from './layers';
 import type { Server } from './servers';
 
-export type LayerAction = 'off' | 'skipped' | 'nothing' | 'pass' | 'flag' | 'block' | 'redact' | 'cleared';
+export type LayerAction = 'off' | 'skipped' | 'nothing' | 'pass' | 'flag' | 'block' | 'redact' | 'cleared' | 'route';
 
 export interface LayerResult {
   id: string;
@@ -20,6 +20,8 @@ export interface LayerResult {
   fellBack: boolean;
   /** Off because a group turned it off (not the layer's own default). */
   bypassed: boolean;
+  /** Router layers: the answer and the model it picked (null: keep the client's model). */
+  route?: { label: string | null; model: string | null };
 }
 
 export interface PipelineResult {
@@ -32,6 +34,8 @@ export interface PipelineResult {
   redact: RegExp[];
   /** A flag nothing resolved, decided by the unresolved-flag setting. */
   unresolved: boolean;
+  /** The model a router layer picked (the first router that picked one wins). */
+  route?: { model: string; label: string | null; layer: string } | null;
 }
 
 /** Is this layer on for a group? Group choices win; the old PIGuard/OSS switches still count for those two. */
@@ -99,6 +103,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   let flagQuote: string | null = input.escalate?.quote ?? null;
   let screened = false;
   let cleared = false;
+  let route: PipelineResult['route'] = null;
 
   for (const [i, layer] of layers.entries()) {
     const base = { id: layer.id, name: layer.name, type: layer.type, n: i + 1, decision: null, fellBack: false, bypassed: false };
@@ -152,6 +157,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
           })
         : { verdict: 'allow', score: null, categories: [], reason: 'No server is set for this layer', raw: '', latency_ms: 0, error: 'No server is set for this layer' };
     }
+    if (layer.type === 'router') {
+      // A router never blocks: its answer picks the model; a failed decision uses the fallback.
+      const label = d.error ? null : (d.label ?? d.categories[0] ?? null);
+      const target = (label && layer.routes?.[label]) || layer.fallbackModel || null;
+      results.push({ ...base, action: 'route', decision: d, fellBack: !!d.error, route: { label, model: target } });
+      if (target && !route) route = { model: target, label, layer: layer.name };
+      continue;
+    }
     let fellBack = false;
     if (d.error) {
       fellBack = true;
@@ -172,7 +185,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     const act = d.verdict === 'flag' && layer.onFail === 'block' ? 'flag' : layer.onFail;
     if (act === 'block') {
       results.push({ ...base, action: 'block', decision: d, fellBack });
-      return { results, block: { reason: d.reason, layer: layer.name }, cleared: false, redact, unresolved: false };
+      return { results, block: { reason: d.reason, layer: layer.name }, cleared: false, redact, unresolved: false, route };
     }
     if (act === 'redact') {
       for (const [name, re] of REDACT_PATTERNS) if (d.categories.includes(name)) redact.push(re);
@@ -185,10 +198,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     results.push({ ...base, action: 'flag', decision: d, fellBack });
   }
   if (flagged) {
-    if (input.unresolvedFlag === 'block') return { results, block: { reason: 'It was flagged and no later check cleared it.', layer: 'unresolved flag' }, cleared: false, redact, unresolved: true };
-    return { results, block: null, cleared: flaggedByLayer, redact, unresolved: true };
+    if (input.unresolvedFlag === 'block') return { results, block: { reason: 'It was flagged and no later check cleared it.', layer: 'unresolved flag' }, cleared: false, redact, unresolved: true, route };
+    return { results, block: null, cleared: flaggedByLayer, redact, unresolved: true, route };
   }
-  return { results, block: null, cleared, redact, unresolved: false };
+  return { results, block: null, cleared, redact, unresolved: false, route };
 }
 
 /** Replace matches in every text part of a chat request. */

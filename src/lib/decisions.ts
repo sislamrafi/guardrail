@@ -48,7 +48,22 @@ export const DECISION_PRESETS: Record<string, { label: string; schema: DecisionS
   },
 };
 
+/** For router layers: the answer picks the model, so outcomes don't block anything. */
+export const ROUTING_PRESET: DecisionSchema = {
+  question: 'choice',
+  instructions: 'How hard is this request for a coding model? {policy}',
+  criteria: 'simple = A small, well-defined change, a question or a lookup.\ncomplex = Multi-file work, design, debugging or anything needing careful reasoning.',
+  outcomes: '',
+};
+
 export const DECISION_DEFAULT = DECISION_PRESETS.injection.schema;
+
+/** A decision question saved for reuse by guard and router layers (Schemas page). */
+export interface SavedDecision {
+  id: string;
+  name: string;
+  schema: DecisionSchema;
+}
 
 /** Model names that only work through the Decisions API. */
 export const isDecisionModel = (model: string) => /decision|decide|decider|\/jev-|\/span-0|\/classify-\d|luna-decisions/i.test(model);
@@ -110,7 +125,7 @@ export function schemaProblem(s: DecisionSchema): string | null {
 type Parsed = Omit<Decision, 'raw' | 'latency_ms'>;
 
 /** Read a Decisions API answer into a decision. Never throws. */
-export function parseDecisionAnswer(body: unknown, s: DecisionSchema, threshold = 0.5): Parsed & { cost?: number | null } {
+export function parseDecisionAnswer(body: unknown, s: DecisionSchema, threshold = 0.5): Parsed & { cost?: number | null; label?: string } {
   const fail = (error: string): Parsed => ({ verdict: 'allow', score: null, categories: [], reason: error, error });
   const b = body as { answers?: Record<string, { type?: string; noul?: number; choice?: string; confidence?: number; probabilities?: Record<string, number>; score?: number; legend?: Record<string, string> }>; usage?: { cost?: number } } | null;
   const a = b?.answers?.decision ?? Object.values(b?.answers ?? {})[0];
@@ -135,7 +150,7 @@ export function parseDecisionAnswer(body: unknown, s: DecisionSchema, threshold 
     const probs = a.probabilities ?? {};
     const risky = Object.entries(probs).filter(([k]) => (out.get(k.toLowerCase()) ?? 'flag') !== 'allow').reduce((t, [, v]) => t + Number(v || 0), 0);
     const score = Object.keys(probs).length ? Math.round(risky * 1000) / 1000 : (a.confidence ?? null);
-    return { verdict, score, categories: verdict === 'allow' ? [] : [label], reason: `Chose "${label}"${a.confidence != null ? ` (confidence ${Number(a.confidence).toFixed(2)})` : ''}`, cost };
+    return { verdict, score, categories: verdict === 'allow' ? [] : [label], reason: `Chose "${label}"${a.confidence != null ? ` (confidence ${Number(a.confidence).toFixed(2)})` : ''}`, cost, label };
   }
   const levels = lines(s.criteria).length || Object.keys(a.legend ?? {}).length || 1;
   const n = Number(a.score);

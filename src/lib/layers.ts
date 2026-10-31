@@ -1,7 +1,7 @@
 // The guard pipeline: an ordered list of layers between "key accepted" and "call the model".
 // The old fixed pair (PIGuard, then the OSS judge) becomes two layers with ids "piguard" and "judge".
 import { type AdapterId, ADAPTERS, detectAdapter } from './adapters';
-import { DECISION_DEFAULT, type DecisionSchema, normalizeDecision } from './decisions';
+import { DECISION_DEFAULT, type DecisionSchema, ROUTING_PRESET, normalizeDecision } from './decisions';
 import { type CustomMapping, normalizeMapping, presetFor, withPreset, MAPPING_DEFAULT } from './mapping';
 
 export const LAYER_TYPES = {
@@ -9,6 +9,7 @@ export const LAYER_TYPES = {
   judge: 'LLM judge with a system prompt',
   patterns: 'Built-in injection patterns (no model)',
   redactor: 'Built-in secrets and PII redactor (no model)',
+  router: 'Router: a decision model picks which model answers',
 } as const;
 export type LayerType = keyof typeof LAYER_TYPES;
 
@@ -42,6 +43,10 @@ export interface GuardLayer {
   mapping?: CustomMapping | null;
   /** For decision models: the question asked and what each answer means (null: the default injection question). */
   decision?: DecisionSchema | null;
+  /** Router layers: the model each answer sends the request to. */
+  routes?: Record<string, string> | null;
+  /** Router layers: the model when the answer has no route or the decision fails; empty keeps the client's model. */
+  fallbackModel?: string;
 }
 
 export const LAYER_DEFAULTS: Omit<GuardLayer, 'id' | 'name' | 'type'> = {
@@ -91,6 +96,8 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     reasoningEffort: pick(raw.reasoningEffort, ['low', 'medium', 'high'] as const, 'low'),
     mapping: raw.mapping ? normalizeMapping(raw.mapping) : null,
     decision: raw.decision ? normalizeDecision(raw.decision) : null,
+    routes: raw.routes && typeof raw.routes === 'object' ? Object.fromEntries(Object.entries(raw.routes as Record<string, unknown>).filter(([k, v]) => k.trim() && typeof v === 'string' && v.trim()).map(([k, v]) => [k.trim().slice(0, 80), String(v).trim()])) : null,
+    fallbackModel: String(raw.fallbackModel ?? '').trim(),
   };
 }
 
@@ -119,6 +126,7 @@ export function autoAdapter(l: Pick<GuardLayer, 'type' | 'model'>, meta?: ModelM
 
 /** The adapter a layer actually uses. */
 export function adapterFor(l: GuardLayer, meta?: ModelMeta | null): AdapterId {
+  if (l.type === 'router') return 'decisions';
   return l.adapter !== 'auto' ? l.adapter : autoAdapter(l, meta).adapter;
 }
 
@@ -186,4 +194,4 @@ export function mappingFor(l: GuardLayer): CustomMapping {
 }
 
 /** The question a decision-model layer asks: its own, else the default prompt-injection question. */
-export const decisionFor = (l: GuardLayer): DecisionSchema => l.decision ?? DECISION_DEFAULT;
+export const decisionFor = (l: GuardLayer): DecisionSchema => l.decision ?? (l.type === 'router' ? ROUTING_PRESET : DECISION_DEFAULT);

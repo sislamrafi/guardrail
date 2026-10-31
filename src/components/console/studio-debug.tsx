@@ -272,7 +272,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
   const ruleSteps = steps.filter((s) => s.head.startsWith('Rule "') || s.head.startsWith('Redacted by'));
   const [label, tone] = OUTCOME[log.outcome] ?? [log.outcome, 'warn'];
   const decisions = log.decisions ?? [];
-  const actMark = (a: string): Mark => (a === 'block' ? 'block' : a === 'flag' || a === 'redact' ? 'flag' : a === 'pass' || a === 'cleared' ? 'pass' : 'skip');
+  const actMark = (a: string): Mark => (a === 'block' ? 'block' : a === 'flag' || a === 'redact' ? 'flag' : a === 'pass' || a === 'cleared' ? 'pass' : a === 'route' ? 'info' : 'skip');
   const upstream = steps.filter((s) => / unreachable$| returned \d+$|^Sent to the model/.test(s.head));
   return (
     <div className="cx-dbg-list">
@@ -302,7 +302,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
       </Stage>
       {decisions.length === 0 && <Stage mark="skip" title="Guard layers" answer={reached('layers') ? 'none ran' : 'not reached'} />}
       {decisions.map((r) => (
-        <Stage key={r.id} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
+        <Stage key={r.id} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.route ? ` → ${r.route.model ?? 'client model'}` : ''}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
           {r.decision ? (
             <>
               <KV

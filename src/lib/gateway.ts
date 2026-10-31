@@ -167,10 +167,10 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // 3. What this key may do
   const res = resolveGroup(key.groupId, key.exceptions, groups);
   const eff = res.effective;
-  const model = String(body.model ?? '');
+  let model = String(body.model ?? '');
   log.model = model || null;
   const { byModel } = allowedRoutes(key, eff);
-  const routes = byModel.get(model);
+  let routes = byModel.get(model);
   if (!routes?.length) {
     const allowed = [...byModel.keys()];
     const msg = model
@@ -264,6 +264,19 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     outcome = 'redacted';
   }
   if (pipe.cleared && outcome === 'answered') outcome = 'false_alarm';
+
+  // A router layer picked the model. Only a model this key may use; otherwise keep the client's.
+  if (pipe.route && pipe.route.model !== model) {
+    const to = pipe.route.model;
+    const allowed = byModel.get(to);
+    if (allowed?.length) {
+      steps.push({ tone: 'neutral', head: `Routed to ${to}`, ms: at(), text: `${pipe.route.layer} answered "${pipe.route.label ?? 'no answer'}", so the request goes to ${to} instead of ${model}.` });
+      model = to;
+      routes = allowed;
+      log.model = to;
+      body.model = to;
+    } else steps.push({ tone: 'warn', head: `Router picked ${to}, kept ${model}`, ms: at(), text: `${pipe.route.layer} picked ${to}, but this key's group may not use it, so the request stays on ${model}.` });
+  }
 
   // 6. Project context
   lap();

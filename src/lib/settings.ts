@@ -1,4 +1,5 @@
 import { getDb } from './db';
+import { type SavedDecision, normalizeDecision } from './decisions';
 import { type GuardLayer, layersFromLegacy, normalizeLayer, syncLegacy } from './layers';
 
 export const DEFAULT_OSS_PROMPT = `You review requests sent to a coding assistant.
@@ -53,6 +54,8 @@ export interface AppSettings {
   defaultRateLimit: number;
   /** Believe the first X-Forwarded-For entry (only when GuardRail sits behind your own reverse proxy). */
   trustProxy: boolean;
+  /** Decision questions saved for reuse by guard and router layers. */
+  decisionSchemas: SavedDecision[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -80,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   schemaPolicy: 'strict',
   defaultRateLimit: 120,
   trustProxy: false,
+  decisionSchemas: [],
 };
 
 type Obj = Record<string, unknown>;
@@ -135,6 +139,10 @@ export function updateSettings(patch: unknown): AppSettings {
 
 // Each check now has its own switch; fold the old "all checks off" into them.
 function normalize(s: AppSettings): AppSettings {
+  s.decisionSchemas = (Array.isArray(s.decisionSchemas) ? s.decisionSchemas : [])
+    .filter((d) => d && typeof d === 'object' && String((d as SavedDecision).name ?? '').trim())
+    .slice(0, 200)
+    .map((d, i) => ({ id: String(d.id ?? '').replace(/[^\w-]/g, '').slice(0, 40) || `schema-${i + 1}`, name: String(d.name).trim().slice(0, 80), schema: normalizeDecision(d.schema) }));
   if (!s.guard.enabled) {
     s.guard.enabled = true;
     s.guard.piguard.enabled = false;

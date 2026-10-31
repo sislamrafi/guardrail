@@ -95,6 +95,9 @@ export function SchemasPage() {
           )}
         </Section>
       </section>
+      <section id="sec-decisions">
+        <DecisionSchemas />
+      </section>
       <section id="sec-tester">
         <Section
           title="Detection tester"
@@ -153,5 +156,79 @@ export function SchemasPage() {
         </Section>
       </section>
     </Page>
+  );
+}
+
+/** Decision questions saved from a guard or router layer, to reuse in others. */
+function DecisionSchemas() {
+  const { data } = useStore();
+  const ui = useUi();
+  const list = data?.settings.decisionSchemas ?? [];
+  const save = (next: typeof list, ok: string) => ui.run(() => api('settings', { method: 'PATCH', body: { decisionSchemas: next } }), ok);
+  const used = (id: string) => {
+    const s = list.find((x) => x.id === id)?.schema;
+    return (data?.settings.guard.layers ?? []).filter((l) => s && JSON.stringify(l.decision) === JSON.stringify(s)).map((l) => l.name);
+  };
+  return (
+    <Section title="Decision schemas" hint="Questions for decision models (Decisions API): what to ask, the answers it may give, and what each answer does. Save one from a guard or router layer with “Save as schema”, then pick it under “Start from” in any layer.">
+      {list.length === 0 ? (
+        <Note>No saved decision schemas yet. Open a guard or router layer that uses a decision model and press “Save as schema”.</Note>
+      ) : (
+        <div className="cx-table-wrap">
+          <table className="cx-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Question</th>
+                <th>Answers</th>
+                <th>Used by</th>
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((x) => {
+                const answers = x.schema.criteria
+                  .split('\n')
+                  .map((l) => l.split('=')[0].trim())
+                  .filter(Boolean);
+                const by = used(x.id);
+                return (
+                  <tr key={x.id}>
+                    <td>
+                      <input
+                        className="cx-input"
+                        defaultValue={x.name}
+                        aria-label="Schema name"
+                        onBlur={(e) => {
+                          const name = e.target.value.trim();
+                          if (name && name !== x.name) void save(list.map((y) => (y.id === x.id ? { ...y, name } : y)), 'Renamed');
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <Pill>{x.schema.question === 'noul' ? 'Yes / no' : x.schema.question === 'choice' ? 'Choice' : 'Score'}</Pill>
+                      <div className="cx-muted small">{x.schema.instructions.slice(0, 120)}</div>
+                    </td>
+                    <td className="mono small">{x.schema.question === 'score' ? `${answers.length} levels` : answers.join(' · ')}</td>
+                    <td className="cx-muted small">{by.length ? by.join(', ') : '–'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="cx-btn sm danger"
+                        onClick={async () => {
+                          if (await ui.confirm({ title: `Delete "${x.name}"?`, body: 'Layers that started from it keep their own copy of the question.', ok: 'Delete', danger: true })) void save(list.filter((y) => y.id !== x.id), 'Decision schema deleted');
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
   );
 }
