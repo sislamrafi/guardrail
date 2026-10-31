@@ -95,6 +95,8 @@ export interface PipelineInput {
   serverOf: (id: number) => Server | undefined;
   /** The request's text for a layer with its own "reads" setting; without it every layer gets `segments`. */
   segmentsFor?: (scan: Scan) => Segment[];
+  /** Live progress: a layer starts (about to run) or is done (its result). */
+  onLayer?: (e: { phase: 'start' | 'done'; id: string; name: string; n: number; result?: LayerResult }) => void;
   /** The exact body the model will get, its model and server: "suffix" layers append their check to it. */
   conversation?: { body: Record<string, unknown>; model: string; serverId: number } | null;
   /** What the server said about a model (Decisions API, structured output), for Auto. */
@@ -105,6 +107,15 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   const { segments, layers, resolution, serverOf } = input;
   const eff = resolution.effective;
   const results: LayerResult[] = [];
+  // Every result is also reported live (Studio and the tester show progress as layers finish).
+  const report = input.onLayer;
+  if (report) {
+    const push = results.push.bind(results);
+    results.push = (...xs: LayerResult[]) => {
+      for (const x of xs) report({ phase: 'done', id: x.id, name: x.name, n: x.n, result: x });
+      return push(...xs);
+    };
+  }
   const redact: RegExp[] = [];
   let flagged = !!input.escalate;
   // Only a layer's flag makes a later "allow" a false alarm; a rule's escalation does not.
@@ -145,6 +156,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     // A group can change a layer's threshold and add lines to its prompt (see the group's Guard tab).
     const opts = eff.layer_opts[layer.id];
     const threshold = opts?.threshold ?? layer.threshold;
+    report?.({ phase: 'start', id: layer.id, name: layer.name, n: i + 1 });
     let d: Decision;
     if (layer.type === 'patterns') d = patternsDecision(segs, threshold);
     else if (layer.type === 'redactor') d = redactorDecision(segs);

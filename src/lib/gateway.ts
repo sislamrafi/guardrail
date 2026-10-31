@@ -1,4 +1,5 @@
 import { StreamCollector, responseFromJson } from './stream-collect';
+import { cacheOf } from './adapters';
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
 import { clientIp as ipOf, ipAllowed } from './ip';
 import { contentText, newSegments, renderBlocked, Segment } from './guard';
@@ -39,7 +40,15 @@ export interface GatewayOptions {
   ip?: string | null;
   /** Run these guard layers instead of the saved ones (Studio, replay). */
   layers?: GuardLayer[];
+  /** Live progress for Studio: each step, layer, model call and draft answer as it happens. */
+  onEvent?: (e: LiveEvent) => void;
 }
+
+export type LiveEvent =
+  | { type: 'step'; step: Step }
+  | { type: 'layer'; phase: 'start' | 'done'; id: string; name: string; n: number; stage: 'input' | 'output'; attempt?: number; result?: LayerResult }
+  | { type: 'model'; attempt: number; model: string }
+  | { type: 'draft'; attempt: number; text: string; toolCalls: number; cache: { cached: number; prompt: number } | null; cost: number | null };
 
 export function clientIp(req: Request): string | null {
   return ipOf(req.headers, getSettings().trustProxy);
@@ -127,6 +136,14 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const settings = getSettings();
   const path = new URL(req.url).pathname;
   const steps: Step[] = [];
+  const emit = opts.onEvent;
+  if (emit) {
+    const push = steps.push.bind(steps);
+    steps.push = (...xs: Step[]) => {
+      for (const x of xs) emit({ type: 'step', step: x });
+      return push(...xs);
+    };
+  }
   const stages: Record<string, number> = {};
   const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ? (opts.ip ?? null) : clientIp(req), path, test: !!opts.source };
 
@@ -259,6 +276,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const conversation = suffixOn ? { body: { ...body, model, messages: forwardMessages(messages) }, model, serverId: routes[0].server.id } : null;
   const pipe = await runPipeline({
     conversation,
+    onLayer: emit ? (e) => emit({ type: 'layer', ...e, stage: 'input' }) : undefined,
     segments,
     layers,
     resolution: res,
@@ -373,9 +391,12 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       let msgs = body.messages as Msg[];
       const outResults: LayerResult[] = [];
       for (let attempt = 1; ; attempt++) {
+        emit?.({ type: 'model', attempt, model });
         const json = await callOnce({ ...body, messages: msgs });
         if (json instanceof Response) return json;
         const resp = responseFromJson(json);
+        const usage = json.usage as { cost?: number } | undefined;
+        emit?.({ type: 'draft', attempt, text: typeof resp.message.content === 'string' ? resp.message.content : '', toolCalls: resp.message.tool_calls?.length ?? 0, cache: cacheOf(json), cost: typeof usage?.cost === 'number' ? usage.cost : null });
         const text = typeof resp.message.content === 'string' ? resp.message.content : JSON.stringify(resp.message.content ?? '');
         const calls = resp.message.tool_calls ?? [];
         const segs: Segment[] = [...(text.trim() ? [{ source: 'model answer' as const, text }] : []), ...calls.map((c) => ({ source: 'tool call' as const, text: `${c.function?.name ?? 'tool'}(${c.function?.arguments ?? ''})` }))];
@@ -388,6 +409,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
           serverOf: (sid) => getServer(sid),
           metaOf: modelMeta,
           conversation: { body: { ...body, messages: [...msgs, resp.message] }, model, serverId: routes[0].server.id },
+          onLayer: emit ? (e) => emit({ type: 'layer', ...e, stage: 'output', attempt }) : undefined,
         });
         outResults.push(...check.results.map((x) => ({ ...x, stage: 'output' as const, attempt })));
         log.decisions = [...pipe.results, ...outResults];
@@ -445,6 +467,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     return new Response(out, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id } });
   }
 
+  emit?.({ type: 'model', attempt: 1, model });
   // 7. Forward to vLLM, failing over between servers
   for (const r of routes) {
     const tStart = at();

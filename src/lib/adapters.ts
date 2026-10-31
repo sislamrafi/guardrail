@@ -29,6 +29,8 @@ export interface Decision {
   suffix?: { model: string };
   /** The backend that answered, when the server says (OpenRouter's "provider"). */
   provider?: string | null;
+  /** What the call cost in USD, when the server says (OpenRouter's usage.cost). */
+  cost?: number | null;
 }
 
 export const ADAPTERS = {
@@ -314,7 +316,8 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
     const raw = reasoning ? `${content}\n\n[reasoning]\n${reasoning}` : content || r.text;
     const cache = cacheOf(j);
     const provider = typeof (j as { provider?: unknown } | null)?.provider === 'string' ? ((j as { provider: string }).provider) : null;
-    const extra = { cache, provider, ...(suffix ? { suffix: { model: c.model } } : {}) };
+    const cost = Number((j as { usage?: { cost?: number } } | null)?.usage?.cost);
+    const extra = { cache, provider, cost: Number.isFinite(cost) ? cost : null, ...(suffix ? { suffix: { model: c.model } } : {}) };
     if (c.adapter === 'llama_guard') return { ...done(parseLlamaGuard(content), raw), ...extra };
     if (c.adapter === 'yes_no') {
       const top = choice?.logprobs?.content?.[0]?.top_logprobs ?? [];

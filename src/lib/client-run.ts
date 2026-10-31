@@ -1,6 +1,6 @@
 // Send a request through the real gateway as a client would, from inside the admin panel.
 // Studio and Activity's Replay both use this: same auth, rules, guard layers, context and model call.
-import { handleCompletion, type Trace } from './gateway';
+import { type LiveEvent, handleCompletion, type Trace } from './gateway';
 import { getGroup } from './groups';
 import { type ApiKey, getKey } from './keys';
 import type { GuardLayer } from './layers';
@@ -36,6 +36,8 @@ export async function runAsClient(input: {
   body: unknown;
   headers?: Record<string, string>;
   source: 'Studio' | 'Replay';
+  /** Live progress: gateway events, plus the answer's tokens as they stream in. */
+  onEvent?: (e: LiveEvent | { type: 'token'; text: string }) => void;
   /** The admin's own address, logged as the client address. */
   ip?: string | null;
   layers?: GuardLayer[];
@@ -58,8 +60,32 @@ export async function runAsClient(input: {
   const payload = typeof input.body === 'string' ? input.body : JSON.stringify(input.body ?? {});
   const trace: Trace = {};
   const t0 = Date.now();
-  const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: input.source, ip: input.ip, layers: input.layers });
-  const raw = await res.text();
+  const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: input.source, ip: input.ip, layers: input.layers, onEvent: input.onEvent });
+  // With a live listener, read the stream as it comes and pass each piece of text on.
+  let raw = '';
+  if (input.onEvent && res.body && (res.headers.get('content-type') ?? '').includes('event-stream')) {
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let tail = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = dec.decode(value, { stream: true });
+      raw += chunk;
+      const lines = (tail + chunk).split('\n');
+      tail = lines.pop() ?? '';
+      for (const l of lines) {
+        if (!l.startsWith('data:') || l.includes('[DONE]')) continue;
+        try {
+          const c = JSON.parse(l.slice(5)).choices?.[0];
+          const t = c?.delta?.content ?? c?.text ?? '';
+          if (t) input.onEvent({ type: 'token', text: t });
+        } catch {
+          // a keep-alive or partial line
+        }
+      }
+    }
+  } else raw = await res.text();
   const ms = Date.now() - t0;
   const sse = (res.headers.get('content-type') ?? '').includes('event-stream');
   let text = '';

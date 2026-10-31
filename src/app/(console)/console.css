@@ -724,3 +724,11 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-page-pin.compact .cx-page-acts .cx-btn { height: 24px; }
 .cx-warnlist { margin: 4px 0 6px; padding-left: 18px; }
 .cx-warnlist li + li { margin-top: 3px; }
+
+/* Studio: progress while a message is on its way */
+.cx-live-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); margin-top: 4px; }
+.cx-live-chip { padding: 1px 7px; border-radius: 9px; border: 1px solid var(--edge-2); font-size: 11px; }
+.cx-live-chip.pass { color: var(--ok); }
+.cx-live-chip.block, .cx-live-chip.error { color: var(--bad); }
+.cx-live-chip.flag { color: var(--warn); }
+.cx-turn-body.cx-draft { opacity: .75; border-style: dashed; }

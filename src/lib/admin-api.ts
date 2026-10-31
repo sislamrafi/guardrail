@@ -383,6 +383,41 @@ const routes: Record<string, Handler> = {
       model: String(body.model ?? ''),
       layers: Array.isArray(body.layers) ? body.layers.map(String) : null,
     }),
+  // The same as studio/send, but as a live event stream: steps, layers, tokens, drafts, then the result.
+  'POST studio/live': ({ body, req }) => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const send = (o: unknown) => {
+          try {
+            c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+          } catch {
+            // the page went away
+          }
+        };
+        try {
+          const run = await runAsClient({
+            keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+            groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+            secret: typeof body.secret === 'string' ? body.secret : undefined,
+            path: String(body.path ?? ''),
+            body: body.body,
+            headers: (body.headers as Record<string, string>) ?? {},
+            source: 'Studio',
+            ip: clientIp(req),
+            layers: Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : undefined,
+            onEvent: send,
+          });
+          send({ type: 'result', run });
+        } catch (e) {
+          send({ type: 'error', message: errMsg(e) });
+        } finally {
+          c.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+  },
   'POST studio/send': ({ body, req }) =>
     runAsClient({
       keyId: body.keyId ? num(body.keyId, 'key') : undefined,

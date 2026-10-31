@@ -310,7 +310,7 @@ export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Dat
             {res.block && <span className="cx-muted small">{res.block.reason}</span>}
           </div>
           {res.results.map((r) => (
-            <DecisionRow key={r.id} r={r} />
+            <DecisionRow key={`${r.id}-${r.stage ?? 'input'}-${r.attempt ?? 0}`} r={r} />
           ))}
         </div>
       )}

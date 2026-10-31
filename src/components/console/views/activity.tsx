@@ -442,7 +442,7 @@ function Summary({ d }: { d: LogEntry }) {
         </table>
       </Section>
       <div className="cx-form">
-        <Section title="Guard layers">{d.decisions?.length ? d.decisions.map((r) => <DecisionRow key={r.id} r={r} />) : <Note>This request was logged before guard layers, or never reached them. The timeline below shows what ran.</Note>}</Section>
+        <Section title="Guard layers">{d.decisions?.length ? d.decisions.map((r) => <DecisionRow key={`${r.id}-${r.stage ?? 'input'}-${r.attempt ?? 0}`} r={r} />) : <Note>This request was logged before guard layers, or never reached them. The timeline below shows what ran.</Note>}</Section>
         <Section title="Context added">
           {d.injected ? (
             <div className="cx-list">
@@ -496,7 +496,7 @@ function ReplayView({ r, onClose }: { r: Replay; onClose: () => void }) {
           <Outcome r={{ outcome: r.original.outcome as LogEntry['outcome'], status_code: null }} />
           {r.original.reason && <p className="cx-muted small">{r.original.reason}</p>}
           {(r.original.decisions ?? []).map((x) => (
-            <DecisionRow key={x.id} r={x} />
+            <DecisionRow key={`${x.id}-${x.stage ?? "input"}-${x.attempt ?? 0}`} r={x} />
           ))}
           {r.original.response ? (
             <div className="cx-turn">
@@ -515,7 +515,7 @@ function ReplayView({ r, onClose }: { r: Replay; onClose: () => void }) {
           {rl ? <Outcome r={rl} /> : <Pill tone={r.replay.status < 400 ? 'ok' : 'bad'}>HTTP {r.replay.status}</Pill>}
           {rl?.reason && <p className="cx-muted small">{rl.reason}</p>}
           {(rl?.decisions ?? []).map((x) => (
-            <DecisionRow key={x.id} r={x} />
+            <DecisionRow key={`${x.id}-${x.stage ?? "input"}-${x.attempt ?? 0}`} r={x} />
           ))}
           <div className="cx-turn">
             <div className="cx-turn-head">

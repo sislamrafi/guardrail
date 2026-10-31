@@ -8,7 +8,7 @@ import { buildRequest } from '@/lib/studio-body';
 import { toParts } from '../chat';
 import { Ico } from '../icons';
 import { readPref } from '../prefs';
-import { setDebug, useDebug } from '../studio-debug';
+import { applyLive, sendLive, setDebug, useDebug } from '../studio-debug';
 import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Seg, Switch, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
@@ -171,7 +171,11 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
     setBusy(true);
     try {
       const layers = settings.layers ? data.settings.guard.layers.filter((l) => settings.layers!.includes(l.id)) : undefined;
-      const r = await api<RunResult>('studio/send', { body: { keyId: settings.mode === 'key' ? settings.keyId : undefined, groupId: settings.mode === 'group' ? settings.groupId : undefined, path: req.path, headers: req.headers, body: req.body, layers } });
+      // Live: the debug panel and the bubble below follow each step, layer, token and draft as it happens.
+      setDebug({ live: { items: [], tokens: '', draft: null, status: 'Through the gateway…', started: Date.now(), cost: 0 } });
+      const r = await sendLive<RunResult>({ keyId: settings.mode === 'key' ? settings.keyId : undefined, groupId: settings.mode === 'group' ? settings.groupId : undefined, path: req.path, headers: req.headers, body: req.body, layers }, (e) =>
+        setDebug((d) => (d.live ? { live: applyLive(d.live, e) } : {})),
+      );
       const reply: PromptMessage = r.error ? { role: 'assistant', content: r.error, name: 'error' } : { role: 'assistant', content: r.text, ...(r.toolCalls.length ? { tool_calls: r.toolCalls } : {}) };
       const all = [...next, reply];
       const t: Turn = { at: all.length - 1, logId: r.log?.id ?? null, status: r.status, outcome: r.log?.outcome ?? null, ms: r.ms };
@@ -186,6 +190,7 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
       setMessages(messages);
     } finally {
       setBusy(false);
+      setDebug({ live: null });
     }
   };
   const submit = () => {
@@ -238,13 +243,7 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
           {messages.map((m, i) => (
             <Message key={i} m={m} turn={turns.find((t) => t.at === i)} />
           ))}
-          {busy && (
-            <div className="cx-turn">
-              <div className="cx-turn-body cx-muted">
-                <span className="cx-spin" /> Through the gateway…
-              </div>
-            </div>
-          )}
+          {busy && <LiveBubble />}
           <div ref={end} />
         </div>
       </div>
@@ -267,17 +266,18 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
             ref={box}
             rows={1}
             value={input}
-            placeholder={pending.length ? 'Optional follow-up (⌘↵ to send)' : 'Message the model (⌘↵ to send)'}
+            placeholder={pending.length ? 'Optional follow-up (Enter to send, Shift+Enter for a new line)' : 'Message the model (Enter to send, Shift+Enter for a new line)'}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              // Enter sends, Shift+Enter is a new line; never while an input method is composing text.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               }
             }}
             aria-label="Message"
           />
-          <button type="button" className="cx-send" disabled={busy || (!input.trim() && !pending.length)} onClick={submit} aria-label="Send" title="Send (⌘↵)">
+          <button type="button" className="cx-send" disabled={busy || (!input.trim() && !pending.length)} onClick={submit} aria-label="Send" title="Send (Enter)">
             <Ico n="send" size={15} />
           </button>
         </div>
@@ -475,5 +475,32 @@ function MetaDialog({ sc, onClose }: { sc: Scenario; onClose: () => void }) {
         <input className="cx-input" value={tags} onChange={(e) => setTags(e.target.value)} />
       </Field>
     </Dialog>
+  );
+}
+
+/** The answer while it is on its way: streamed text (or the held draft) and a one-line status. */
+function LiveBubble() {
+  const live = useDebug().live;
+  const draft = live?.draft && !live.tokens ? live.draft : null;
+  const text = live?.tokens || draft?.text || '';
+  return (
+    <div className="cx-turn">
+      <div className="cx-turn-head">
+        <span>assistant</span>
+        {draft && <Pill tone="warn">draft #{draft.attempt}: not yet released to the client</Pill>}
+      </div>
+      {text ? <MdText text={text} className={draft ? 'cx-draft' : ''} /> : null}
+      <div className="cx-live-line">
+        <span className="cx-spin" /> {live?.status ?? 'Through the gateway…'}
+        {live?.items
+          .filter((x) => x.key.startsWith('layer-'))
+          .slice(-3)
+          .map((x) => (
+            <span key={x.key} className={`cx-live-chip ${x.mark}`}>
+              {x.title.replace(/^\d+\. /, '')} {x.mark === 'run' ? '…' : x.mark === 'pass' ? '✓' : x.mark === 'block' ? '✕' : x.mark === 'flag' ? '!' : '–'}
+            </span>
+          ))}
+      </div>
+    </div>
   );
 }

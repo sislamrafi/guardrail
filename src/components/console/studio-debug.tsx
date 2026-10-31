@@ -24,9 +24,122 @@ interface DebugState {
   raw: Record<string, string>;
   /** Bumped after each send so the plan reloads. */
   rev: number;
+  /** While a message is being sent: what has happened so far, live. */
+  live: LiveState | null;
 }
 
-let state: DebugState = { scenarioId: null, settings: null, logId: null, turns: [], raw: {}, rev: 0 };
+export interface LiveItem {
+  key: string;
+  mark: 'pass' | 'block' | 'flag' | 'skip' | 'error' | 'info' | 'run';
+  title: string;
+  answer: string;
+  detail?: string;
+}
+export interface LiveState {
+  items: LiveItem[];
+  /** The answer's text so far, as it streams. */
+  tokens: string;
+  /** After-the-model checks hold the answer: the latest draft, not yet released to the client. */
+  draft: { attempt: number; text: string } | null;
+  status: string;
+  started: number;
+  cost: number;
+}
+
+type LiveEvent =
+  | { type: 'step'; step: { tone: string; head: string; text: string; ms: number } }
+  | { type: 'layer'; phase: 'start' | 'done'; id: string; name: string; n: number; stage: 'input' | 'output'; attempt?: number; result?: { action: string; decision?: { score?: number | null; latency_ms?: number; reason?: string; error?: string; cache?: { cached: number; prompt: number } | null; cost?: number | null } | null } }
+  | { type: 'model'; attempt: number; model: string }
+  | { type: 'draft'; attempt: number; text: string; toolCalls: number; cache: { cached: number; prompt: number } | null; cost: number | null }
+  | { type: 'token'; text: string };
+
+const money = (n: number) => (n >= 0.01 ? `$${n.toFixed(4)}` : `$${n.toPrecision(2)}`);
+const cacheText = (c?: { cached: number; prompt: number } | null) => (c && c.prompt ? `cache ${c.cached.toLocaleString()}/${c.prompt.toLocaleString()}` : '');
+
+/** Fold one live event into the progress shown while a message is being sent. */
+export function applyLive(s: LiveState, e: LiveEvent): LiveState {
+  const items = [...s.items];
+  const put = (it: LiveItem) => {
+    const i = items.findIndex((x) => x.key === it.key);
+    if (i >= 0) items[i] = it;
+    else items.push(it);
+  };
+  if (e.type === 'token') return { ...s, tokens: s.tokens + e.text, status: 'Model answering…' };
+  if (e.type === 'step') {
+    // Layer and model steps are shown by their own events; keep the others (key, rules, context, routing…).
+    if (/^Check \d|^Answer #|^Sent to the model|answered$|streamed$/.test(e.step.head)) return s;
+    put({ key: `step-${items.length}`, mark: e.step.tone === 'bad' ? 'block' : e.step.tone === 'warn' ? 'flag' : e.step.tone === 'ok' ? 'pass' : 'info', title: e.step.head, answer: '', detail: e.step.text });
+    return { ...s, items };
+  }
+  if (e.type === 'layer') {
+    const key = `layer-${e.stage}-${e.id}-${e.attempt ?? 0}`;
+    const title = `${e.n}. ${e.name}${e.stage === 'output' ? ` · answer #${e.attempt ?? 1}` : ''}`;
+    if (e.phase === 'start') {
+      put({ key, mark: 'run', title, answer: 'checking…' });
+      return { ...s, items, status: `${e.name}: checking…` };
+    }
+    const r = e.result;
+    const d = r?.decision;
+    const a = r?.action ?? 'done';
+    const mark: LiveItem['mark'] = d?.error ? 'error' : a === 'block' ? 'block' : a === 'flag' || a === 'redact' ? 'flag' : a === 'pass' || a === 'cleared' || a === 'route' ? 'pass' : 'skip';
+    const cost = d?.cost ?? 0;
+    put({ key, mark, title, answer: [ACTION_LABEL[a] ?? a, d?.score != null ? d.score.toFixed(2) : '', d?.latency_ms != null ? ms(d.latency_ms) : '', cacheText(d?.cache), d?.cost ? money(d.cost) : ''].filter(Boolean).join(' · '), detail: d?.error ?? d?.reason });
+    return { ...s, items, cost: s.cost + cost };
+  }
+  if (e.type === 'model') {
+    put({ key: `model-${e.attempt}`, mark: 'run', title: `Model call${e.attempt > 1 ? ` · answer #${e.attempt}` : ''}`, answer: `${e.model}…` });
+    return { ...s, items, tokens: e.attempt > 1 ? '' : s.tokens, status: e.attempt > 1 ? `Asking ${e.model} again (answer #${e.attempt})…` : `Calling ${e.model}…` };
+  }
+  // A full draft answer held for after-the-model checks.
+  put({ key: `model-${e.attempt}`, mark: 'pass', title: `Model call${e.attempt > 1 ? ` · answer #${e.attempt}` : ''}`, answer: [`${e.text.length.toLocaleString()} chars${e.toolCalls ? ` · ${e.toolCalls} tool call(s)` : ''}`, cacheText(e.cache), e.cost ? money(e.cost) : ''].filter(Boolean).join(' · ') });
+  return { ...s, items, draft: { attempt: e.attempt, text: e.text }, status: 'Checking the answer before releasing it…', cost: s.cost + (e.cost ?? 0) };
+}
+
+/** Send a Studio message through the live endpoint: events as they happen, then the final result. */
+export async function sendLive<T>(body: unknown, onEvent: (e: LiveEvent) => void): Promise<T> {
+  const res = await fetch('/api/admin/studio/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
+  if (!res.ok || !res.body) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || `Request failed (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let tail = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const lines = (tail + dec.decode(value, { stream: true })).split('\n');
+    tail = lines.pop() ?? '';
+    for (const l of lines) {
+      if (!l.startsWith('data:')) continue;
+      const e = JSON.parse(l.slice(5)) as LiveEvent | { type: 'result'; run: T } | { type: 'error'; message: string };
+      if (e.type === 'result') return e.run;
+      if (e.type === 'error') throw new Error(e.message);
+      onEvent(e);
+    }
+  }
+  throw new Error('The live connection closed early.');
+}
+
+/** The live step list while a message is on its way. */
+function LiveView({ live }: { live: LiveState }) {
+  return (
+    <div className="cx-dbg-list">
+      <div className="cx-dbg-outcome">
+        <span className="cx-spin" /> <span className="small">{live.status}</span>
+        <span className="cx-muted small">{ms(Date.now() - live.started)}{live.cost ? ` · ${money(live.cost)}` : ''}</span>
+      </div>
+      <div className="cx-dbg-sec">LIVE</div>
+      {live.items.map((it) => (
+        <Stage key={it.key} mark={it.mark === 'run' ? 'info' : it.mark} title={it.title} answer={it.mark === 'run' ? <span><span className="cx-spin" /> {it.answer}</span> : it.answer}>
+          {it.detail ? <p className="cx-muted small">{it.detail}</p> : undefined}
+        </Stage>
+      ))}
+    </div>
+  );
+}
+
+let state: DebugState = { scenarioId: null, settings: null, logId: null, turns: [], raw: {}, rev: 0, live: null };
 const listeners = new Set<() => void>();
 export function setDebug(patch: Partial<DebugState> | ((s: DebugState) => Partial<DebugState>)) {
   state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) };
@@ -106,7 +219,9 @@ export function StudioDebug({ id }: { id: number }) {
           </span>
         )}
       </div>
-      {!mine || !dbg.settings ? (
+      {mine && dbg.live ? (
+        <LiveView live={dbg.live} />
+      ) : !mine || !dbg.settings ? (
         <Loading />
       ) : logId ? (
         <TurnView logId={logId} raw={dbg.raw[logId]} />
@@ -304,7 +419,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
       </Stage>
       {decisions.length === 0 && <Stage mark="skip" title="Guard layers" answer={reached('layers') ? 'none ran' : 'not reached'} />}
       {decisions.map((r) => (
-        <Stage key={r.id} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}${r.stage === 'output' ? ` · answer #${r.attempt ?? 1}` : ''}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.route ? ` → ${r.route.model ?? 'client model'}` : ''}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
+        <Stage key={`${r.id}-${r.stage ?? 'input'}-${r.attempt ?? 0}`} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}${r.stage === 'output' ? ` · answer #${r.attempt ?? 1}` : ''}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.route ? ` → ${r.route.model ?? 'client model'}` : ''}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
           {r.decision ? (
             <>
               <KV
