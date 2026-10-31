@@ -6,6 +6,7 @@ import { Ico } from './icons';
 import { Stat, ago, fmtTokens } from './kit';
 import { pathFor, subtree, useNav } from './nav';
 import { useStore } from './store';
+import { StudioDebug } from './studio-debug';
 import type { Data, FileC, GroupC } from './types';
 import { ActivityList } from './views/activity';
 import { LayersPanel } from './views/guard';
@@ -20,12 +21,13 @@ export function Details({ width }: { width: number }) {
   const key = nav.view === 'keys' && nav.id && nav.id !== 'new' ? data.keys.find((k) => k.id === Number(nav.id)) : null;
   const gid = nav.view === 'groups' && nav.id ? Number(nav.id) : (key?.groupId ?? nav.group);
   const group = data.groups.find((g) => g.id === gid) ?? root;
+  const scenario = nav.view === 'studio' && nav.id ? Number(nav.id) : null;
   return (
     <aside className="cx-side cx-right" style={{ width }} aria-label="Details">
       <div className="cx-side-head">
-        <span>{nav.view === 'guard' ? 'GUARD LAYERS' : nav.view === 'activity' ? 'REQUESTS' : file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
+        <span>{nav.view === 'guard' ? 'GUARD LAYERS' : nav.view === 'activity' ? 'REQUESTS' : scenario ? 'REQUEST DEBUG' : file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
       </div>
-      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ''}`}>{nav.view === 'activity' ? <ActivityList /> : nav.view === 'guard' ? <LayersPanel data={data} /> : file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
+      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ''}`}>{nav.view === 'activity' ? <ActivityList /> : nav.view === 'guard' ? <LayersPanel data={data} /> : scenario ? <StudioDebug key={scenario} id={scenario} /> : file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
     </aside>
   );
 }

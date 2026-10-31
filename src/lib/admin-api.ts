@@ -12,6 +12,7 @@ import { type DiscoveredModel, addModelByHand, createServer, deleteServer, disco
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
+import { planFor } from './studio-plan';
 import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
 
 export class HttpError extends Error {
@@ -342,6 +343,13 @@ const routes: Record<string, Handler> = {
   'POST studio/scenarios': ({ body }) => (body.duplicateOf ? duplicateScenario(num(body.duplicateOf)) : body.fromLog ? scenarioFromLog(String(body.fromLog)) : createScenario(body as never)),
   'PATCH studio/scenarios/:id': ({ params, body }) => updateScenario(num(params[0]), body as never),
   'DELETE studio/scenarios/:id': ({ params }) => deleteScenario(num(params[0])),
+  'POST studio/plan': ({ body }) =>
+    planFor({
+      keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+      groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+      model: String(body.model ?? ''),
+      layers: Array.isArray(body.layers) ? body.layers.map(String) : null,
+    }),
   'POST studio/send': ({ body, req }) =>
     runAsClient({
       keyId: body.keyId ? num(body.keyId, 'key') : undefined,

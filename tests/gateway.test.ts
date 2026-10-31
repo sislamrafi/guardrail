@@ -15,6 +15,7 @@ import { resetRateLimits } from '@/lib/limits';
 import { handleCompletion, handleModels, type Trace } from '@/lib/gateway';
 import { getLog, prunePrompts } from '@/lib/logs';
 import { promptsDir } from '@/lib/prompt-files';
+import { planFor } from '@/lib/studio-plan';
 
 process.env.GUARDRAIL_PROMPTS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-prompts-'));
 
@@ -349,5 +350,16 @@ describe('gateway', () => {
     // Logged as test traffic from the admin's own address.
     expect(lastLog().ip).toBe('192.168.1.7');
     expect(lastLog().test).toBeTruthy();
+  });
+
+  it('plans a Studio request: group chain, models, context and layers', () => {
+    const key = listKeys().find((k) => k.name === 'dev')!;
+    const plan = planFor({ keyId: key.id, model: 'qwen3-coder-30b' });
+    expect(plan.who.key).toBe('dev');
+    expect(plan.models.ok).toBe(true);
+    expect(plan.context.files.map((f) => f.name)).toEqual(['rules.md']);
+    expect(plan.layers).toHaveLength(getSettings().guard.layers.length);
+    expect(plan.params.find((p) => p.key === 'context')?.from.length).toBeGreaterThan(0);
+    expect(planFor({ keyId: key.id, model: 'nope' }).models.ok).toBe(false);
   });
 });

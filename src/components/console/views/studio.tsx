@@ -7,12 +7,12 @@ import type { ScenarioSettings, Turn } from '@/lib/studio';
 import { buildRequest } from '@/lib/studio-body';
 import { toParts } from '../chat';
 import { Ico } from '../icons';
-import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Seg, Switch, fmt, ms } from '../kit';
+import { setDebug, useDebug } from '../studio-debug';
+import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Seg, Switch, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { Data, LogEntry, Scenario } from '../types';
 import { OUTCOME } from './activity';
-import { DecisionRow } from './guard';
 
 interface RunResult {
   status: number;
@@ -118,7 +118,6 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
   const ui = useUi();
   const [messages, setMessages] = useState<PromptMessage[]>(sc.messages);
   const [turns, setTurns] = useState<Turn[]>(sc.turns);
-  const [runs, setRuns] = useState<Record<number, RunResult>>({});
   const [settings, setSettings] = useState<ScenarioSettings>(() => withDefaults(sc.settings, data));
   const [input, setInput] = useState('');
   const [toolAnswers, setToolAnswers] = useState<Record<string, string>>({});
@@ -128,7 +127,12 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [messages, runs, busy]);
+  }, [messages, busy]);
+  // The right sidebar's debug panel follows this scenario: the plan on open, then each turn.
+  useEffect(() => setDebug({ scenarioId: sc.id, logId: null }), [sc.id]);
+  useEffect(() => {
+    setDebug({ settings, turns: turns.filter((t) => t.logId).map((t, i) => ({ logId: t.logId!, label: `Turn ${i + 1}` })) });
+  }, [settings, turns]);
   // The message box grows with its text, up to about eight lines, then scrolls.
   const box = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -165,7 +169,8 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
       const t: Turn = { at: all.length - 1, logId: r.log?.id ?? null, status: r.status, outcome: r.log?.outcome ?? null, ms: r.ms };
       setMessages(all);
       setTurns((ts) => [...ts, t]);
-      setRuns((rs) => ({ ...rs, [t.at]: r }));
+      const logId = r.log?.id ?? null;
+      setDebug((d) => ({ logId, rev: d.rev + 1, raw: logId ? { ...d.raw, [logId]: r.raw } : d.raw }));
       setToolAnswers({});
       await persist({ messages: all, turns: [...turns, t] });
     } catch (e) {
@@ -187,7 +192,7 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
     if (!(await ui.confirm({ title: 'Clear this chat?', body: 'The messages are removed from the scenario; its settings stay. Logged requests stay in Activity.', ok: 'Clear chat', danger: true }))) return;
     setMessages([]);
     setTurns([]);
-    setRuns({});
+    setDebug({ logId: null });
     await ui.run(() => persist({ messages: [], turns: [] }), 'Chat cleared');
   };
   const exportJson = () => {
@@ -223,7 +228,7 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
           {sc.notes && <Note>Expected: {sc.notes}</Note>}
           {messages.length === 0 && <div className="cx-studio-empty">Send a message to start. Every turn goes through the gateway exactly like a client request.</div>}
           {messages.map((m, i) => (
-            <Message key={i} m={m} run={runs[i]} turn={turns.find((t) => t.at === i)} />
+            <Message key={i} m={m} turn={turns.find((t) => t.at === i)} />
           ))}
           {busy && (
             <div className="cx-turn">
@@ -285,8 +290,8 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
   );
 }
 
-function Message({ m, run, turn }: { m: PromptMessage; run?: RunResult; turn?: Turn }) {
-  const [open, setOpen] = useState(false);
+function Message({ m, turn }: { m: PromptMessage; turn?: Turn }) {
+  const dbg = useDebug();
   const parts = toParts([m]);
   const blocked = turn?.outcome === 'blocked';
   return (
@@ -315,37 +320,10 @@ function Message({ m, run, turn }: { m: PromptMessage; run?: RunResult; turn?: T
         return null;
       })}
       {turn && (
-        <div className="cx-trace">
-          <button type="button" className="cx-fold-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-            <Ico n="chevron" size={12} /> Trace · HTTP {turn.status}
-            {turn.logId && <span className="mono cx-muted small">{turn.logId}</span>}
-          </button>
-          {open && (
-            <div className="cx-form cx-trace-body">
-              {!run ? (
-                <span className="cx-muted small">Open {turn.logId ?? 'the request'} in Activity (Test switch) for the full trace.</span>
-              ) : (
-                <>
-                  {(run.log?.decisions ?? []).map((d) => (
-                    <DecisionRow key={d.id} r={d} />
-                  ))}
-                  <span className="cx-field-label">Context added</span>
-                  {run.trace.context?.length ? (
-                    <span className="small">
-                      {run.trace.context.map((c) => `${c.name} (${fmt(c.tokens)} tok)`).join(', ')} · {fmt(run.trace.contextTokens ?? 0)} tokens
-                    </span>
-                  ) : (
-                    <span className="cx-muted small">Nothing was added.</span>
-                  )}
-                  <span className="cx-field-label">Forwarded body</span>
-                  <pre className="cx-pre small">{run.trace.forwarded ? JSON.stringify(run.trace.forwarded, null, 2) : 'Nothing was sent to the model.'}</pre>
-                  <span className="cx-field-label">What the client received</span>
-                  <pre className="cx-pre small">{run.raw}</pre>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+        <button type="button" className={`cx-trace-chip ${turn.logId && dbg.logId === turn.logId ? 'on' : ''}`} disabled={!turn.logId} title="Show this turn stage by stage in the right sidebar" onClick={() => setDebug({ logId: turn.logId })}>
+          <Ico n="guard" size={12} /> Debug · HTTP {turn.status}
+          {turn.logId && <span className="mono cx-muted small">{turn.logId}</span>}
+        </button>
       )}
     </>
   );

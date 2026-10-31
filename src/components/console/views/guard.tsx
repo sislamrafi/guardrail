@@ -256,8 +256,8 @@ function Reply({ g, set }: { g: GuardSettings; set: (p: Partial<GuardSettings>) 
 
 // ---------------------------------------------------------------- tester
 
-const ACTION_TONE: Record<string, 'ok' | 'warn' | 'bad' | ''> = { pass: 'ok', cleared: 'ok', flag: 'warn', redact: 'warn', block: 'bad', off: '', skipped: '', nothing: '' };
-const ACTION_LABEL: Record<string, string> = { pass: 'Pass', cleared: 'Cleared the flag', flag: 'Flagged', redact: 'Redacted', block: 'Blocked', off: 'Off', skipped: 'Skipped', nothing: 'Nothing new' };
+export const ACTION_TONE: Record<string, 'ok' | 'warn' | 'bad' | ''> = { pass: 'ok', cleared: 'ok', flag: 'warn', redact: 'warn', block: 'bad', off: '', skipped: '', nothing: '' };
+export const ACTION_LABEL: Record<string, string> = { pass: 'Pass', cleared: 'Cleared the flag', flag: 'Flagged', redact: 'Redacted', block: 'Blocked', off: 'Off', skipped: 'Skipped', nothing: 'Nothing new' };
 
 export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Data; layers?: GuardLayer[]; title?: string }) {
   const nav = useNav();
