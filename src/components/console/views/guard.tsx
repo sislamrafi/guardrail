@@ -288,9 +288,37 @@ export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Dat
   const [source, setSource] = useState<'user' | 'tool'>('tool');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<{ results: LayerResult[]; block: { reason: string; layer: string } | null; cleared: boolean; unresolved: boolean } | null>(null);
+  // Live: each layer shows as running, then its result, as the server reports it.
+  const [live, setLive] = useState<{ running: { n: number; name: string } | null; done: LayerResult[] } | null>(null);
   const run = async () => {
     setBusy(true);
-    await ui.run(async () => setRes(await api('guard/test', { body: { text, groupId: gid, source, layers } })), undefined, { reload: false });
+    setRes(null);
+    setLive({ running: null, done: [] });
+    await ui.run(
+      async () => {
+        const r = await fetch('/api/admin/guard/test-live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, groupId: gid, source, layers }) });
+        if (!r.ok || !r.body) throw new Error(`Request failed (${r.status})`);
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let tail = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const lines = (tail + dec.decode(value, { stream: true })).split('\n');
+          tail = lines.pop() ?? '';
+          for (const l of lines) {
+            if (!l.startsWith('data:')) continue;
+            const e = JSON.parse(l.slice(5));
+            if (e.type === 'layer') setLive((v) => (!v ? v : e.phase === 'start' ? { ...v, running: { n: e.n, name: e.name } } : { running: null, done: [...v.done, e.result] }));
+            else if (e.type === 'result') setRes(e.result);
+            else if (e.type === 'error') throw new Error(e.message);
+          }
+        }
+      },
+      undefined,
+      { reload: false },
+    );
+    setLive(null);
     setBusy(false);
   };
   return (
@@ -303,6 +331,18 @@ export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Dat
           {busy ? 'Running…' : 'Run'}
         </button>
       </div>
+      {live && !res && (
+        <div className="cx-result" aria-live="polite">
+          {live.done.map((r) => (
+            <DecisionRow key={`${r.id}-${r.stage ?? 'input'}-${r.attempt ?? 0}`} r={r} />
+          ))}
+          {live.running && (
+            <div className="cx-form-row center small">
+              <span className="cx-spin" /> {live.running.n}. {live.running.name}: checking…
+            </div>
+          )}
+        </div>
+      )}
       {res && (
         <div className="cx-result" aria-live="polite">
           <div className="cx-form-row center">
@@ -339,6 +379,7 @@ export function DecisionRow({ r }: { r: LayerResult }) {
         {r.stage === 'output' && <Pill tone="info">after the model · answer #{r.attempt ?? 1}</Pill>}
         {d?.suffix && <Pill tone="info">suffix · {d.suffix.model}</Pill>}
         {d?.cache && <span className="mono cx-muted small" title="Prompt tokens served from the cache">cache {d.cache.cached.toLocaleString()}/{d.cache.prompt.toLocaleString()}</span>}
+        {d?.cost ? <span className="mono cx-muted small" title="What this check cost (from the provider)">${d.cost < 0.01 ? d.cost.toPrecision(2) : d.cost.toFixed(4)}</span> : null}
       </summary>
       {d && (
         <div className="cx-cols">
@@ -1011,6 +1052,7 @@ function PlacementField({ l, set, data, index }: { l: GuardLayer; set: (p: Parti
     if (layers.slice(0, index).some((x) => x.type === 'redactor' || x.onFail === 'redact')) warnings.push('A layer before this one can redact text. When it does, the request the model gets differs from what this layer checked, so the cache misses.');
     if (layers.some((x) => x.type === 'router')) warnings.push('A router layer may switch the request to another model; the check and the call then use different models.');
     warnings.push('Providers only cache prompts above a minimum size (often 1,024 tokens), so short conversations will not hit.');
+    if (l.timeoutMs < 10000) warnings.push(`The time limit is ${l.timeoutMs / 1000} s. A suffix check reads the whole conversation, so a long one can time out and fall back to "${l.onError}" instead of being judged; 15-30 s is safer.`);
   }
   return (
     <div className="cx-form">

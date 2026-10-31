@@ -29,6 +29,8 @@ export interface ModelResponse {
   interrupted?: boolean;
   /** Text was cut at the size limit. */
   truncated?: boolean;
+  /** The backend that answered (OpenRouter's provider), to check that checks and calls share a cache. */
+  provider?: string;
 }
 
 /** One message of a logged prompt. Completions requests are stored as a single user message. */

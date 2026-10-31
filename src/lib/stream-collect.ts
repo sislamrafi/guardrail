@@ -76,6 +76,7 @@ export class StreamCollector {
       finish_reason: this.finish,
       usage: this.usage,
       streamed: true,
+      ...(this.provider ? { provider: this.provider } : {}),
       ...(opts.interrupted ? { interrupted: true } : {}),
       ...(this.truncated ? { truncated: true } : {}),
     };
@@ -84,7 +85,7 @@ export class StreamCollector {
 
 /** The reply of a non-streamed chat or completions answer. */
 export function responseFromJson(json: unknown): ModelResponse {
-  const j = json as { choices?: { message?: ModelResponse['message']; text?: string; finish_reason?: string | null }[]; usage?: ModelResponse['usage'] };
+  const j = json as { choices?: { message?: ModelResponse['message']; text?: string; finish_reason?: string | null }[]; usage?: ModelResponse['usage']; provider?: string };
   const c = j?.choices?.[0];
   const message: ModelResponse['message'] = c?.message ? { ...c.message, role: c.message.role ?? 'assistant' } : { role: 'assistant', content: c?.text ?? '' };
   let truncated = false;
@@ -92,5 +93,5 @@ export function responseFromJson(json: unknown): ModelResponse {
     message.content = message.content.slice(0, RESPONSE_LIMIT);
     truncated = true;
   }
-  return { message, finish_reason: c?.finish_reason ?? null, usage: j?.usage ?? null, ...(truncated ? { truncated: true } : {}) };
+  return { message, finish_reason: c?.finish_reason ?? null, usage: j?.usage ?? null, ...(typeof j?.provider === 'string' ? { provider: j.provider } : {}), ...(truncated ? { truncated: true } : {}) };
 }

@@ -315,17 +315,23 @@ const routes: Record<string, Handler> = {
     }
     return { calls: n, cached, prompt, rate: prompt ? cached / prompt : null };
   },
-  'POST guard/test': async ({ body }) => {
-    const s = getSettings();
-    const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
-    const resolution = resolveGroup(gid);
-    const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
-    // Optionally try unsaved layers from the editor.
-    const layers = Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers;
-    // A layer with its own "reads" only sees the sample if it reads that kind of text.
-    const segmentsFor = (scan: { user: boolean; tool: boolean }) => segments.filter((x) => (x.source === 'user message' ? scan.user : scan.tool));
-    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta, segmentsFor });
-    return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
+  'POST guard/test': ({ body }) => guardTest(body),
+  // The same, as a live event stream: each layer as it starts and finishes, then the result.
+  'POST guard/test-live': ({ body }) => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const send = (o: unknown) => c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+        try {
+          send({ type: 'result', result: await guardTest(body, (e) => send({ type: 'layer', ...e })) });
+        } catch (e) {
+          send({ type: 'error', message: errMsg(e) });
+        } finally {
+          c.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   },
 
 
@@ -503,3 +509,17 @@ export async function dispatch(req: Request, parts: string[]): Promise<Response>
   }
 }
 
+
+/** Run the guard layers on sample text with a group's settings (the "Try it" tester). Nothing is logged. */
+async function guardTest(body: Record<string, unknown>, onLayer?: Parameters<typeof runPipeline>[0]['onLayer']) {
+  const s = getSettings();
+  const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
+  const resolution = resolveGroup(gid);
+  const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
+  // Optionally try unsaved layers from the editor. Only layers before the model: there is no answer here.
+  const layers = (Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers).filter((l) => l.stage !== 'output');
+  // A layer with its own "reads" only sees the sample if it reads that kind of text.
+  const segmentsFor = (scan: { user: boolean; tool: boolean }) => segments.filter((x) => (x.source === 'user message' ? scan.user : scan.tool));
+  const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta, segmentsFor, onLayer });
+  return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
+}

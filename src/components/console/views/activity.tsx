@@ -420,7 +420,7 @@ function Summary({ d }: { d: LogEntry }) {
     ['Tokens out', fmt(d.tokens_out)],
     ...((): [string, React.ReactNode][] => {
       const c = cacheOf(d.response);
-      return c ? [['Prompt cache (model call)', `${c.cached.toLocaleString()} of ${c.prompt.toLocaleString()} prompt tokens from cache (${Math.round((c.cached / c.prompt) * 100)}%)`]] : [];
+      return c ? [['Prompt cache (model call)', `${c.cached.toLocaleString()} of ${c.prompt.toLocaleString()} prompt tokens from cache (${Math.round((c.cached / c.prompt) * 100)}%)${d.response?.provider ? ` · provider ${d.response.provider}` : ''}`]] : [];
     })(),
     ...(d.decisions ?? [])
       .filter((x) => x.decision?.cache)

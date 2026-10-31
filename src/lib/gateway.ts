@@ -61,8 +61,11 @@ export function bearer(req: Request): string | null {
 }
 
 /** Put the context block where vLLM can cache it: the very start of the prompt. */
-/** The OpenRouter provider that last answered each server and model, to keep prompt caches warm. */
-const lastProvider = new Map<string, string>();
+/**
+ * The OpenRouter provider that last answered each server and model, to keep prompt caches warm.
+ * Kept on globalThis so a dev-server code reload doesn't forget it (which made every call cold).
+ */
+const lastProvider: Map<string, string> = ((globalThis as { __grLastProvider?: Map<string, string> }).__grLastProvider ??= new Map());
 
 /** Put a cache breakpoint (Anthropic-style cache_control) on the last message's text. */
 export function withCacheBreakpoint(messages: Msg[]): Msg[] {
@@ -394,6 +397,8 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
         emit?.({ type: 'model', attempt, model });
         const json = await callOnce({ ...body, messages: msgs });
         if (json instanceof Response) return json;
+        // Retries go to the provider that just answered, whose cache now holds this conversation.
+        if (onOpenRouter && typeof json.provider === 'string') body.provider = { ...(body.provider as object), order: [json.provider], allow_fallbacks: true };
         const resp = responseFromJson(json);
         const usage = json.usage as { cost?: number } | undefined;
         emit?.({ type: 'draft', attempt, text: typeof resp.message.content === 'string' ? resp.message.content : '', toolCalls: resp.message.tool_calls?.length ?? 0, cache: cacheOf(json), cost: typeof usage?.cost === 'number' ? usage.cost : null });
