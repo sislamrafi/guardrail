@@ -12,7 +12,8 @@
     "test": "vitest run",
     "mock:vllm": "node scripts/mock-vllm.mjs",
     "seed": "tsx scripts/seed.ts",
-    "dev:next": "next dev -p 3000"
+    "dev:next": "next dev -p 3000",
+    "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
