@@ -64,10 +64,40 @@ the layer's fallback decides, and the log shows "Check N · name failed".
 | `moderation` | OpenAI-compatible moderation models | `POST /v1/moderations` | `flagged`, `categories`, and the highest `category_scores` value. |
 | `json_judge` | Any chat model with a system prompt (gpt-oss-safeguard, Qwen, …) | Chat completion, JSON mode when the server supports it (retried without on 400) | `{"verdict","score","reason","categories"}`; tolerates prose around the JSON and the older `decision` key. |
 | `text` | Anything else | Chat completion | Looks for allow / block / safe / unsafe. |
+| `custom` | Any model, with a mapping (presets: gpt-oss-safeguard, Qwen3Guard, WildGuard, NemoGuard / Aegis) | Chat, completions, `/classify`, `/v1/moderations` or a raw POST, with an optional body template | JSON paths or regexes for verdict, score, categories and reason, plus value rules (see below). |
 
 Auto-detection from the model name: `llama-guard` → `llama_guard`; `shieldgemma`, `granite-guardian`
 → `yes_no`; `moderation` → `moderation`; `piguard`, `prompt-guard`, `deberta`, `injection`,
-`classif` → `classifier`; otherwise judges use `json_judge` and classifier layers use `classifier`.
+`classif` → `classifier`; `qwen3guard`, `wildguard`, `nemoguard`, `aegis` → `custom` with their
+preset; otherwise judges use `json_judge` and classifier layers use `classifier`.
+
+## Custom mapping
+
+For a decision model whose answer none of the adapters reads, pick **Custom mapping** in the layer
+editor and say where its answer's parts are. No code change is needed.
+
+**Calling it.** Pick the call type: chat completions, completions, `/classify`, `/v1/moderations`, or a
+raw POST to a path you give. Optionally write the request body as JSON with these placeholders:
+`{input}` (the text to judge), `{policy}` (the layer prompt), `{model}` (inserted as JSON string text,
+so write them inside quotes) and `{messages}` (a chat message list, written without quotes).
+
+**Reading it.** Chat and completions read the reply text; the other call types read the whole response.
+Each of *Verdict at*, *Score at*, *Categories at* and *Reason at* is either a JSON path — `verdict`,
+`result.scores[0]`, `results[*].label`, or a key with spaces such as `User Safety` — or a `/regex/flags`
+whose first group is the value. JSON wrapped in prose or code fences is found.
+
+**Deciding.** *Verdict values* has one rule per line, `values => allow | block | flag`, compared without
+case (`unsafe, 1, true => block`). A value no rule names gets *Any other value* (flag by default). With no
+verdict but a score, a score at or above the layer threshold blocks (*Score means* can flip that for
+models where low is unsafe). *Category names* turns codes into names (`S1 = Violent crimes`).
+
+**Testing.** Paste an answer from the model next to the mapping to see how GuardRail reads it as you
+type. An answer the mapping can't read is never a crash: the decision comes back with an error and the
+layer's "if it fails" setting decides, as for every adapter.
+
+Presets: **gpt-oss-safeguard** `{"violation": 0|1, "policy_category", "rationale"}` · **Qwen3Guard**
+`Safety: Safe|Unsafe|Controversial` and `Categories:` · **WildGuard** `Harmful request: yes|no` ·
+**NemoGuard / Aegis** `{"User Safety": "safe|unsafe", "Safety Categories"}`.
 
 ## Finding decision models
 

@@ -3,6 +3,8 @@
 // error or an answer that can't be parsed comes back as a Decision with `error` set, and the
 // pipeline applies the layer's fallback.
 
+import { type CustomMapping, MAPPING_DEFAULT, answerText, buildMappedRequest, parseMapped } from './mapping';
+
 export type Verdict = 'allow' | 'block' | 'flag';
 
 export interface Decision {
@@ -27,6 +29,7 @@ export const ADAPTERS = {
   moderation: 'OpenAI moderation endpoint',
   json_judge: 'JSON judge (LLM with a system prompt)',
   text: 'Free text (keyword fallback)',
+  custom: 'Custom mapping (any output: JSON path or regex)',
 } as const;
 export type AdapterId = keyof typeof ADAPTERS;
 
@@ -36,6 +39,8 @@ export function detectAdapter(model: string): AdapterId {
   if (/llama[-_]?guard/.test(m)) return 'llama_guard';
   if (/shieldgemma|granite[-_]?guardian/.test(m)) return 'yes_no';
   if (/moderation/.test(m)) return 'moderation';
+  // Guard models with their own output format: read with a ready custom mapping (see mapping.ts).
+  if (/qwen3?[-_]?guard|wildguard|nemoguard|aegis/.test(m)) return 'custom';
   if (/piguard|prompt[-_]?guard|deberta|injection|classif/.test(m)) return 'classifier';
   return 'json_judge';
 }
@@ -163,6 +168,8 @@ export interface CallInput {
   threshold: number;
   timeoutMs: number;
   reasoningEffort?: string;
+  /** For the custom adapter: how to call the model and read its answer. */
+  mapping?: CustomMapping;
 }
 
 const JSON_INSTRUCTION = '\n\nAnswer with JSON only, in this shape: {"verdict": "allow" or "block", "score": 0 to 1, "reason": "one short sentence", "categories": []}';
@@ -192,6 +199,14 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
   const done = (p: Parsed, raw: string, quote?: string | null): Decision => ({ ...p, raw: raw.slice(0, 4000), latency_ms: Math.round(performance.now() - t0), quote });
   const errored = (e: string, raw = '') => done(fail(e), raw);
   try {
+    if (c.adapter === 'custom') {
+      const m = c.mapping ?? MAPPING_DEFAULT;
+      const req = buildMappedRequest(m, { model: c.model, policy: c.prompt, input: c.content, windows: c.windows });
+      const r = await post(`${c.url}${req.path}`, c.apiKey, req.body, c.timeoutMs);
+      if (!r.ok) return errored(`The model answered ${r.status}`, r.text);
+      const text = answerText(m, r.text);
+      return done(parseMapped(text, m, c.threshold), text);
+    }
     if (c.adapter === 'classifier') {
       let r = await post(`${c.url}/classify`, c.apiKey, { model: c.model, input: c.windows }, c.timeoutMs);
       if (r.status === 404) r = await post(`${c.url}/pooling`, c.apiKey, { model: c.model, input: c.windows }, c.timeoutMs);

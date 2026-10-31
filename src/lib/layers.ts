@@ -1,6 +1,7 @@
 // The guard pipeline: an ordered list of layers between "key accepted" and "call the model".
 // The old fixed pair (PIGuard, then the OSS judge) becomes two layers with ids "piguard" and "judge".
 import { type AdapterId, ADAPTERS, detectAdapter } from './adapters';
+import { type CustomMapping, normalizeMapping, presetFor, withPreset, MAPPING_DEFAULT } from './mapping';
 
 export const LAYER_TYPES = {
   classifier: 'Classifier model (PIGuard, Llama Guard, moderation…)',
@@ -36,6 +37,8 @@ export interface GuardLayer {
   onError: 'allow' | 'block' | 'patterns';
   timeoutMs: number;
   reasoningEffort: 'low' | 'medium' | 'high';
+  /** For the "custom" adapter: how to call the model and read its answer (null: the preset for the model, if any). */
+  mapping?: CustomMapping | null;
 }
 
 export const LAYER_DEFAULTS: Omit<GuardLayer, 'id' | 'name' | 'type'> = {
@@ -83,13 +86,14 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     onError: pick(raw.onError, ['allow', 'block', 'patterns'] as const, 'block'),
     timeoutMs: Math.round(clamp(raw.timeoutMs, 200, 60000, LAYER_DEFAULTS.timeoutMs)),
     reasoningEffort: pick(raw.reasoningEffort, ['low', 'medium', 'high'] as const, 'low'),
+    mapping: raw.mapping ? normalizeMapping(raw.mapping) : null,
   };
 }
 
 /** The adapter a layer actually uses. */
 export function adapterFor(l: GuardLayer): AdapterId {
   if (l.adapter !== 'auto') return l.adapter;
-  if (l.type === 'judge') return /llama[-_]?guard|shieldgemma|granite[-_]?guardian/i.test(l.model) ? detectAdapter(l.model) : 'json_judge';
+  if (l.type === 'judge') return /llama[-_]?guard|shieldgemma|granite[-_]?guardian|qwen3?[-_]?guard|wildguard|nemoguard|aegis/i.test(l.model) ? detectAdapter(l.model) : 'json_judge';
   return detectAdapter(l.model) === 'json_judge' ? 'classifier' : detectAdapter(l.model);
 }
 
@@ -147,4 +151,11 @@ export function syncLegacy(layers: GuardLayer[], g: Legacy, patch: { piguard?: o
     }
     return l;
   });
+}
+
+/** The mapping a custom-adapter layer uses: its own, else the ready preset for its model, else the default. */
+export function mappingFor(l: GuardLayer): CustomMapping {
+  if (l.mapping) return l.mapping;
+  const p = presetFor(l.model);
+  return p ? withPreset(p) : MAPPING_DEFAULT;
 }

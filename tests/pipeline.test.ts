@@ -147,3 +147,48 @@ describe('migrating the old two checks', () => {
     expect(next[2]).toEqual(extra);
   });
 });
+
+describe('custom mapping adapter', () => {
+  it('reads each preset model\'s own answer format', async () => {
+    const { PRESETS, withPreset, parseMapped, presetFor } = await import('@/lib/mapping');
+    const want: Record<string, { verdict: string; cats?: string[] }> = {
+      gpt_oss_safeguard: { verdict: 'block', cats: ['prompt_injection'] },
+      qwen3guard: { verdict: 'block', cats: ['Jailbreak'] },
+      wildguard: { verdict: 'block' },
+      nemoguard: { verdict: 'block', cats: ['Criminal Planning/Confessions', 'Guns and Illegal Weapons'] },
+    };
+    for (const [id, p] of Object.entries(PRESETS)) {
+      const d = parseMapped(p.sample, withPreset(id));
+      expect(d.error, id).toBeUndefined();
+      expect(d.verdict, id).toBe(want[id].verdict);
+      if (want[id].cats) expect(d.categories, id).toEqual(want[id].cats);
+    }
+    expect(parseMapped('Safety: Controversial\nCategories: None', withPreset('qwen3guard'))).toMatchObject({ verdict: 'flag', categories: [] });
+    expect(parseMapped('Safety: Safe', withPreset('qwen3guard')).verdict).toBe('allow');
+    expect(parseMapped('{"User Safety": "safe"}', withPreset('nemoguard')).verdict).toBe('allow');
+    expect(presetFor('Qwen/Qwen3Guard-Gen-8B')).toBe('qwen3guard');
+    expect(presetFor('allenai/wildguard')).toBe('wildguard');
+  });
+
+  it('maps scores, nested paths, unknown values and category names, and never throws', async () => {
+    const { MAPPING_DEFAULT, parseMapped, pick } = await import('@/lib/mapping');
+    const m = { ...MAPPING_DEFAULT, verdictPath: '', scorePath: 'result.scores[0]', categoriesPath: 'result.labels', categoryMap: 'S1 = Violent crimes' };
+    expect(parseMapped('{"result": {"scores": [0.91], "labels": ["S1"]}}', m, 0.5)).toMatchObject({ verdict: 'block', score: 0.91, categories: ['Violent crimes'] });
+    expect(parseMapped('{"result": {"scores": [0.2]}}', m, 0.5).verdict).toBe('allow');
+    expect(parseMapped('{"result": {"scores": [0.2]}}', { ...m, scoreDirection: 'lower' }, 0.5).verdict).toBe('block');
+    expect(parseMapped('{"verdict": "weird"}', MAPPING_DEFAULT).verdict).toBe('flag');
+    expect(parseMapped('no json here', MAPPING_DEFAULT).error).toBeTruthy();
+    expect(parseMapped('x', { ...MAPPING_DEFAULT, verdictPath: '/(unclosed/' }).error).toBeTruthy();
+    expect(pick({ a: [{ b: 1 }, { b: 2 }] }, 'a[*].b')).toEqual([1, 2]);
+  });
+
+  it('fills a request template and falls back when the model is unreachable', async () => {
+    const { MAPPING_DEFAULT, buildMappedRequest } = await import('@/lib/mapping');
+    const r = buildMappedRequest({ ...MAPPING_DEFAULT, endpoint: 'raw', path: 'v1/guard', template: '{"model": "{model}", "text": "{input}", "messages": {messages}}' }, { model: 'g', policy: 'P', input: 'say "hi"\nnow', windows: [] });
+    expect(r.path).toBe('/v1/guard');
+    expect(r.body).toMatchObject({ model: 'g', text: 'say "hi"\nnow', messages: [{ role: 'system', content: 'P' }, { role: 'user', content: 'say "hi"\nnow' }] });
+    expect(() => buildMappedRequest({ ...MAPPING_DEFAULT, template: '{bad' }, { model: 'g', policy: '', input: 'x', windows: [] })).toThrow(/template/);
+    const d = await callAdapter({ adapter: 'custom', mapping: MAPPING_DEFAULT, url: 'http://127.0.0.1:9', model: 'x', prompt: 'p', content: 'c', windows: ['c'], labelIndex: 1, threshold: 0.5, timeoutMs: 500 });
+    expect(d.error).toBeTruthy();
+  });
+});

@@ -3,7 +3,7 @@
 import { type Decision, callAdapter } from './adapters';
 import type { Effective, Resolution } from './groups';
 import { type Segment, builtinScore, judgeInput, windows } from './guard';
-import { type GuardLayer, adapterFor } from './layers';
+import { type GuardLayer, adapterFor, mappingFor } from './layers';
 import type { Server } from './servers';
 
 export type LayerAction = 'off' | 'skipped' | 'nothing' | 'pass' | 'flag' | 'block' | 'redact' | 'cleared';
@@ -133,6 +133,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       d = server
         ? await callAdapter({
             adapter: adapterFor(layer),
+            mapping: mappingFor(layer),
             url: server.url,
             apiKey: server.api_key,
             model: layer.model,

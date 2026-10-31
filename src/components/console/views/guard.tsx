@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ADAPTERS, type AdapterId, type Decision, detectAdapter } from '@/lib/adapters';
-import { type GuardLayer, LAYER_TYPES, adapterFor, normalizeLayer } from '@/lib/layers';
+import { type GuardLayer, LAYER_TYPES, adapterFor, mappingFor, normalizeLayer } from '@/lib/layers';
+import { type CustomMapping, PRESETS, parseMapped, presetFor, withPreset } from '@/lib/mapping';
 import type { LayerResult } from '@/lib/pipeline';
 import type { GuardSettings } from '@/lib/settings';
 import { SaveState, useAutoSave, useQuietSave } from '../autosave';
@@ -494,6 +495,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               </Field>
             )}
           </div>
+          {adapterFor(l) === 'custom' && <MappingEditor l={l} set={set} />}
         </Section>
       )}
 
@@ -613,5 +615,116 @@ function GroupsTable({ layer, data, onToggle }: { layer: GuardLayer; data: Data;
         </table>
       </div>
     </Section>
+  );
+}
+
+/** The custom adapter's settings: how to call the model, where the answer's parts are, and a live tester. */
+function MappingEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void }) {
+  const m = mappingFor(l);
+  const preset = presetFor(l.model);
+  const put = (p: Partial<CustomMapping>) => set({ mapping: { ...m, ...p } });
+  const [sample, setSample] = useState(() => (preset ? PRESETS[preset].sample : '{"verdict": "block", "reason": "Asks to leak a key", "categories": ["exfiltration"]}'));
+  const parsed = sample.trim() ? parseMapped(sample, m, l.threshold) : null;
+  return (
+    <div className="cx-form cx-mapping">
+      <div className="cx-form-row center">
+        <Field label="Start from" hint={l.mapping ? 'Your own mapping. Picking a preset replaces it.' : preset ? `Using the ready mapping for ${PRESETS[preset].label}.` : 'The default JSON reading.'}>
+          <select
+            className="cx-input"
+            value=""
+            onChange={(e) => {
+              if (!e.target.value) return;
+              set({ mapping: withPreset(e.target.value) });
+              setSample(PRESETS[e.target.value].sample);
+            }}
+          >
+            <option value="">Pick a preset…</option>
+            {Object.entries(PRESETS).map(([k, p]) => (
+              <option key={k} value={k}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Call it as">
+          <select className="cx-input" value={m.endpoint} onChange={(e) => put({ endpoint: e.target.value as CustomMapping['endpoint'] })}>
+            <option value="chat">Chat completions</option>
+            <option value="completions">Completions</option>
+            <option value="classify">/classify</option>
+            <option value="moderations">/v1/moderations</option>
+            <option value="raw">Raw POST</option>
+          </select>
+        </Field>
+        {m.endpoint === 'raw' && (
+          <Field label="Path on the server" grow>
+            <input className="cx-input mono" value={m.path} placeholder="/v1/guard" onChange={(e) => put({ path: e.target.value })} />
+          </Field>
+        )}
+      </div>
+      <Field label="Request body (optional)" hint="JSON. {input} is the text to judge, {policy} the layer prompt, {model} the model name, {messages} a chat message list. Empty uses the standard body for the call type.">
+        <textarea className="cx-input mono" rows={3} value={m.template} placeholder='{"model": "{model}", "messages": {messages}, "temperature": 0}' onChange={(e) => put({ template: e.target.value })} />
+      </Field>
+      <div className="cx-form-row">
+        {(
+          [
+            ['verdictPath', 'Verdict at', 'verdict  or  /Safety:\\s*(\\w+)/i'],
+            ['scorePath', 'Score at', 'score  or  results[0].category_scores.x'],
+            ['categoriesPath', 'Categories at', 'categories'],
+            ['reasonPath', 'Reason at', 'reason'],
+          ] as const
+        ).map(([k, label, ph]) => (
+          <Field key={k} label={label} grow>
+            <input className="cx-input mono" value={m[k]} placeholder={ph} onChange={(e) => put({ [k]: e.target.value })} />
+          </Field>
+        ))}
+      </div>
+      <p className="cx-hint">A JSON path like a.b[0].c (keys with spaces work as they are), or /regex/flags whose first group is the value. Chat and completions read the reply text, other call types the whole response.</p>
+      <div className="cx-form-row">
+        <Field label="Verdict values" grow hint="One rule per line: values => allow, block or flag.">
+          <textarea className="cx-input mono" rows={3} value={m.verdictMap} onChange={(e) => put({ verdictMap: e.target.value })} />
+        </Field>
+        <Field label="Any other value">
+          <select className="cx-input" value={m.otherwise} onChange={(e) => put({ otherwise: e.target.value as CustomMapping['otherwise'] })}>
+            <option value="flag">Flag</option>
+            <option value="block">Block</option>
+            <option value="allow">Allow</option>
+          </select>
+        </Field>
+        <Field label="Score means" hint={`Without a verdict, at or above ${l.threshold.toFixed(2)} blocks.`}>
+          <select className="cx-input" value={m.scoreDirection} onChange={(e) => put({ scoreDirection: e.target.value as CustomMapping['scoreDirection'] })}>
+            <option value="higher">Higher is unsafe</option>
+            <option value="lower">Lower is unsafe</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Category names (optional)" hint="One per line: code = name, e.g. S1 = Violent crimes.">
+        <textarea className="cx-input mono" rows={2} value={m.categoryMap} onChange={(e) => put({ categoryMap: e.target.value })} />
+      </Field>
+      <div className="cx-cols">
+        <Field label="Try it: paste an answer from the model">
+          <textarea className="cx-input mono" rows={5} value={sample} onChange={(e) => setSample(e.target.value)} />
+        </Field>
+        <div>
+          <span className="cx-field-label">How GuardRail reads it</span>
+          {parsed ? (
+            <div className="cx-form">
+              <div className="cx-form-row center">
+                <Pill tone={parsed.error ? 'bad' : parsed.verdict === 'block' ? 'bad' : parsed.verdict === 'flag' ? 'warn' : 'ok'}>{parsed.error ? 'Not readable' : parsed.verdict}</Pill>
+                {parsed.score != null && <span className="mono cx-muted">score {parsed.score.toFixed(2)}</span>}
+                {parsed.categories.map((c) => (
+                  <Pill key={c} tone="info">
+                    {c}
+                  </Pill>
+                ))}
+              </div>
+              <span className="small">{parsed.error ?? parsed.reason}</span>
+              {parsed.error && <span className="cx-muted small">At run time this goes to the layer&apos;s “if it fails” setting.</span>}
+            </div>
+          ) : (
+            <span className="cx-muted small">Paste an answer to see it read.</span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
