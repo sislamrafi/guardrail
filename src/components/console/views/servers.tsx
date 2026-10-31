@@ -21,6 +21,22 @@ function describe(l: LimitView, data: Data) {
 
 // ---------------------------------------------------------------- /servers
 
+// Hosted providers almost always need a key; a local vLLM usually does not.
+const wantsKey = (url: string) => !/\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])/.test(url);
+
+/** Whether this server has an API key saved. The key itself never reaches the browser. */
+export function KeyBadge({ s }: { s: { hasKey: boolean; url: string } }) {
+  return s.hasKey ? (
+    <Pill tone="ok" title="An API key is saved for this server. It is never shown.">
+      <Ico n="keys" size={11} /> Key ••••
+    </Pill>
+  ) : (
+    <Pill tone={wantsKey(s.url) ? 'warn' : ''} title={wantsKey(s.url) ? 'No API key saved. Hosted providers usually need one.' : 'No API key saved.'}>
+      No key
+    </Pill>
+  );
+}
+
 export function ServersHome() {
   const { data, error } = useStore();
   const nav = useNav();
@@ -50,6 +66,7 @@ export function ServersHome() {
               <tr>
                 <th>Server</th>
                 <th>Status</th>
+                <th>API key</th>
                 <th>Models on</th>
                 <th>Prefix cache</th>
                 <th>Checked</th>
@@ -64,6 +81,9 @@ export function ServersHome() {
                     <div className="mono cx-muted">{s.url}</div>
                   </td>
                   <td>{statusPill(s)}</td>
+                  <td>
+                    <KeyBadge s={s} />
+                  </td>
                   <td className="tnum">
                     {s.models.filter((m) => m.enabled).length} / {s.models.length}
                   </td>
@@ -362,6 +382,7 @@ export function ServerEditor({ id }: { id: number }) {
   const [q, setQ] = useState('');
   const s = data?.servers.find((x) => x.id === id);
   const [form, setForm] = useState<{ name: string; url: string; key: string } | null>(null);
+  const [replacing, setReplacing] = useState(false);
   const f = form ?? (s ? { name: s.name, url: s.url, key: '' } : null);
   const dirty = !!s && !!f && (f.name !== s.name || f.url !== s.url || f.key !== '');
   const models = useMemo(() => (s?.models ?? []).filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase())), [s, q]);
@@ -369,7 +390,14 @@ export function ServerEditor({ id }: { id: number }) {
   if (!s || !f) return <Empty icon="servers" title="This server was removed" />;
   const serverRule = data.limits.find((l) => l.scope === 'server' && l.server_id === s.id);
   const save = async () => {
-    if (await ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { name: f.name, url: f.url, ...(f.key ? { apiKey: f.key } : {}) } }), `${f.name} saved`)) setForm(null);
+    if (await ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { name: f.name, url: f.url, ...(f.key ? { apiKey: f.key } : {}) } }), `${f.name} saved`)) {
+      setForm(null);
+      setReplacing(false);
+    }
+  };
+  const removeKey = async () => {
+    if (!(await ui.confirm({ title: `Remove the API key of ${s.name}?`, body: 'Requests to this server are sent without a key from now on. Hosted providers will refuse them.', ok: 'Remove key', danger: true }))) return;
+    await ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { apiKey: '' } }), 'API key removed');
   };
   return (
     <Page
@@ -379,6 +407,7 @@ export function ServerEditor({ id }: { id: number }) {
       actions={
         <>
           {statusPill(s)}
+          <KeyBadge s={s} />
           <button type="button" className="cx-btn" onClick={() => void act.rediscover(s)}>
             <Ico n="refresh" size={14} /> Rediscover
           </button>
@@ -414,9 +443,38 @@ export function ServerEditor({ id }: { id: number }) {
             </Field>
           </div>
           <div className="cx-form-row">
-            <Field label={s.hasKey ? 'New API key (empty keeps the current one)' : 'API key (optional)'} grow>
-              <input className="cx-input mono" {...secretProps} name="gr-upstream-secret" value={f.key} onChange={(e) => setForm({ ...f, key: e.target.value })} />
-            </Field>
+            {s.hasKey && !replacing ? (
+              <Field label="API key" grow hint="Saved. It is never shown or sent to the browser.">
+                <div className="cx-form-row center">
+                  <input className="cx-input mono grow" style={{ minWidth: 140 }} value="••••••••••••" disabled aria-label="Saved API key (hidden)" />
+                  <Pill tone="ok">Key saved</Pill>
+                  <button type="button" className="cx-btn" onClick={() => setReplacing(true)}>
+                    Replace key
+                  </button>
+                  <button type="button" className="cx-btn danger" onClick={() => void removeKey()}>
+                    Remove key
+                  </button>
+                </div>
+              </Field>
+            ) : (
+              <Field label={s.hasKey ? 'New API key (empty keeps the saved one)' : 'API key (optional)'} grow hint={s.hasKey ? undefined : 'No API key saved for this server.'}>
+                <div className="cx-form-row center">
+                  <input className="cx-input mono grow" {...secretProps} style={{ ...secretProps.style, minWidth: 180 }} name="gr-upstream-secret" value={f.key} placeholder={s.hasKey ? 'Paste the new key' : 'Paste a key if the server needs one'} onChange={(e) => setForm({ ...f, key: e.target.value })} />
+                  {replacing && (
+                    <button
+                      type="button"
+                      className="cx-btn"
+                      onClick={() => {
+                        setReplacing(false);
+                        setForm({ ...f, key: '' });
+                      }}
+                    >
+                      Keep saved key
+                    </button>
+                  )}
+                </div>
+              </Field>
+            )}
           </div>
           <div className="cx-form-row end">
             {dirty && (

@@ -350,7 +350,7 @@ function ServersSide({ data }: { data: Data }) {
     text: s.name,
     icon: 'servers',
     iconClass: `srv ${s.status}`,
-    meta: `${s.models.filter((m) => m.enabled).length}/${s.models.length}`,
+    meta: `${s.models.filter((m) => m.enabled).length}/${s.models.length}${s.hasKey ? ' · key' : ''}`,
     title: `${s.url} · ${s.status}${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}`,
     selected: nav.path === pathFor('servers', s.id),
     onOpen: () => nav.go(pathFor('servers', s.id)),
