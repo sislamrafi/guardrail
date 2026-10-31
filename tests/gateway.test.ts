@@ -286,6 +286,20 @@ describe('gateway', () => {
     expect(codes).toEqual([200, 200, 429]);
   });
 
+  it('rejects an IP-bound key from another address with a clear 403', async () => {
+    const root = listGroups().find((g) => g.parentId === null)!;
+    const bound = createKey({ name: 'office-only', owner: 'rafi', groupId: root.id, ipAllow: '10.0.0.0/8' }).secret;
+    const body = { model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'hi' }] };
+    const away = await chat(bound, body, { 'x-forwarded-for': '203.0.113.9' });
+    expect(away.status).toBe(403);
+    expect((await away.json()).error.code).toBe('ip_not_allowed');
+    expect(lastLog().outcome).toBe('rejected');
+    const office = await chat(bound, body, { 'x-forwarded-for': '10.20.30.40' });
+    expect(office.status).toBe(200);
+    // server.mjs stamps the real socket address; a spoofed X-Forwarded-For is ignored unless the proxy is trusted.
+    expect((await chat(bound, body, { 'x-forwarded-for': '10.0.0.1', 'x-guardrail-peer': '203.0.113.9' })).status).toBe(403);
+  });
+
   it('adds nothing at all when a group has no context and the policy prompt is empty', async () => {
     const root = listGroups().find((g) => g.parentId === null)!;
     const plain = createGroup({ name: 'Plain', parentId: root.id });

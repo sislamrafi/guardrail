@@ -179,7 +179,7 @@ const routes: Record<string, Handler> = {
     return resolveGroup(gid, cleanExceptions(body.exceptions));
   },
   'POST keys': ({ body }) =>
-    createKey({ name: String(body.name ?? ''), owner: String(body.owner ?? ''), groupId: num(body.groupId, 'group'), exceptions: body.exceptions, expiresAt: body.expiresAt ? num(body.expiresAt, 'expiry') : null }),
+    createKey({ name: String(body.name ?? ''), owner: String(body.owner ?? ''), groupId: num(body.groupId, 'group'), exceptions: body.exceptions, expiresAt: body.expiresAt ? num(body.expiresAt, 'expiry') : null, ipAllow: body.ipAllow }),
   'PATCH keys/:id': ({ params, body }) =>
     updateKey(num(params[0]), {
       name: body.name as string,
@@ -188,6 +188,7 @@ const routes: Record<string, Handler> = {
       exceptions: body.exceptions,
       expiresAt: body.expiresAt === undefined ? undefined : body.expiresAt === null ? null : num(body.expiresAt),
       revoked: body.revoked === undefined ? undefined : !!body.revoked,
+      ipAllow: body.ipAllow,
     }),
   'DELETE keys/:id': ({ params }) => deleteKey(num(params[0])),
   'GET keys/:id': ({ params }) => {

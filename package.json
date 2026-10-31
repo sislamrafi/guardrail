@@ -4,14 +4,15 @@
   "private": true,
   "description": "GuardRail AI: security gateway and admin panel for vLLM backends",
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "node server.mjs --dev -p 3000",
     "build": "next build",
-    "start": "next start -p 3000",
+    "start": "NODE_ENV=production node server.mjs -p 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "mock:vllm": "node scripts/mock-vllm.mjs",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "dev:next": "next dev -p 3000"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",

@@ -1,4 +1,5 @@
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
+import { clientIp as ipOf, ipAllowed } from './ip';
 import { contentText, newSegments, renderBlocked, runCheck1, runCheck2, Segment } from './guard';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
 import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
@@ -34,9 +35,7 @@ export interface GatewayOptions {
 }
 
 export function clientIp(req: Request): string | null {
-  const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
-  return req.headers.get('x-real-ip');
+  return ipOf(req.headers, getSettings().trustProxy);
 }
 
 export function bearer(req: Request): string | null {
@@ -123,6 +122,13 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     return apiError(401, found.reason, 'authentication_error', id, 'invalid_api_key');
   }
   const key = found.key;
+  // Studio acts as a key from inside the admin panel, so the key's IP list does not apply to it.
+  if (!opts.source && !ipAllowed(log.ip ?? null, key.ipAllow)) {
+    const reason = `This key can only be used from ${key.ipAllow.join(', ')}. The request came from ${log.ip ?? 'an unknown address'}.`;
+    steps.push({ tone: 'bad', head: 'Rejected: address not allowed', ms: at(), text: reason });
+    finish('rejected', 403, reason, { key_id: key.id, key_name: key.name, owner: key.owner, group_id: key.groupId, c1_status: 'not_run', c2_status: 'not_run' });
+    return apiError(403, reason, 'permission_error', id, 'ip_not_allowed');
+  }
   touchKey(key.id);
   const groups = listGroups();
   const gpath = groupPath(key.groupId, groups);
@@ -382,6 +388,7 @@ export function handleModels(req: Request): Response {
   const id = newRequestId();
   const found = lookupKey(bearer(req));
   if (!found.ok) return apiError(401, found.reason, 'authentication_error', id, 'invalid_api_key');
+  if (!ipAllowed(clientIp(req), found.key.ipAllow)) return apiError(403, `This key can only be used from ${found.key.ipAllow.join(', ')}.`, 'permission_error', id, 'ip_not_allowed');
   const eff = resolveGroup(found.key.groupId, found.key.exceptions).effective;
   const { byModel } = allowedRoutes(found.key, eff);
   const ctxRows = new Map(

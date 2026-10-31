@@ -89,7 +89,9 @@ export function KeysHome() {
                   <td className="cx-muted">{excText(k.exceptions, data) || '–'}</td>
                   <td className="cx-muted">{ago(k.lastUsedAt)}</td>
                   <td className="tnum">{fmt(k.requestsToday)}</td>
-                  <td>{status(k)}</td>
+                  <td>
+                    {status(k)} {k.ipAllow.length > 0 && <Pill tone="info" title={k.ipAllow.join(', ')}>IP-bound</Pill>}
+                  </td>
                   <td onClick={(e) => e.stopPropagation()}>
                     <Switch on={!k.revoked} label={k.revoked ? `Restore ${k.name}` : `Revoke ${k.name}`} onChange={(v) => void act.revokeKey(k, !v)} />
                   </td>
@@ -267,6 +269,7 @@ export function KeyNew() {
   const [name, setName] = useState('');
   const [groupId, setGroupId] = useState<number | null>(null);
   const [expires, setExpires] = useState('');
+  const [ips, setIps] = useState('');
   const ex = useExceptions();
   const [made, setMade] = useState<{ secret: string; id: number; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -279,7 +282,7 @@ export function KeyNew() {
     setBusy(true);
     await ui.run(
       async () => {
-        const r = await api<{ secret: string; key: KeyC }>('keys', { body: { owner, name, groupId: gid, exceptions: ex.value, expiresAt: fromDate(expires) } });
+        const r = await api<{ secret: string; key: KeyC }>('keys', { body: { owner, name, groupId: gid, exceptions: ex.value, expiresAt: fromDate(expires), ipAllow: ips } });
         setMade({ secret: r.secret, id: r.key.id, name: r.key.name });
         setName('');
       },
@@ -343,6 +346,9 @@ export function KeyNew() {
                 <input className="cx-input" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
               </Field>
             </div>
+            <Field label="Allowed IPs (optional)" hint="One IP or CIDR range per line or comma, e.g. 10.0.0.0/8. Empty allows any address; others get a 403.">
+              <textarea className="cx-input mono" rows={2} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.10, 10.0.0.0/8" />
+            </Field>
             <Field label="Exceptions for this key only (optional)">
               <Exceptions ex={ex} data={data} />
             </Field>
@@ -377,9 +383,10 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
   const [owner, setOwner] = useState(k.owner);
   const [groupId, setGroupId] = useState(k.groupId);
   const [expires, setExpires] = useState(toDate(k.expiresAt));
+  const [ips, setIps] = useState(k.ipAllow.join(', '));
   const ex = useExceptions(k.exceptions);
-  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions);
-  const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: ex.value, expiresAt: fromDate(expires) } }), `${name} saved`);
+  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
+  const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: ex.value, expiresAt: fromDate(expires), ipAllow: ips } }), `${name} saved`);
   return (
     <Page
       icon="key"
@@ -439,6 +446,9 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
                 <input className="cx-input" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
               </Field>
             </div>
+          </Section>
+          <Section title="Allowed IPs" hint="Requests from any other address are rejected with a 403. Empty allows any address.">
+            <textarea className="cx-input mono" rows={2} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.10, 10.0.0.0/8" aria-label="Allowed IPs" />
           </Section>
           <Section title="Exceptions for this key only">
             <Exceptions ex={ex} data={data} />

@@ -45,6 +45,8 @@ export interface AppSettings {
   contextPlacement: 'top' | 'end';
   schemaPolicy: 'strict' | 'accept_known';
   defaultRateLimit: number;
+  /** Believe the first X-Forwarded-For entry (only when GuardRail sits behind your own reverse proxy). */
+  trustProxy: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -68,6 +70,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   contextPlacement: 'top',
   schemaPolicy: 'strict',
   defaultRateLimit: 120,
+  trustProxy: false,
 };
 
 type Obj = Record<string, unknown>;

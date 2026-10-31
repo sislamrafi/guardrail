@@ -96,7 +96,13 @@ npm run build
 GUARDRAIL_ADMIN_PASSWORD=… GUARDRAIL_SECRET=… npm start
 ```
 
-Run a single instance. Rate limits are counted in memory, and SQLite is a single file. Put TLS in front of it with your usual reverse proxy, and pass `X-Forwarded-For` so the log shows client IPs.
+Run a single instance. Rate limits are counted in memory, and SQLite is a single file. Put TLS in front of it with your usual reverse proxy.
+
+### Client addresses and IP-bound keys
+
+`npm run dev` and `npm start` run Next.js through `server.mjs`, which records the address that actually connected (the socket peer) in an internal header and overwrites any value a client sends. That address is what the log shows and what a key's **Allowed IPs** list (single IPs or CIDR ranges, IPv4 or IPv6) is checked against; other addresses get a `403 ip_not_allowed`.
+
+A client can put anything in `X-Forwarded-For`, so it is ignored by default. If GuardRail sits behind your own reverse proxy, every request comes from the proxy's address; turn on **Settings → Trust X-Forwarded-For** so the first entry of that header (which your proxy sets) is used instead. Only do this when clients cannot reach GuardRail except through the proxy.
 
 ## Development
 

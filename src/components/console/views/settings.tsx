@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Ico } from '../icons';
-import { Field, Loading, Page, Section, Seg } from '../kit';
+import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import { THEMES, useTheme } from '../theme';
@@ -36,6 +36,12 @@ export function SettingsPage() {
               Save
             </button>
           </div>
+          <Field label="Client address" hint={s.trustProxy ? 'The first X-Forwarded-For entry is used. Only safe when every request comes through your own reverse proxy.' : 'The address that actually connected is used; a client cannot fake it with headers. Turn on only behind your own reverse proxy.'}>
+            <div className="cx-form-row center">
+              <Switch on={s.trustProxy} label="Trust X-Forwarded-For from a reverse proxy" onChange={(v) => void patch({ trustProxy: v }, v ? 'Trusting the proxy header' : 'Using the connecting address')} />
+              <span>Trust X-Forwarded-For from a reverse proxy (used for key IP limits and logs)</span>
+            </div>
+          </Field>
           <Field label="Schema policy">
             <Seg value={s.schemaPolicy} label="Schema policy" onChange={(p) => void patch({ schemaPolicy: p }, 'Schema policy saved')} options={[['strict', 'Strict (reject mismatches)'], ['accept_known', 'Log only']]} />
           </Field>

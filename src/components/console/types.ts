@@ -51,6 +51,7 @@ export interface KeyC {
   lastUsedAt: number | null;
   createdAt: number;
   requestsToday: number;
+  ipAllow: string[];
   groupName: string;
   groupPath: string;
 }
