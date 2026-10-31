@@ -277,8 +277,14 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     if (kind === 'chat') body.messages = injectContext(messages, ctx, settings.contextPlacement);
     else body.prompt = `${ctx}\n\n${contentText(messages[0].content)}`;
     steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${files.map((f) => f.name).join(', ') || 'Policy prompt'} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
-  } else if (kind === 'chat') body.messages = messages;
-  else body.prompt = contentText(messages[0].content);
+  } else {
+    // Nothing selected: the request goes on exactly as the client sent it (after any redaction).
+    if (redacted) {
+      if (kind === 'chat') body.messages = messages;
+      else body.prompt = contentText(messages[0].content);
+    }
+    steps.push({ tone: 'neutral', head: 'No context added', ms: at(), text: `${groupName} has no context files and the policy prompt is empty, so nothing was added to the request.` });
+  }
   stages.context = lap();
   trace.forwarded = body;
   log.forwarded = promptForLog(kind === 'chat' ? body.messages : promptMessages(body.prompt));

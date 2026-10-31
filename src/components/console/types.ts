@@ -2,8 +2,10 @@ import type { GroupSettings, Resolution, SettingKey } from '@/lib/groups';
 import type { LimitView } from '@/lib/limits';
 import type { LogEntry } from '@/lib/logs';
 import type { Rule } from '@/lib/rules';
+import type { ModelKind } from '@/lib/servers';
 import type { AppSettings } from '@/lib/settings';
 
+export type { ModelKind };
 export type { GroupSettings, LimitView, LogEntry, Resolution, Rule, SettingKey, AppSettings };
 
 export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'schemas', 'studio', 'settings'] as const;
@@ -60,6 +62,8 @@ export interface ModelC {
   context_len: number | null;
   price_in?: number | null;
   price_out?: number | null;
+  kind?: ModelKind | null;
+  kind_override?: ModelKind | null;
   enabled: number;
   present: number;
 }
@@ -104,3 +108,16 @@ export interface Data {
   summary: Summary;
   rules: Rule[];
 }
+
+export const KIND_LABEL: Record<ModelKind, string> = {
+  text: 'Text',
+  image: 'Image',
+  audio: 'Audio',
+  video: 'Video',
+  embedding: 'Embedding',
+  rerank: 'Rerank',
+  classifier: 'Decision / classifier',
+  other: 'Other',
+};
+export const KINDS = Object.keys(KIND_LABEL) as ModelKind[];
+export const kindOf = (m: { kind?: ModelKind | null; kind_override?: ModelKind | null }): ModelKind => m.kind_override ?? m.kind ?? 'text';

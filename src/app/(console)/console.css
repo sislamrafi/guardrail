@@ -401,6 +401,13 @@ select.cx-input { padding-right: 4px; }
 .cx-sdot.online { background: var(--ok); }
 .cx-sdot.down { background: var(--bad); }
 
+/* model type sections */
+.cx-kind { display: flex; flex-direction: column; gap: 6px; }
+.cx-kind > summary { display: flex; align-items: center; gap: 8px; height: 26px; cursor: pointer; list-style: none; font-weight: 600; font-size: 12px; }
+.cx-kind > summary::-webkit-details-marker { display: none; }
+.cx-kind > summary svg { transition: transform .1s; }
+.cx-kind[open] > summary svg { transform: rotate(90deg); }
+
 /* context file editor */
 .cx-file { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .cx-file-bar { height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--edge); }

@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { pathFor, useNav } from './nav';
 import { api, useStore, useUi } from './store';
-import type { FileC, GroupC, KeyC, Rule, ServerC } from './types';
+import type { FileC, GroupC, KeyC, ModelKind, Rule, ServerC } from './types';
 
 /** Every create / update / delete the console can do, with confirms, toasts and optimistic updates. */
 export function useActions() {
@@ -116,6 +116,10 @@ export function useActions() {
       toggleModel: (modelId: number, enabled: boolean) => {
         patch((d) => ({ ...d, servers: d.servers.map((s) => ({ ...s, models: s.models.map((m) => (m.id === modelId ? { ...m, enabled: enabled ? 1 : 0 } : m)) })) }));
         return ui.run(() => api(`models/${modelId}`, { method: 'PATCH', body: { enabled } }));
+      },
+      setModelKind: (modelId: number, kind: ModelKind | null) => {
+        patch((d) => ({ ...d, servers: d.servers.map((s) => ({ ...s, models: s.models.map((m) => (m.id === modelId ? { ...m, kind_override: kind } : m)) })) }));
+        return ui.run(() => api(`models/${modelId}`, { method: 'PATCH', body: { kind } }), 'Model type saved');
       },
       setAllModels: (s: ServerC, enabled: boolean) =>
         ui.run(async () => {

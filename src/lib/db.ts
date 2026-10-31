@@ -3,7 +3,11 @@ import fs from 'fs';
 import path from 'path';
 
 // One connection per process. Next.js dev reloads modules, so keep it on globalThis.
-const g = globalThis as unknown as { __grDb?: Database.Database };
+const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: number };
+
+// Bump when migrate() gains a step. The connection outlives code reloads in dev,
+// so getDb() re-runs migrate() whenever the code expects a newer schema.
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -149,12 +153,17 @@ export function openDb(file = dbPath()): Database.Database {
 
 export function getDb(): Database.Database {
   if (!g.__grDb) g.__grDb = openDb();
+  if (g.__grSchema !== SCHEMA_VERSION) {
+    migrate(g.__grDb);
+    g.__grSchema = SCHEMA_VERSION;
+  }
   return g.__grDb;
 }
 
 /** Test hook: swap the process-wide connection. */
 export function setDb(db: Database.Database) {
   g.__grDb = db;
+  g.__grSchema = SCHEMA_VERSION;
 }
 
 // Columns added after the first release; CREATE TABLE IF NOT EXISTS skips them on old databases.
@@ -165,6 +174,9 @@ function migrate(db: Database.Database) {
   // USD per 1M tokens, when the server reports prices (OpenRouter does; vLLM does not).
   if (!modelCols.has('price_in')) db.exec('ALTER TABLE models ADD COLUMN price_in REAL');
   if (!modelCols.has('price_out')) db.exec('ALTER TABLE models ADD COLUMN price_out REAL');
+  // What a model is for (text, image, embedding, classifier…): detected, plus the admin's override.
+  if (!modelCols.has('kind')) db.exec('ALTER TABLE models ADD COLUMN kind TEXT');
+  if (!modelCols.has('kind_override')) db.exec('ALTER TABLE models ADD COLUMN kind_override TEXT');
 }
 
 // A fresh install gets one root group so keys can be created right away.

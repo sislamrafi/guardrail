@@ -6,7 +6,7 @@ import { Ico } from '../icons';
 import { Dialog, Empty, Field, IconBtn, Loading, Note, Page, Pill, Section, Seg, Stat, Switch, ago, fmtTokens, ms, price, secretProps } from '../kit';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
-import type { Data, LimitView, ServerC } from '../types';
+import { KINDS, KIND_LABEL, type Data, type LimitView, type ModelKind, type ServerC, kindOf } from '../types';
 
 const statusPill = (s: ServerC) =>
   s.status === 'online' ? <Pill tone="ok">Online · {ms(s.latency_ms)}</Pill> : s.status === 'down' ? <Pill tone="bad">Down</Pill> : <Pill>Not checked</Pill>;
@@ -212,7 +212,7 @@ interface Found {
   error?: string;
   url?: string;
   latency?: number;
-  models?: { name: string; contextLen: number | null; priceIn?: number | null; priceOut?: number | null }[];
+  models?: { name: string; kind?: ModelKind; contextLen: number | null; priceIn?: number | null; priceOut?: number | null }[];
 }
 
 export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' | 'guard'; onSaved?: (s: { id: number; name: string }) => void }) {
@@ -226,6 +226,7 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
   const [name, setName] = useState('');
   const [asRole, setAsRole] = useState<'inference' | 'guard'>(role);
   const [q, setQ] = useState('');
+  const [kind, setKind] = useState<ModelKind | 'all'>('all');
   const [busy, setBusy] = useState(false);
 
   const discover = async () => {
@@ -263,7 +264,9 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
       else nav.go(pathFor('servers', (made as { id: number }).id), { replace: true });
     }
   };
-  const shown = (found?.models ?? []).filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase()));
+  const all = found?.models ?? [];
+  const shown = all.filter((m) => (kind === 'all' || (m.kind ?? 'text') === kind) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
+  const kindCounts = KINDS.map((k) => [k, all.filter((m) => (m.kind ?? 'text') === k).length] as const).filter(([, n]) => n > 0);
 
   return (
     <div className="cx-form">
@@ -302,11 +305,24 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
               Clear {q ? 'shown' : 'all'}
             </button>
           </div>
+          {kindCounts.length > 1 && (
+            <div className="cx-filters" role="radiogroup" aria-label="Model type">
+              <button type="button" role="radio" aria-checked={kind === 'all'} className={`cx-chip ${kind === 'all' ? 'on' : ''}`} onClick={() => setKind('all')}>
+                All <span>{all.length}</span>
+              </button>
+              {kindCounts.map(([k, n]) => (
+                <button key={k} type="button" role="radio" aria-checked={kind === k} className={`cx-chip ${kind === k ? 'on' : ''}`} onClick={() => setKind(k)}>
+                  {KIND_LABEL[k]} <span>{n}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="cx-pick-list" role="group" aria-label="Models">
             {shown.slice(0, 500).map((m) => (
               <label key={m.name} className="cx-pick">
                 <input type="checkbox" checked={picked.has(m.name)} onChange={(e) => setPicked((p) => (e.target.checked ? new Set(p).add(m.name) : new Set([...p].filter((x) => x !== m.name))))} />
                 <span className="mono grow">{m.name}</span>
+                <span className="cx-muted small">{KIND_LABEL[m.kind ?? 'text']}</span>
                 {price(m.priceIn, m.priceOut) && <span className="cx-muted">{price(m.priceIn, m.priceOut)}</span>}
                 <span className="cx-muted tnum">{m.contextLen ? `${fmtTokens(m.contextLen)} ctx` : 'context unknown'}</span>
               </label>
@@ -440,43 +456,67 @@ export function ServerEditor({ id }: { id: number }) {
         {s.models.length === 0 ? (
           <Note>No models found. Click Rediscover once the server is up.</Note>
         ) : (
-          <div className="cx-table-wrap">
-            <table className="cx-table">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Context</th>
-                  <th>Price</th>
-                  <th>{s.role === 'guard' ? 'Used for' : 'Groups that can use it'}</th>
-                  <th>Limit</th>
-                  <th>{s.role === 'guard' ? '' : 'Clients'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {models.map((m) => {
-                  const rule = data.limits.find((l) => l.scope === 'model' && l.server_id === s.id && l.model_name === m.name);
-                  const groups = data.access[m.id] ?? [];
-                  return (
-                    <tr key={m.id} className={m.enabled ? '' : 'dim'}>
-                      <td className="mono">
-                        {m.name} {!m.present && <Pill tone="bad">Gone from server</Pill>}
-                      </td>
-                      <td className="tnum">{m.context_len ? fmtTokens(m.context_len) : '–'}</td>
-                      <td className="cx-muted">{price(m.price_in, m.price_out) ?? '–'}</td>
-                      <td>{s.role === 'guard' ? <span className="cx-muted">Guard checks</span> : m.enabled ? groups.join(', ') || <span className="cx-muted">No group allows it yet</span> : <span className="cx-muted">Hidden from clients</span>}</td>
-                      <td>
-                        {s.role === 'inference' && (
-                          <button type="button" className={`cx-pill btn ${rule ? 'info' : ''}`} onClick={() => setLimit(rule ?? { scope: 'model', server_id: s.id, model_name: m.name })}>
-                            {rule ? describe(rule, data) : serverRule ? 'Server limit' : 'Add'}
-                          </button>
-                        )}
-                      </td>
-                      <td>{s.role === 'inference' && <Switch on={!!m.enabled} label={`Let clients use ${m.name}`} onChange={(v) => void act.toggleModel(m.id, v)} />}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="cx-form">
+            {KINDS.filter((k) => models.some((m) => kindOf(m) === k)).map((k) => {
+              const list = models.filter((m) => kindOf(m) === k);
+              return (
+                <details key={k} className="cx-kind" open={k !== 'other' || list.length < 30}>
+                  <summary>
+                    <Ico n="chevron" size={12} /> {KIND_LABEL[k]} <span className="cx-badge">{list.length}</span>
+                    <span className="cx-muted small">{list.filter((m) => m.enabled).length} on</span>
+                  </summary>
+                  <div className="cx-table-wrap">
+                    <table className="cx-table">
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Type</th>
+                          <th>Context</th>
+                          <th>Price</th>
+                          <th>{s.role === 'guard' ? 'Used for' : 'Groups that can use it'}</th>
+                          <th>Limit</th>
+                          <th>{s.role === 'guard' ? '' : 'Clients'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {list.map((m) => {
+                          const rule = data.limits.find((l) => l.scope === 'model' && l.server_id === s.id && l.model_name === m.name);
+                          const groups = data.access[m.id] ?? [];
+                          return (
+                            <tr key={m.id} className={m.enabled ? '' : 'dim'}>
+                              <td className="mono">
+                                {m.name} {!m.present && <Pill tone="bad">Gone from server</Pill>}
+                              </td>
+                              <td>
+                                <select className="cx-input sm" aria-label={`Type of ${m.name}`} value={m.kind_override ?? ''} onChange={(e) => void act.setModelKind(m.id, (e.target.value || null) as ModelKind | null)}>
+                                  <option value="">Auto: {KIND_LABEL[m.kind ?? 'text']}</option>
+                                  {KINDS.map((x) => (
+                                    <option key={x} value={x}>
+                                      {KIND_LABEL[x]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="tnum">{m.context_len ? fmtTokens(m.context_len) : '–'}</td>
+                              <td className="cx-muted">{price(m.price_in, m.price_out) ?? '–'}</td>
+                              <td>{s.role === 'guard' ? <span className="cx-muted">Guard checks</span> : m.enabled ? groups.join(', ') || <span className="cx-muted">No group allows it yet</span> : <span className="cx-muted">Hidden from clients</span>}</td>
+                              <td>
+                                {s.role === 'inference' && (
+                                  <button type="button" className={`cx-pill btn ${rule ? 'info' : ''}`} onClick={() => setLimit(rule ?? { scope: 'model', server_id: s.id, model_name: m.name })}>
+                                    {rule ? describe(rule, data) : serverRule ? 'Server limit' : 'Add'}
+                                  </button>
+                                )}
+                              </td>
+                              <td>{s.role === 'inference' && <Switch on={!!m.enabled} label={`Let clients use ${m.name}`} onChange={(v) => void act.toggleModel(m.id, v)} />}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              );
+            })}
           </div>
         )}
       </Section>

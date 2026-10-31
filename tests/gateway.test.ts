@@ -286,6 +286,29 @@ describe('gateway', () => {
     expect(codes).toEqual([200, 200, 429]);
   });
 
+  it('adds nothing at all when a group has no context and the policy prompt is empty', async () => {
+    const root = listGroups().find((g) => g.parentId === null)!;
+    const plain = createGroup({ name: 'Plain', parentId: root.id });
+    setGroupSetting(plain.id, 'context', { mode: 'override', value: [] });
+    expect(getSettings().policyPrompt).toBe('');
+    const key = listKeys().find((k) => k.name === 'dev')!;
+    const sent = {
+      model: 'qwen3-coder-30b',
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: 'You are Cline.' },
+        { role: 'user', content: [{ type: 'text', text: 'list the files' }] },
+      ],
+    };
+    const trace: Trace = {};
+    const res = await handleCompletion(new Request('http://studio/v1/chat/completions', { method: 'POST', body: JSON.stringify(sent) }), 'chat', { key: { ...key, groupId: plain.id }, trace, source: 'Studio' });
+    expect(res.status).toBe(200);
+    expect(trace.forwarded).toEqual(sent);
+    expect(trace.contextTokens).toBe(0);
+    const steps = JSON.parse(String(lastLog().steps)) as { head: string }[];
+    expect(steps.some((s) => s.head === 'No context added')).toBe(true);
+  });
+
   it('can act as a chosen key for the Studio and report the context it added', async () => {
     const key = listKeys().find((k) => k.name === 'dev')!;
     const trace: Trace = {};

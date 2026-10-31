@@ -21,13 +21,21 @@ export interface Model {
   context_len: number | null;
   price_in: number | null;
   price_out: number | null;
+  /** Detected type (see detectKind). */
+  kind: ModelKind | null;
+  /** The admin's choice, when the detection was wrong. */
+  kind_override: ModelKind | null;
   enabled: number;
   present: number;
   discovered_at: number;
 }
 
+export const MODEL_KINDS = ['text', 'image', 'audio', 'video', 'embedding', 'rerank', 'classifier', 'other'] as const;
+export type ModelKind = (typeof MODEL_KINDS)[number];
+
 export interface DiscoveredModel {
   name: string;
+  kind?: ModelKind;
   contextLen: number | null;
   /** USD per 1M input tokens, when the server reports it. */
   priceIn?: number | null;
@@ -43,6 +51,48 @@ interface RawModel {
   max_context_length?: number;
   top_provider?: { context_length?: number | null };
   pricing?: { prompt?: string | number; completion?: string | number }; // OpenRouter: USD per token
+  architecture?: { modality?: string; input_modalities?: string[]; output_modalities?: string[] }; // OpenRouter
+  task?: string; // some vLLM builds
+  type?: string;
+}
+
+const NAME_RULES: [RegExp, ModelKind][] = [
+  [/rerank/i, 'rerank'],
+  [/embed|(^|[/_-])(bge|e5|gte)([-_]|$)|text-embedding/i, 'embedding'],
+  [/guard|moderation|classif|safeguard|shieldgemma|prompt-?injection/i, 'classifier'],
+  [/whisper|tts|speech|audio|voice/i, 'audio'],
+  [/sora|veo|video/i, 'video'],
+  [/dall-?e|flux|stable-?diffusion|sdxl|imagen|image-gen|gpt-image|[-_/](vl|vision)([-_.]|$)|llava|pixtral/i, 'image'],
+];
+
+/**
+ * What a model does, from what the server reports (OpenRouter's architecture, vLLM's task)
+ * and otherwise from its name. Vision-input and image-generation models count as image.
+ */
+export function detectKind(m: RawModel): ModelKind {
+  const task = String(m.task ?? m.type ?? '').toLowerCase();
+  if (task) {
+    if (/embed/.test(task)) return 'embedding';
+    if (/score|rerank/.test(task)) return 'rerank';
+    if (/classif|reward/.test(task)) return 'classifier';
+    if (/transcri|audio/.test(task)) return 'audio';
+  }
+  const named = NAME_RULES.find(([re]) => re.test(m.id));
+  if (named && named[1] !== 'image') return named[1];
+  const a = m.architecture;
+  if (a) {
+    const [inStr = '', outStr = ''] = (a.modality ?? '').split('->');
+    const ins = a.input_modalities ?? inStr.split('+').filter(Boolean);
+    const outs = a.output_modalities ?? outStr.split('+').filter(Boolean);
+    if (outs.includes('embeddings') || outs.includes('embedding')) return 'embedding';
+    if (outs.includes('image')) return 'image';
+    if (outs.includes('audio') || (ins.includes('audio') && !outs.includes('text'))) return 'audio';
+    if (outs.includes('video')) return 'video';
+    if (outs.length && !outs.includes('text')) return 'other';
+    if (named) return named[1];
+    return 'text';
+  }
+  return named ? named[1] : 'text';
 }
 
 const numOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
@@ -58,6 +108,7 @@ function perMillion(v: unknown): number | null {
 export function parseModel(m: RawModel): DiscoveredModel {
   return {
     name: m.id,
+    kind: detectKind(m),
     contextLen: posInt(m.max_model_len) ?? posInt(m.context_length) ?? posInt(m.top_provider?.context_length) ?? posInt(m.context_window) ?? posInt(m.max_context_length),
     priceIn: perMillion(m.pricing?.prompt),
     priceOut: perMillion(m.pricing?.completion),
@@ -103,6 +154,12 @@ export function getServer(id: number): Server | undefined {
 
 export function listModels(serverId?: number): Model[] {
   const db = getDb();
+  // Models saved before types existed get one from their name; Rediscover refines it from the server.
+  const untyped = db.prepare('SELECT id, name FROM models WHERE kind IS NULL').all() as { id: number; name: string }[];
+  if (untyped.length) {
+    const set = db.prepare('UPDATE models SET kind = ? WHERE id = ?');
+    db.transaction(() => untyped.forEach((m) => set.run(detectKind({ id: m.name }), m.id)))();
+  }
   return (serverId
     ? db.prepare('SELECT * FROM models WHERE server_id = ? ORDER BY name').all(serverId)
     : db.prepare('SELECT * FROM models ORDER BY name').all()) as Model[];
@@ -138,8 +195,8 @@ export function createServer(input: {
       .run(name, url, input.apiKey || null, input.role ?? 'inference', input.models.length ? 'online' : 'unknown', input.latency ?? null, now(), now());
     const id = Number(r.lastInsertRowid);
     const enabled = new Set(input.enabled ?? input.models.map((m) => m.name));
-    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    for (const m of input.models) ins.run(id, m.name, posInt(m.contextLen), numOrNull(m.priceIn), numOrNull(m.priceOut), enabled.has(m.name) ? 1 : 0, now());
+    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const m of input.models) ins.run(id, m.name, posInt(m.contextLen), numOrNull(m.priceIn), numOrNull(m.priceOut), kindOf(m), enabled.has(m.name) ? 1 : 0, now());
     return id;
   });
   try {
@@ -169,6 +226,14 @@ export function deleteServer(id: number) {
   getDb().prepare('DELETE FROM servers WHERE id = ?').run(id);
 }
 
+/** A discovered model's kind: what the client sent if valid, else detected from its name. */
+const kindOf = (m: DiscoveredModel): ModelKind => (m.kind && (MODEL_KINDS as readonly string[]).includes(m.kind) ? m.kind : detectKind({ id: m.name }));
+
+export function setModelKind(modelId: number, kind: ModelKind | null) {
+  if (kind !== null && !(MODEL_KINDS as readonly string[]).includes(kind)) throw new Error('Unknown model type.');
+  getDb().prepare('UPDATE models SET kind_override = ? WHERE id = ?').run(kind, modelId);
+}
+
 export function setModelEnabled(modelId: number, enabled: boolean) {
   getDb().prepare('UPDATE models SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, modelId);
 }
@@ -188,9 +253,9 @@ export async function rediscover(id: number) {
       for (const m of existing) db.prepare('UPDATE models SET present = ? WHERE id = ?').run(names.has(m.name) ? 1 : 0, m.id);
       for (const m of models) {
         if (have.has(m.name)) {
-          db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, id, m.name);
+          db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ?, kind = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), id, m.name);
         } else {
-          db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, m.priceIn ?? null, m.priceOut ?? null, now());
+          db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), now());
           added++;
         }
       }

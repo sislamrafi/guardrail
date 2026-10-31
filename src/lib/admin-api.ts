@@ -6,7 +6,7 @@ import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './l
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
-import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
+import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, handleCompletion, Trace } from './gateway';
 
@@ -120,7 +120,12 @@ const routes: Record<string, Handler> = {
     updateServer(num(params[0]), { name: body.name as string, url: body.url as string, apiKey: body.apiKey as string | null | undefined, role: body.role as 'inference' | 'guard' }),
   'DELETE servers/:id': ({ params }) => deleteServer(num(params[0])),
   'POST servers/:id/rediscover': ({ params }) => rediscover(num(params[0])),
-  'PATCH models/:id': ({ params, body }) => setModelEnabled(num(params[0]), !!body.enabled),
+  'PATCH models/:id': ({ params, body }) => {
+    const id = num(params[0]);
+    if ('kind' in body) setModelKind(id, (body.kind as ModelKind | null) || null);
+    if ('enabled' in body) setModelEnabled(id, !!body.enabled);
+    return { ok: true };
+  },
   'POST limits': ({ body }) =>
     saveLimit({
       id: body.id ? num(body.id) : undefined,
