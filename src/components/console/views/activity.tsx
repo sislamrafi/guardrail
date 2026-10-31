@@ -53,12 +53,6 @@ function GuardPill({ r }: { r: LogEntry }) {
   return <Pill tone="ok">Clean</Pill>;
 }
 
-function ModelPill({ r }: { r: LogEntry }) {
-  if (r.outcome === 'blocked' || r.outcome === 'rejected') return <Pill>Not called</Pill>;
-  if (r.outcome === 'error') return <Pill tone="bad">{r.status_code ?? 'Error'}</Pill>;
-  return <Pill tone="ok">{r.status_code ?? 200}</Pill>;
-}
-
 const leaf = (g: string | null) => (g ? g.split(/ [›/] /).pop() : '–');
 const day = (ts: number) => new Date(ts).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 
@@ -125,36 +119,57 @@ export function ActivityList() {
           <table className="cx-atable">
             <thead>
               <tr>
-                <th>Key</th>
-                <th>When</th>
-                <th className="wide">Group</th>
-                <th>Guard</th>
-                <th className="wide">Model</th>
+                <th className="c-key">Key</th>
+                <th className="c-who">Who</th>
+                <th className="c-group">Group</th>
+                <th className="c-model">Model</th>
+                <th className="c-ip">IP address</th>
+                <th className="c-when">When</th>
+                <th className="c-guard">Guard</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className={nav.id === r.id ? 'sel' : ''} tabIndex={0} onClick={() => nav.go(pathFor('activity', r.id))} onKeyDown={(e) => e.key === 'Enter' && nav.go(pathFor('activity', r.id))}>
-                  <td>
-                    <b>{r.key_name ?? 'no key'}</b>
-                    <div className="cx-muted small narrow-only">
-                      {leaf(r.group_name)} · {r.model ?? '–'}
-                    </div>
-                  </td>
-                  <td className="mono cx-muted">
-                    <div>{clock(r.ts)}</div>
-                    <div className="small">{day(r.ts)}</div>
-                  </td>
-                  <td className="wide">{leaf(r.group_name)}</td>
-                  <td>
-                    <GuardPill r={r} />
-                    {r.feedback && LABELS[r.feedback] && <div className="small" title={LABELS[r.feedback][0]}>{r.feedback === 'missed_attack' ? '⚑ unsafe' : '✓ safe'}</div>}
-                  </td>
-                  <td className="wide">
-                    <ModelPill r={r} />
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const who = r.owner ?? 'unknown';
+                const group = leaf(r.group_name);
+                const model = r.model ?? '–';
+                return (
+                  <tr key={r.id} className={nav.id === r.id ? 'sel' : ''} tabIndex={0} onClick={() => nav.go(pathFor('activity', r.id))} onKeyDown={(e) => e.key === 'Enter' && nav.go(pathFor('activity', r.id))}>
+                    <td className="c-key">
+                      <b className="cx-ell" title={r.key_name ?? 'no key'}>
+                        {r.key_name ?? 'no key'}
+                      </b>
+                      <div className="cx-ell cx-muted small l-2" title={`${who} · ${r.group_name ?? '–'}`}>
+                        <span className="s-who">{who}</span>
+                        <span className="s-group">{group}</span>
+                      </div>
+                      <div className="cx-ell cx-muted small mono l-3" title={r.ip ? `${model} · ${r.ip}` : model}>
+                        <span className="s-model">{model}</span>
+                        {r.ip && <span className="s-ip">{r.ip}</span>}
+                      </div>
+                    </td>
+                    <td className="c-who cx-ell" title={who}>
+                      {who}
+                    </td>
+                    <td className="c-group cx-ell" title={r.group_name ?? '–'}>
+                      {group}
+                    </td>
+                    <td className="c-model cx-ell mono" title={model}>
+                      {model}
+                      {r.outcome === 'error' && <span className="bad"> {r.status_code ?? 'error'}</span>}
+                    </td>
+                    <td className="c-ip cx-ell mono cx-muted">{r.ip ?? '–'}</td>
+                    <td className="c-when mono cx-muted">
+                      <div>{clock(r.ts)}</div>
+                      <div className="small">{day(r.ts)}</div>
+                    </td>
+                    <td className="c-guard">
+                      <GuardPill r={r} />
+                      {r.feedback && LABELS[r.feedback] && <div className="small" title={LABELS[r.feedback][0]}>{r.feedback === 'missed_attack' ? '⚑ unsafe' : '✓ safe'}</div>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -293,7 +308,7 @@ export function LogDetail({ id }: { id: string }) {
       title={TITLES[d.outcome] ?? 'Request'}
       sub={
         <>
-          {new Date(d.ts).toLocaleString('en-GB')} · <span className="mono">{d.id}</span> · {d.key_name ?? 'no key'} ({d.owner ?? 'unknown'}) · {d.group_name ?? '–'}
+          {new Date(d.ts).toLocaleString('en-GB')} · <span className="mono">{d.id}</span> · {d.key_name ?? 'no key'} ({d.owner ?? 'unknown'}) · {d.group_name ?? '–'} · <span className="mono" title="Client IP address">{d.ip ?? 'IP not recorded'}</span>
         </>
       }
       actions={
@@ -365,7 +380,7 @@ function Summary({ d }: { d: LogEntry }) {
     ['When', new Date(d.ts).toLocaleString('en-GB')],
     ['Key · person', `${d.key_name ?? 'no key'} · ${d.owner ?? 'unknown'}`],
     ['Group', d.group_name ?? '–'],
-    ['Client address', <span key="ip" className="mono">{d.ip ?? '–'}</span>],
+    ['IP address', d.ip ? <span key="ip" className="mono">{d.ip}</span> : <span key="ip" className="cx-muted">Not recorded</span>],
     ['Model · server', <span key="m" className="mono">{`${d.model ?? '–'}${d.server ? ` · ${d.server}` : ''}`}</span>],
     ['Schema', d.schema ?? '–'],
     ['Outcome', <Outcome key="o" r={d} />],

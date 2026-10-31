@@ -341,11 +341,13 @@ describe('gateway', () => {
     const res = await handleCompletion(
       new Request('http://studio/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'hi' }] }) }),
       'chat',
-      { key, trace, source: 'Studio' },
+      { key, trace, source: 'Studio', ip: '192.168.1.7' },
     );
     expect(res.status).toBe(200);
     expect(trace.context?.map((c) => c.name)).toEqual(['rules.md']);
     expect(JSON.stringify(trace.forwarded)).toContain('House rules');
-    expect(lastLog().ip).toBe('Studio');
+    // Logged as test traffic from the admin's own address.
+    expect(lastLog().ip).toBe('192.168.1.7');
+    expect(lastLog().test).toBeTruthy();
   });
 });

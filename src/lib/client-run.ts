@@ -24,7 +24,7 @@ export interface ClientRun {
 export function groupKey(groupId: number): ApiKey {
   const g = getGroup(groupId);
   if (!g) throw new Error('Group not found.');
-  return { id: 0, name: `Studio · ${g.name}`, owner: 'Studio', groupId, prefix: '', exceptions: {}, expiresAt: null, revoked: false, lastUsedAt: null, createdAt: 0, ipAllow: [], canReveal: false };
+  return { id: 0, name: `Studio · ${g.name}`, owner: 'Admin', groupId, prefix: '', exceptions: {}, expiresAt: null, revoked: false, lastUsedAt: null, createdAt: 0, ipAllow: [], canReveal: false };
 }
 
 export async function runAsClient(input: {
@@ -36,6 +36,8 @@ export async function runAsClient(input: {
   body: unknown;
   headers?: Record<string, string>;
   source: 'Studio' | 'Replay';
+  /** The admin's own address, logged as the client address. */
+  ip?: string | null;
   layers?: GuardLayer[];
 }): Promise<ClientRun> {
   const path = input.path === '/v1/completions' ? '/v1/completions' : '/v1/chat/completions';
@@ -56,7 +58,7 @@ export async function runAsClient(input: {
   const payload = typeof input.body === 'string' ? input.body : JSON.stringify(input.body ?? {});
   const trace: Trace = {};
   const t0 = Date.now();
-  const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: input.source, layers: input.layers });
+  const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: input.source, ip: input.ip, layers: input.layers });
   const raw = await res.text();
   const ms = Date.now() - t0;
   const sse = (res.headers.get('content-type') ?? '').includes('event-stream');
@@ -98,7 +100,7 @@ export async function runAsClient(input: {
 }
 
 /** Send a logged request again through today's setup, as the same key (or its group if the key is gone). */
-export async function replayLog(id: string, layers?: GuardLayer[]) {
+export async function replayLog(id: string, layers?: GuardLayer[], ip?: string | null) {
   const l = getLog(id);
   if (!l) throw new Error('Request not found.');
   if (!l.prompt?.length) throw new Error(l.prompt_expired ? 'The prompt of this request was deleted by the retention rule, so it cannot be replayed.' : 'No prompt was recorded for this request, so it cannot be replayed.');
@@ -107,6 +109,6 @@ export async function replayLog(id: string, layers?: GuardLayer[]) {
   const keyId = l.key_id && getKey(l.key_id) ? l.key_id : undefined;
   const groupId = !keyId && l.group_id ? l.group_id : undefined;
   if (!keyId && !groupId) throw new Error('Neither the key nor the group of this request exists any more.');
-  const run = await runAsClient({ keyId, groupId, path: completions ? '/v1/completions' : '/v1/chat/completions', body, source: 'Replay', layers });
+  const run = await runAsClient({ keyId, groupId, path: completions ? '/v1/completions' : '/v1/chat/completions', body, source: 'Replay', ip, layers });
   return { original: { id: l.id, outcome: l.outcome, reason: l.reason, decisions: l.decisions ?? null, ts: l.ts }, replay: run };
 }

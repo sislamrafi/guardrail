@@ -32,8 +32,10 @@ export interface GatewayOptions {
   key?: ApiKey;
   /** Filled in as the request moves through the gateway. */
   trace?: Trace;
-  /** Shown as the client address in the log. */
+  /** Marks the request as test traffic (Studio, replay). */
   source?: string;
+  /** For test traffic: the address of the admin who sent it. */
+  ip?: string | null;
   /** Run these guard layers instead of the saved ones (Studio, replay). */
   layers?: GuardLayer[];
 }
@@ -112,7 +114,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const path = new URL(req.url).pathname;
   const steps: Step[] = [];
   const stages: Record<string, number> = {};
-  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ?? clientIp(req), path, test: !!opts.source };
+  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ? (opts.ip ?? null) : clientIp(req), path, test: !!opts.source };
 
   const finish = (outcome: Outcome, status: number, reason: string | null, extra: Partial<LogEntry> = {}) =>
     writeLog({ ...log, ...extra, outcome, status_code: status, reason, latency_ms: Math.round(at()), stages, steps });

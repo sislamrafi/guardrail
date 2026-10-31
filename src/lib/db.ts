@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -174,6 +174,9 @@ function migrate(db: Database.Database) {
   if (!have.has('decisions')) db.exec('ALTER TABLE request_logs ADD COLUMN decisions TEXT');
   if (!have.has('injected')) db.exec('ALTER TABLE request_logs ADD COLUMN injected TEXT');
   if (!have.has('test')) db.exec('ALTER TABLE request_logs ADD COLUMN test INTEGER NOT NULL DEFAULT 0');
+  // Test traffic used to log "Studio"/"Replay" as its address and "Studio" as its person.
+  db.exec("UPDATE request_logs SET ip = NULL WHERE test = 1 AND ip IN ('Studio', 'Replay')");
+  db.exec("UPDATE request_logs SET owner = 'Admin' WHERE test = 1 AND owner = 'Studio'");
   // Servers no longer have a "guard only" role: every model is a normal model and guard layers pick any.
   // Models of former guard servers start hidden from clients, so nothing becomes callable by surprise.
   const guards = db.prepare("SELECT COUNT(*) n FROM servers WHERE role = 'guard'").get() as { n: number };

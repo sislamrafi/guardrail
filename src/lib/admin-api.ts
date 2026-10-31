@@ -10,7 +10,7 @@ import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
 import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
-import { allowedRoutes } from './gateway';
+import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
 import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
 
@@ -313,7 +313,7 @@ const routes: Record<string, Handler> = {
     return l;
   },
   'PATCH logs/:id': ({ params, body }) => setFeedback(params[0], (body.feedback as string) || null),
-  'POST logs/:id/replay': ({ params }) => replayLog(params[0]),
+  'POST logs/:id/replay': ({ params, req }) => replayLog(params[0], undefined, clientIp(req)),
   'GET logs-export': ({ url }) => exportLogs(url),
 
   // ---- rules ----
@@ -342,7 +342,7 @@ const routes: Record<string, Handler> = {
   'POST studio/scenarios': ({ body }) => (body.duplicateOf ? duplicateScenario(num(body.duplicateOf)) : body.fromLog ? scenarioFromLog(String(body.fromLog)) : createScenario(body as never)),
   'PATCH studio/scenarios/:id': ({ params, body }) => updateScenario(num(params[0]), body as never),
   'DELETE studio/scenarios/:id': ({ params }) => deleteScenario(num(params[0])),
-  'POST studio/send': ({ body }) =>
+  'POST studio/send': ({ body, req }) =>
     runAsClient({
       keyId: body.keyId ? num(body.keyId, 'key') : undefined,
       groupId: body.groupId ? num(body.groupId, 'group') : undefined,
@@ -351,6 +351,7 @@ const routes: Record<string, Handler> = {
       body: body.body,
       headers: (body.headers as Record<string, string>) ?? {},
       source: 'Studio',
+      ip: clientIp(req),
       layers: Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : undefined,
     }),
 

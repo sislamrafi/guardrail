@@ -406,16 +406,43 @@ select.cx-input { padding-right: 4px; }
 .cx-alist { flex: 1; display: flex; flex-direction: column; min-height: 0; container-type: inline-size; }
 .cx-alist-tools { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px 12px; border-bottom: 1px solid var(--edge); }
 .cx-alist-body { flex: 1; overflow: auto; }
-.cx-atable { width: 100%; border-collapse: collapse; font-size: 12px; }
-.cx-atable th { position: sticky; top: 0; background: var(--side); text-align: left; font-size: 10.5px; font-weight: 600; color: var(--dim); padding: 4px 8px; border-bottom: 1px solid var(--edge); }
+.cx-atable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.cx-atable th { position: sticky; top: 0; z-index: 1; background: var(--side); text-align: left; font-size: 10.5px; font-weight: 600; color: var(--dim); padding: 4px 8px; border-bottom: 1px solid var(--edge); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cx-atable td { padding: 5px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
 .cx-atable tr { cursor: pointer; }
 .cx-atable tbody tr:hover td { background: var(--hover); }
 .cx-atable tr.sel td { background: var(--sel); }
-.cx-atable .wide { display: none; }
-@container (min-width: 460px) {
-  .cx-atable .wide { display: table-cell; }
-  .cx-atable .narrow-only { display: none; }
+.cx-atable .cx-ell, .cx-atable .cx-ell > * { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-atable td.cx-ell { display: table-cell; }
+.cx-atable .l-2 > span, .cx-atable .l-3 > span { display: inline; }
+.cx-atable .s-group::before, .cx-atable .s-ip::before { content: ' · '; }
+.cx-atable .bad { color: var(--bad); }
+.cx-atable .c-when { width: 74px; }
+.cx-atable .c-guard { width: 96px; }
+.cx-atable .c-who { width: 110px; }
+.cx-atable .c-group { width: 110px; }
+.cx-atable .c-ip { width: 118px; }
+/* Narrow: key, who · group, model · IP stacked in one cell. Wider: each moves into its own column. */
+.cx-atable :is(th, td):is(.c-who, .c-group, .c-model, .c-ip) { display: none; }
+.cx-atable .s-ip { display: none !important; }
+@container (min-width: 380px) { .cx-atable .s-ip { display: inline !important; } }
+@container (min-width: 440px) {
+  .cx-atable :is(th, td).c-who { display: table-cell; }
+  .cx-atable .s-who { display: none !important; }
+  .cx-atable .s-group::before { content: none; }
+}
+@container (min-width: 540px) {
+  .cx-atable :is(th, td).c-group { display: table-cell; }
+  .cx-atable .l-2 { display: none; }
+}
+@container (min-width: 720px) {
+  .cx-atable :is(th, td).c-model { display: table-cell; }
+  .cx-atable .s-model { display: none !important; }
+  .cx-atable .s-ip::before { content: none; }
+}
+@container (min-width: 860px) {
+  .cx-atable :is(th, td).c-ip { display: table-cell; }
+  .cx-atable .l-3 { display: none; }
 }
 
 /* chat thread */
