@@ -7,6 +7,7 @@ import type { ScenarioSettings, Turn } from '@/lib/studio';
 import { buildRequest } from '@/lib/studio-body';
 import { toParts } from '../chat';
 import { Ico } from '../icons';
+import { readPref } from '../prefs';
 import { setDebug, useDebug } from '../studio-debug';
 import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Seg, Switch, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
@@ -129,7 +130,12 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages, busy]);
   // The right sidebar's debug panel follows this scenario: the plan on open, then each turn.
-  useEffect(() => setDebug({ scenarioId: sc.id, logId: null }), [sc.id]);
+  useEffect(() => {
+    // Reopen on what was shown last time: the plan, or the latest turn.
+    const lastLog = [...sc.turns].reverse().find((t) => t.logId)?.logId ?? null;
+    setDebug({ scenarioId: sc.id, logId: readPref<string>('studio.debug', 'plan') === 'turn' ? lastLog : null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sc.id]);
   useEffect(() => {
     setDebug({ settings, turns: turns.filter((t) => t.logId).map((t, i) => ({ logId: t.logId!, label: `Turn ${i + 1}` })) });
   }, [settings, turns]);

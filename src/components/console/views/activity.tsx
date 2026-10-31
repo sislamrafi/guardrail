@@ -12,6 +12,7 @@ import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { LogEntry } from '../types';
 import { DecisionRow } from './guard';
+import { usePref } from '../prefs';
 
 type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number };
 
@@ -61,14 +62,19 @@ const day = (ts: number) => new Date(ts).toLocaleDateString('en-GB', { day: '2-d
 export function ActivityList() {
   const nav = useNav();
   const params = useSearchParams();
-  const [filter, setFilter] = useState(params.get('filter') ?? '');
-  const [q, setQ] = useState('');
-  const [query, setQuery] = useState('');
+  const [filter, setFilter] = usePref('activity.filter', '');
+  // A link like "/activity?filter=blocked" picks the filter; it is then remembered like a click.
+  const linked = params.get('filter');
+  useEffect(() => {
+    if (linked !== null) setFilter(linked);
+  }, [linked, setFilter]);
+  const [q, setQ] = usePref('activity.q', '');
+  const [query, setQuery] = useState(q);
   const [rows, setRows] = useState<LogEntry[] | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [live, setLive] = useState(true);
-  const [test, setTest] = useState(false);
+  const [live, setLive] = usePref('activity.live', true);
+  const [test, setTest] = usePref('activity.test', false);
   useEffect(() => {
     const t = setTimeout(() => setQuery(q), 250);
     return () => clearTimeout(t);
@@ -274,7 +280,7 @@ export function LogDetail({ id }: { id: string }) {
   const nav = useNav();
   const [d, setD] = useState<LogEntry | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<'summary' | 'session' | 'sent'>('session');
+  const [tab, setTab] = usePref<'summary' | 'session' | 'sent'>('activity.tab', 'session');
   const [replay, setReplay] = useState<Replay | null>(null);
   const [replaying, setReplaying] = useState(false);
   const load = useCallback(() => api<LogEntry>(`logs/${encodeURIComponent(id)}`).then(setD, (e) => setErr((e as Error).message)), [id]);

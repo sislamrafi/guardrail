@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react
 import type { ScenarioSettings } from '@/lib/studio';
 import type { Plan } from '@/lib/studio-plan';
 import { Loading, Note, Pill, Seg, fmt, fmtTokens, ms } from './kit';
+import { writePref } from './prefs';
 import { api, useStore } from './store';
 import type { LogEntry } from './types';
 import { OUTCOME, Timeline } from './views/activity';
@@ -88,7 +89,10 @@ export function StudioDebug({ id }: { id: number }) {
             ['plan', 'Planned'],
             ['turn', turns.length ? `Turn ${idx >= 0 ? idx + 1 : turns.length}` : 'Last turn'],
           ]}
-          onChange={(v) => setDebug({ logId: v === 'plan' ? null : (turns[turns.length - 1]?.logId ?? null) })}
+          onChange={(v) => {
+            writePref('studio.debug', v);
+            setDebug({ logId: v === 'plan' ? null : (turns[turns.length - 1]?.logId ?? null) });
+          }}
         />
         {logId && turns.length > 1 && (
           <span className="cx-dbg-step">

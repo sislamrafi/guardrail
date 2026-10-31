@@ -6,6 +6,7 @@ import { Ico } from '../icons';
 import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
+import { resetUiPrefs } from '../prefs';
 import { previewSplash } from '../splash';
 import { THEMES, useTheme } from '../theme';
 import { SPLASH_GAP_HOURS } from '../theme-boot';
@@ -27,6 +28,21 @@ export function SettingsPage() {
             <Seg value={theme} label="Theme" onChange={setTheme} options={THEMES.map(([v, l]) => [v, l] as [typeof v, string])} />
           </Field>
           <SplashSettings />
+          <Field label="Layout and views" hint="Panel sizes, open tabs, expanded groups, tree or list views, filters and the tab each group was on are remembered in this browser.">
+            <div className="cx-form-row">
+              <button
+                type="button"
+                className="cx-btn"
+                onClick={async () => {
+                  if (!(await ui.confirm({ title: 'Reset the UI layout?', body: 'Panel sizes, open tabs, expanded groups, view choices and filters go back to their defaults in this browser. Theme and splash settings stay.', ok: 'Reset layout' }))) return;
+                  resetUiPrefs();
+                  window.location.assign('/settings');
+                }}
+              >
+                <Ico n="refresh" size={13} /> Reset UI layout
+              </button>
+            </div>
+          </Field>
         </Section>
       </section>
       <section id="sec-general">

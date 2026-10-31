@@ -21,6 +21,7 @@ import { SchemasPage } from './views/schemas';
 import { ServerEditor, ServerNew, ServersHome } from './views/servers';
 import { SettingsPage } from './views/settings';
 import { ScenarioChat, StudioHome } from './views/studio';
+import { usePref } from './prefs';
 
 const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'overview', label: 'Overview', icon: 'overview' },
@@ -85,8 +86,8 @@ function Workbench() {
   const { data, error } = useStore();
   const [left, setLeft] = usePersisted('cx-left', 300);
   const [right, setRight] = usePersisted('cx-right', 300);
-  const [showLeft, setShowLeft] = useState(true);
-  const [showRight, setShowRight] = useState(true);
+  const [showLeft, setShowLeft] = usePref('show.left', true);
+  const [showRight, setShowRight] = usePref('show.right', true);
   const [quick, setQuick] = useState<string | null>(null);
   const [cursor, setCursor] = useState<{ ln: number; col: number } | null>(null);
   const [account, setAccount] = useState(false);

@@ -7,6 +7,7 @@ import { pathFor, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { LogEntry } from '../types';
 import { Outcome } from './activity';
+import { usePref } from '../prefs';
 
 interface Overview {
   counts: { all: number; blocked: number; false_alarm: number; clean: number; error: number };
@@ -28,7 +29,7 @@ const RANGES: [string, string][] = [
 export function OverviewPage() {
   const { data } = useStore();
   const nav = useNav();
-  const [range, setRange] = useState('24h');
+  const [range, setRange] = usePref('overview.range', '24h');
   const group = data?.groups.find((g) => g.id === nav.group);
   const scoped = group && group.parentId !== null ? group : null;
   const scopedId = scoped?.id ?? null;

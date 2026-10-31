@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { parsePath, pathFor } from './paths';
 import type { View } from './types';
+import { readPref, writePref } from './prefs';
 
 export { parsePath, pathFor, subtree } from './paths';
 
@@ -23,7 +24,7 @@ interface Nav {
 }
 
 const NavCtx = createContext<Nav | null>(null);
-const TABS_KEY = 'cx-tabs';
+const TABS_KEY = 'tabs';
 
 export function NavProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -35,7 +36,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
   const { view, id } = parsePath(pathname);
   const [tabs, setTabs] = useState<string[]>(() => {
     try {
-      const t = JSON.parse(sessionStorage.getItem(TABS_KEY) ?? '[]') as string[];
+      const t = readPref<string[]>(TABS_KEY, []);
       return Array.isArray(t) ? [...new Set(t.filter((x) => typeof x === 'string').map((x) => pathFor(parsePath(x).view, parsePath(x).id)))] : [];
     } catch {
       return [];
@@ -48,11 +49,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
     setTabs((t) => (t.includes(pathname) ? t : [...t, pathname]));
   }, [pathname]);
   useEffect(() => {
-    try {
-      sessionStorage.setItem(TABS_KEY, JSON.stringify(tabs));
-    } catch {
-      /* storage unavailable */
-    }
+    writePref(TABS_KEY, tabs);
   }, [tabs]);
 
   // A path that brings its own query (e.g. "/keys/new?group=3") keeps it.

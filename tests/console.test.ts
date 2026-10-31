@@ -64,3 +64,28 @@ describe('markdown preview', () => {
     expect(html).toContain('&lt;img');
   });
 });
+
+describe('UI preferences', () => {
+  it('remembers values per browser and a reset clears only layout prefs', async () => {
+    const store = new Map<string, string>();
+    const fake = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    const g = globalThis as Record<string, unknown>;
+    g.localStorage = new Proxy(fake, { ownKeys: () => [...store.keys()], getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }) });
+    g.sessionStorage = { clear: () => undefined };
+    const { readPref, writePref, resetUiPrefs } = await import('@/components/console/prefs');
+    expect(readPref('flat.keys', false)).toBe(false);
+    writePref('flat.keys', true);
+    writePref('group.tab.3', 'guard');
+    store.set('cx-theme', 'dark');
+    expect(readPref('flat.keys', false)).toBe(true);
+    expect(readPref('group.tab.3', 'eff')).toBe('guard');
+    resetUiPrefs();
+    expect(readPref('flat.keys', false)).toBe(false);
+    expect(store.get('cx-theme')).toBe('dark');
+  });
+});

@@ -3,6 +3,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Ico, type IconName } from './icons';
 import { type MenuItem, useUi } from './store';
+import { readPref, writePref } from './prefs';
 
 export interface TreeNode {
   key: string;
@@ -300,38 +301,22 @@ export function Tree({ nodes, expanded, onToggle, label, empty }: { nodes: TreeN
   );
 }
 
-/** Expanded-state helper that remembers itself per tree in sessionStorage. */
+/** Expanded-state helper that remembers itself per tree in this browser. */
 export function useExpanded(id: string, initial: string[] = []) {
-  const [set, setSet] = useState<Set<string>>(() => {
-    try {
-      const v = sessionStorage.getItem(`cx-exp-${id}`);
-      if (v) return new Set(JSON.parse(v) as string[]);
-    } catch {
-      /* storage unavailable */
-    }
-    return new Set(initial);
-  });
+  const [set, setSet] = useState<Set<string>>(() => new Set(readPref<string[]>(`exp.${id}`, initial)));
   const toggle = (key: string, open?: boolean) =>
     setSet((s) => {
       const n = new Set(s);
       const want = open ?? !n.has(key);
       if (want) n.add(key);
       else n.delete(key);
-      try {
-        sessionStorage.setItem(`cx-exp-${id}`, JSON.stringify([...n]));
-      } catch {
-        /* storage unavailable */
-      }
+      writePref(`exp.${id}`, [...n]);
       return n;
     });
   const expand = (keys: string[]) => keys.forEach((k) => toggle(k, true));
   const collapseAll = () => {
     setSet(new Set());
-    try {
-      sessionStorage.removeItem(`cx-exp-${id}`);
-    } catch {
-      /* storage unavailable */
-    }
+    writePref(`exp.${id}`, []);
   };
   return { expanded: set, toggle, expand, collapseAll };
 }

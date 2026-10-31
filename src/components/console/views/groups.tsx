@@ -8,6 +8,7 @@ import { Empty, Field, GroupSelect, Loading, Note, Page, Pill, Section, Seg, Sta
 import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { Data, GroupC, Resolution, SettingKey } from '../types';
+import { useItemTab } from '../prefs';
 import { layerState, useLayerToggle } from './guard';
 import type { GuardLayer } from '@/lib/layers';
 import type { LayerOpt } from '@/lib/groups';
@@ -94,7 +95,7 @@ export function GroupEditor({ id }: { id: number }) {
   const nav = useNav();
   const act = useActions();
   const [res, setRes] = useState<{ chain: { id: number; name: string }[]; resolution: Resolution } | null>(null);
-  const [tab, setTab] = useState<Tab>('eff');
+  const [tab, setTab] = useItemTab<Tab>('group', id, 'eff');
   const g = data?.groups.find((x) => x.id === id);
   const sig = g ? JSON.stringify([g.name, g.settings, g.parentId, data?.settings.guard, data?.groups.length]) : '';
   useEffect(() => {

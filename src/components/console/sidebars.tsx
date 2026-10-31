@@ -6,9 +6,10 @@ import { Ico, type IconName } from './icons';
 import { fmtTokens } from './kit';
 import { pathFor, subtree, useNav } from './nav';
 import { selectedGroupId } from './paths';
+import { usePref } from './prefs';
 import { api, type MenuItem, useStore, useUi } from './store';
 import { Tree, type TreeNode, useExpanded } from './tree';
-import type { Data, GroupC, View } from './types';
+import type { Data, GroupC, KeyC, View } from './types';
 
 type Creating = { kind: 'group' | 'file'; parent: number | null } | null;
 
@@ -68,7 +69,10 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const root = data.groups.find((g) => g.parentId === null);
   const { expanded, toggle, expand, collapseAll } = useExpanded(`groups-${mode}`, root ? [`g:${root.id}`] : []);
   const [creating, setCreating] = useState<Creating>(null);
-  const [allFiles, setAllFiles] = useState(false);
+  // Tree by group, or one flat list (Context files and API keys), remembered per explorer.
+  const [flat, setFlat] = usePref(`flat.${mode}`, false);
+  const allFiles = mode === 'context' && flat;
+  const allKeys = mode === 'keys' && flat;
   const upload = useRef<HTMLInputElement>(null);
   // New groups, files and keys go inside the selected group (the one open in Groups, or the open key's).
   const selId = selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
@@ -146,6 +150,33 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     };
   };
 
+  const keyNode = (k: KeyC, flatList: boolean): TreeNode => {
+    const expired = !!k.expiresAt && k.expiresAt < Date.now();
+    const state = k.revoked ? 'revoked' : expired ? 'expired' : null;
+    return {
+      key: `k:${k.id}`,
+      label: k.name,
+      text: k.name,
+      icon: 'key',
+      iconClass: 'key',
+      meta: flatList ? [state, k.owner, data.groups.find((g) => g.id === k.groupId)?.name].filter(Boolean).join(' · ') : (state ?? k.owner),
+      dim: !!state,
+      title: `${k.name} · ${k.prefix}… · ${k.owner} · ${data.groups.find((g) => g.id === k.groupId)?.path ?? ''}`,
+      selected: nav.path === pathFor('keys', k.id),
+      onOpen: () => nav.go(pathFor('keys', k.id)),
+      onRename: (name) => void act.renameKey(k, name),
+      onDelete: () => void act.deleteKey(k),
+      drag: flatList ? undefined : `key:${k.id}`,
+      menu: () => [
+        { label: 'Open', run: () => nav.go(pathFor('keys', k.id)) },
+        { label: k.revoked ? 'Restore key' : 'Revoke key', run: () => void act.revokeKey(k) },
+        { label: 'Show activity', run: () => nav.go(pathFor('activity')) },
+        { sep: true, label: '' },
+        { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteKey(k) },
+      ],
+    };
+  };
+
   const groupNode = (g: GroupC): TreeNode => {
     const isRoot = g.parentId === null;
     const kids: TreeNode[] = [];
@@ -155,35 +186,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       if (creating?.parent === g.id && creating.kind === 'file') kids.push(newNode('file', g.id));
       kids.push(...(g.own.map((fid) => fileNode(fid, g)).filter(Boolean) as TreeNode[]));
     }
-    if (mode === 'keys')
-      kids.push(
-        ...data.keys
-          .filter((k) => k.groupId === g.id)
-          .map(
-            (k): TreeNode => ({
-              key: `k:${k.id}`,
-              label: k.name,
-              text: k.name,
-              icon: 'key',
-              iconClass: 'key',
-              meta: k.revoked ? 'revoked' : k.owner,
-              dim: k.revoked,
-              title: `${k.name} · ${k.prefix}… · ${k.owner}`,
-              selected: nav.path === pathFor('keys', k.id),
-              onOpen: () => nav.go(pathFor('keys', k.id)),
-              onRename: (name) => void act.renameKey(k, name),
-              onDelete: () => void act.deleteKey(k),
-              drag: `key:${k.id}`,
-              menu: () => [
-                { label: 'Open', run: () => nav.go(pathFor('keys', k.id)) },
-                { label: k.revoked ? 'Restore key' : 'Revoke key', run: () => void act.revokeKey(k) },
-                { label: 'Show activity', run: () => nav.go(pathFor('activity')) },
-                { sep: true, label: '' },
-                { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteKey(k) },
-              ],
-            }),
-          ),
-      );
+    if (mode === 'keys') kids.push(...data.keys.filter((k) => k.groupId === g.id).map((k) => keyNode(k, false)));
     // One selection per tree: a group is highlighted only while no file or key below it is open.
     const itemOpen = (mode === 'context' && nav.view === 'context' && !!nav.id) || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
     const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : !itemOpen && sel?.id === g.id;
@@ -245,12 +248,13 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     actions.push({ icon: 'newFile', label: 'New context file in the selected group', run: () => startCreate('file', allFiles ? null : parent) });
     actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
     actions.push({ icon: 'upload', label: 'Upload .md files', run: () => upload.current?.click() });
-    actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show files by group' : 'Show all files', run: () => setAllFiles(!allFiles) });
+    actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show files by group' : 'Show all files', run: () => setFlat(!flat) });
   }
   if (mode === 'groups') actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
   if (mode === 'keys') {
     actions.push({ icon: 'plus', label: 'New API key in the selected group', run: () => nav.go(`/keys/new${parent ? `?group=${parent}` : ''}`) });
     actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
+    actions.push({ icon: allKeys ? 'tree' : 'list', label: allKeys ? 'Show keys by group' : 'Show all keys', run: () => setFlat(!flat) });
   }
   actions.push({ icon: 'refresh', label: 'Refresh', run: () => void act.reload().then(() => ui.toast('Refreshed')) });
   actions.push({ icon: 'collapse', label: 'Collapse all', run: collapseAll });
@@ -284,7 +288,12 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       <Header title={title} actions={actions} />
       <input ref={upload} type="file" accept=".md,.markdown,.txt" multiple hidden onChange={(e) => e.target.files && void uploadFiles(e.target.files).then(() => (e.target.value = ''))} />
       <div className="cx-side-body">
-        {mode === 'context' && allFiles ? (
+        {allKeys ? (
+          <>
+            <div className="cx-section">ALL KEYS · {data.keys.length}</div>
+            <Tree label="All API keys" nodes={[...data.keys].sort((a, b) => a.name.localeCompare(b.name)).map((k) => keyNode(k, true))} expanded={expanded} onToggle={toggle} empty={<span>No API keys yet.</span>} />
+          </>
+        ) : mode === 'context' && allFiles ? (
           <>
             <div className="cx-section">ALL FILES · {data.files.length}</div>
             <Tree

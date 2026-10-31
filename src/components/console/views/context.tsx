@@ -8,6 +8,7 @@ import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { FileC } from '../types';
+import { readPref, usePref, writePref } from '../prefs';
 
 // ---------------------------------------------------------------- /context
 
@@ -117,25 +118,14 @@ export function ContextFileEditor({ id }: { id: number }) {
   return <FileEditor f={f} />;
 }
 
-/** Remembers the text/preview toggle per file for this browser tab. */
+/** Remembers the text/preview toggle per file in this browser (new files start with the last choice). */
 function usePreview(id: number): [boolean, (v: boolean) => void] {
-  const k = `cx-preview-${id}`;
-  const [v, setV] = useState(() => {
-    try {
-      return sessionStorage.getItem(k) === '1';
-    } catch {
-      return false;
-    }
-  });
+  const [v, setV] = usePref(`context.preview.${id}`, readPref('context.preview', false));
   return [
     v,
     (x: boolean) => {
       setV(x);
-      try {
-        sessionStorage.setItem(k, x ? '1' : '0');
-      } catch {
-        /* storage unavailable */
-      }
+      writePref('context.preview', x);
     },
   ];
 }
