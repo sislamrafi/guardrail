@@ -26,16 +26,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     const n = ++seq.current;
     try {
-      const [c, k, s, g, sum, r] = await Promise.all([
+      const [c, k, s, g, sum, r, sc] = await Promise.all([
         api<{ files: FileC[]; groups: GroupC[]; settings: Data['settings']; cache: Data['cache'] }>('context'),
         api<{ keys: KeyC[] }>('keys'),
         api<{ servers: ServerC[]; limits: Data['limits']; access: Data['access'] }>('servers'),
         api<{ models: string[]; modelServers: Record<string, string[]> }>('groups'),
         api<Summary>('summary'),
         api<{ rules: Data['rules'] }>('rules'),
+        api<{ scenarios: Data['scenarios'] }>('studio/scenarios'),
       ]);
       if (n !== seq.current) return;
-      setData({ groups: c.groups, files: c.files, settings: c.settings, cache: c.cache, keys: k.keys, servers: s.servers, limits: s.limits, access: s.access, models: g.models, modelServers: g.modelServers, summary: sum, rules: r.rules });
+      setData({ groups: c.groups, files: c.files, settings: c.settings, cache: c.cache, keys: k.keys, servers: s.servers, limits: s.limits, access: s.access, models: g.models, modelServers: g.modelServers, summary: sum, rules: r.rules, scenarios: sc.scenarios });
       setError(null);
     } catch (e) {
       if (n === seq.current) setError((e as Error).message);

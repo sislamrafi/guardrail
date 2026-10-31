@@ -2,10 +2,11 @@ import type { GroupSettings, Resolution, SettingKey } from '@/lib/groups';
 import type { LimitView } from '@/lib/limits';
 import type { LogEntry } from '@/lib/logs';
 import type { Rule } from '@/lib/rules';
+import type { Scenario } from '@/lib/studio';
 import type { ModelKind } from '@/lib/servers';
 import type { AppSettings } from '@/lib/settings';
 
-export type { ModelKind };
+export type { ModelKind, Scenario };
 export type { GroupSettings, LimitView, LogEntry, Resolution, Rule, SettingKey, AppSettings };
 
 export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'schemas', 'studio', 'settings'] as const;
@@ -111,6 +112,7 @@ export interface Data {
   cache: { name: string; rate: number }[];
   summary: Summary;
   rules: Rule[];
+  scenarios: Scenario[];
 }
 
 export const KIND_LABEL: Record<ModelKind, string> = {

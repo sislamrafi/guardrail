@@ -48,7 +48,8 @@ export function Sidebar({ width }: { width: number }) {
   else if (!data) body = <div className="cx-side-msg">Loading…</div>;
   else if (view === 'servers') body = <ServersSide data={data} />;
   else if (view === 'rules') body = <RulesSide data={data} />;
-  else if (view === 'schemas' || view === 'settings' || view === 'studio') body = <OutlineSide view={view} />;
+  else if (view === 'studio') body = <StudioSide data={data} />;
+  else if (view === 'schemas' || view === 'settings') body = <OutlineSide view={view} />;
   else body = <GroupsSide data={data} mode={view === 'groups' ? 'groups' : view === 'keys' ? 'keys' : view === 'context' ? 'context' : 'filter'} />;
   return (
     <aside className="cx-side" style={{ width }} aria-label={`${LABEL[view]} sidebar`}>
@@ -436,22 +437,16 @@ const OUTLINES: Record<string, [string, string][]> = {
     ['limits', 'Server and model limits'],
     ['account', 'Account'],
   ],
-  studio: [
-    ['Normal coding task', 'Normal coding task'],
-    ['Injection hidden in a file', 'Injection hidden in a file'],
-    ['False alarm (fake secret in a fixture)', 'False alarm (fake secret)'],
-    ['Private key pasted in the chat', 'Private key in the chat'],
-  ],
 };
 
-function OutlineSide({ view }: { view: 'schemas' | 'settings' | 'studio' }) {
+function OutlineSide({ view }: { view: 'schemas' | 'settings' }) {
   const nav = useNav();
   const items = OUTLINES[view];
   return (
     <>
       <Header title={LABEL[view]} actions={[]} />
       <div className="cx-side-body">
-        <div className="cx-section">{view === 'studio' ? 'SCENARIOS' : 'ON THIS PAGE'}</div>
+        <div className="cx-section">ON THIS PAGE</div>
         <div role="list">
           {items.map(([id, label]) => (
             <button
@@ -462,17 +457,64 @@ function OutlineSide({ view }: { view: 'schemas' | 'settings' | 'studio' }) {
               style={{ paddingLeft: 24 }}
               onClick={() => {
                 if (nav.path !== pathFor(view)) nav.go(pathFor(view));
-                if (view === 'studio') setTimeout(() => window.dispatchEvent(new CustomEvent('cx-studio-scenario', { detail: id })), 50);
-                else setTimeout(() => document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+                setTimeout(() => document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
               }}
             >
               <span className="cx-ico">
-                <Ico n={view === 'studio' ? 'send' : 'chevron'} size={14} />
+                <Ico n="chevron" size={14} />
               </span>
               <span className="cx-label">{label}</span>
             </button>
           ))}
         </div>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- studio scenarios
+
+function StudioSide({ data }: { data: Data }) {
+  const nav = useNav();
+  const ui = useUi();
+  const { expanded, toggle } = useExpanded('studio');
+  const [creating, setCreating] = useState(false);
+  const create = async (name: string) => {
+    setCreating(false);
+    let id = 0;
+    if (await ui.run(async () => (id = (await api<{ id: number }>('studio/scenarios', { body: { name } })).id), `${name} created`)) nav.go(pathFor('studio', id));
+  };
+  const remove = async (id: number, name: string) => {
+    if (!(await ui.confirm({ title: `Delete the scenario ${name}?`, body: 'Its chat and settings are removed. Logged requests stay in Activity.', ok: 'Delete scenario', danger: true }))) return;
+    if (await ui.run(() => api(`studio/scenarios/${id}`, { method: 'DELETE' }), `${name} deleted`)) nav.closeTab(pathFor('studio', id));
+  };
+  const nodes: TreeNode[] = [
+    ...(creating ? [{ key: 'new', label: '', text: '', icon: 'send' as IconName, editing: true, onRename: (n: string) => void create(n), onCancelEdit: () => setCreating(false) }] : []),
+    ...data.scenarios.map((sc) => ({
+      key: `sc:${sc.id}`,
+      label: sc.name,
+      text: sc.name,
+      icon: 'send' as IconName,
+      meta: sc.tags.slice(0, 2).join(', '),
+      title: [sc.description, sc.notes].filter(Boolean).join(' · '),
+      selected: nav.path === pathFor('studio', sc.id),
+      onOpen: () => nav.go(pathFor('studio', sc.id)),
+      onRename: (name: string) => void ui.run(() => api(`studio/scenarios/${sc.id}`, { method: 'PATCH', body: { name } }), 'Renamed'),
+      onDelete: () => void remove(sc.id, sc.name),
+      menu: () => [
+        { label: 'Open', run: () => nav.go(pathFor('studio', sc.id)) },
+        { label: 'Duplicate', run: () => void ui.run(async () => nav.go(pathFor('studio', (await api<{ id: number }>('studio/scenarios', { body: { duplicateOf: sc.id } })).id)), 'Duplicated') },
+        { sep: true, label: '' },
+        { label: 'Delete', hint: 'Del', danger: true, run: () => void remove(sc.id, sc.name) },
+      ],
+    })),
+  ];
+  return (
+    <>
+      <Header title="Studio" actions={[{ icon: 'plus', label: 'New scenario', run: () => setCreating(true) }]} />
+      <div className="cx-side-body">
+        <div className="cx-section">SCENARIOS · {data.scenarios.length}</div>
+        <Tree label="Studio scenarios" nodes={nodes} expanded={expanded} onToggle={toggle} empty={<span>No scenarios yet. <button type="button" className="cx-link" onClick={() => setCreating(true)}>Create one</button></span>} />
       </div>
     </>
   );

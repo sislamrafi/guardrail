@@ -20,7 +20,7 @@ import { RuleEditor, RulesHome } from './views/rules';
 import { SchemasPage } from './views/schemas';
 import { ServerEditor, ServerNew, ServersHome } from './views/servers';
 import { SettingsPage } from './views/settings';
-import { StudioPage } from './views/studio';
+import { ScenarioChat, StudioHome } from './views/studio';
 
 const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'overview', label: 'Overview', icon: 'overview' },
@@ -344,6 +344,8 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
       return { title: `Request ${id.slice(0, 8)}`, icon: 'activity' };
     case 'guard':
       return { title: data?.settings.guard.layers.find((l) => l.id === id)?.name ?? 'Layer', icon: 'guard' };
+    case 'studio':
+      return { title: data?.scenarios.find((s) => s.id === n)?.name ?? 'Scenario', icon: 'studio' };
     default:
       return { title: VIEW_LABEL[view], icon: VIEW_ICON[view] };
   }
@@ -465,7 +467,7 @@ function Editor(): ReactNode {
     case 'schemas':
       return <SchemasPage />;
     case 'studio':
-      return <StudioPage />;
+      return id ? <ScenarioChat id={n} /> : <StudioHome />;
     case 'settings':
       return <SettingsPage />;
   }

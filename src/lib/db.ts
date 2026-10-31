@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -189,6 +189,18 @@ function migrate(db: Database.Database) {
   if (!modelCols.has('kind')) db.exec('ALTER TABLE models ADD COLUMN kind TEXT');
   if (!modelCols.has('kind_override')) db.exec('ALTER TABLE models ADD COLUMN kind_override TEXT');
   if (!modelCols.has('manual')) db.exec('ALTER TABLE models ADD COLUMN manual INTEGER NOT NULL DEFAULT 0');
+  // Saved Studio scenarios (chat transcript + settings).
+  db.exec(`CREATE TABLE IF NOT EXISTS studio_scenarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    settings TEXT NOT NULL DEFAULT '{}',
+    transcript TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
   const keyCols = new Set((db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map((c) => c.name));
   // Optional IP allow-list per key: JSON list of IPs and CIDR ranges; empty means any address.
   if (!keyCols.has('ip_allow')) db.exec("ALTER TABLE api_keys ADD COLUMN ip_allow TEXT NOT NULL DEFAULT '[]'");

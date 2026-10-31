@@ -437,6 +437,17 @@ select.cx-input { padding-right: 4px; }
 .cx-replay h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
 .cx-table.kv td:first-child { width: 160px; color: var(--dim); }
 
+/* studio */
+.cx-studio { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.cx-studio-bar { flex: none; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--edge); }
+.cx-studio-chat { flex: 1; overflow: auto; padding: 18px 24px; }
+.cx-studio-chat .cx-thread { margin: 0 auto; }
+.cx-studio-empty { color: var(--dim); text-align: center; padding: 40px 0; }
+.cx-composer { flex: none; border-top: 1px solid var(--edge); padding: 10px 16px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--side); }
+.cx-composer textarea { resize: none; }
+.cx-trace { align-self: stretch; border: 1px dashed var(--edge-2); border-radius: 6px; }
+.cx-trace-body { padding: 6px 10px 10px; }
+
 /* guard pipeline */
 .cx-pipeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
 .cx-pipeline li { position: relative; padding-left: 22px; }
