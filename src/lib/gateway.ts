@@ -1,3 +1,4 @@
+import { StreamCollector, responseFromJson } from './stream-collect';
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
 import { clientIp as ipOf, ipAllowed } from './ip';
 import { contentText, newSegments, renderBlocked, Segment } from './guard';
@@ -193,7 +194,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const block = (reason: string, extra: Partial<LogEntry>) => {
     const text = renderBlocked(eff.blocked_reply, reason, id, settings.guard.reply.includeReason);
     steps.push({ tone: 'bad', head: `Blocked reply ${stream ? 'streamed' : 'sent'} to the client`, ms: at(), text: 'The model was never called. The client was shown:', quote: text });
-    finish('blocked', 200, reason, extra);
+    finish('blocked', 200, reason, { ...extra, response: { message: { role: 'assistant', content: text }, finish_reason: 'stop', blocked: true } });
     return blockedResponse({ stream, model, text, requestId: id, kind });
   };
 
@@ -311,7 +312,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     if (!up.ok) {
       const text = await up.text();
       steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
-      finish('error', up.status, `Backend error ${up.status}`);
+      finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
       return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
     }
     const label = outcome === 'false_alarm' ? 'Sent to the model (false alarm logged)' : 'Sent to the model';
@@ -319,7 +320,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       const json = (await up.json()) as { usage?: { completion_tokens?: number } };
       stages.upstream = at() - tStart;
       steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, answered`, ms: at(), text: `${json.usage?.completion_tokens ?? '?'} tokens.` });
-      finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null });
+      finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null, response: responseFromJson(json) });
       return Response.json(json, { headers: { 'x-guardrail-request-id': id } });
     }
     // Stream straight through; count chunks as we go and finish the log at the end.
@@ -330,12 +331,14 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     const dec = new TextDecoder();
     let tail = '';
     const reader = up.body.getReader();
-    const close = (how: string) => {
+    // Rebuild the reply for the log as it streams by; the client gets every byte unchanged and undelayed.
+    const collect = new StreamCollector();
+    const close = (how: string, interrupted = false) => {
       if (done) return;
       done = true;
       stages.upstream = at() - tStart;
-      steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, ${how}`, ms: at(), text: `Streamed ${usage ?? chunks} ${usage ? 'tokens' : 'chunks'}.` });
-      updateLog(id, { latency_ms: Math.round(at()), tokens_out: usage ?? chunks, stages, steps });
+      steps.push({ tone: interrupted ? 'warn' : 'ok', head: `${label} · ${r.server.name}, ${how}`, ms: at(), text: `Streamed ${usage ?? chunks} ${usage ? 'tokens' : 'chunks'}.` });
+      updateLog(id, { latency_ms: Math.round(at()), tokens_out: usage ?? chunks, stages, steps, response: collect.result({ interrupted }) });
     };
     const out = new ReadableStream<Uint8Array>({
       async pull(c) {
@@ -346,7 +349,9 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
             c.close();
             return;
           }
-          const lines = (tail + dec.decode(value, { stream: true })).split('\n');
+          const text = dec.decode(value, { stream: true });
+          collect.push(text);
+          const lines = (tail + text).split('\n');
           tail = lines.pop() ?? '';
           for (const l of lines) {
             if (!l.startsWith('data:') || l.includes('[DONE]')) continue;
@@ -356,12 +361,12 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
           }
           c.enqueue(value);
         } catch (e) {
-          close(`stream broke (${errMsg(e)})`);
+          close(`stream broke (${errMsg(e)})`, true);
           c.error(e);
         }
       },
       cancel(reason) {
-        close('client stopped reading');
+        close('client stopped reading', true);
         return reader.cancel(reason);
       },
     });

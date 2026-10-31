@@ -237,7 +237,7 @@ describe('prompt files', () => {
     ];
     const md = renderPromptFile({ ...base, prompt, forwarded: null });
     expect(md).toContain('Nothing was sent to the model.');
-    expect(parsePromptFile(md)).toEqual({ prompt, forwarded: null });
+    expect(parsePromptFile(md)).toEqual({ prompt, forwarded: null, response: null });
   });
 });
 
@@ -260,5 +260,39 @@ describe('old group guard settings move onto layers', () => {
     expect(Object.keys(st).sort()).toEqual(['layer_opts', 'layers', 'rate_limit']);
     expect(st.layers.value).toEqual({ piguard: false });
     expect(st.layer_opts.value).toEqual({ piguard: { threshold: 0.6 }, judge: { prompt: 'Fixtures are fake.' } });
+  });
+});
+
+describe('stream collector', () => {
+  it('rebuilds text, reasoning and tool calls from chunks split anywhere', async () => {
+    const { StreamCollector } = await import('@/lib/stream-collect');
+    const c = new StreamCollector();
+    const sse = [
+      { choices: [{ delta: { role: 'assistant', content: 'Hel' } }] },
+      { choices: [{ delta: { content: 'lo **there**', reasoning_content: 'think' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"pa' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'th":"a.md"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { completion_tokens: 9 } },
+    ]
+      .map((j) => `data: ${JSON.stringify(j)}\n\n`)
+      .join('') + 'data: [DONE]\n\n';
+    // Split the stream at odd places, as the network does.
+    for (let i = 0; i < sse.length; i += 7) c.push(sse.slice(i, i + 7));
+    const r = c.result();
+    expect(r.message.content).toBe('Hello **there**');
+    expect(r.message.reasoning).toBe('think');
+    expect(r.message.tool_calls).toEqual([{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.md"}' } }]);
+    expect(r.finish_reason).toBe('tool_calls');
+    expect(r.usage).toEqual({ completion_tokens: 9 });
+    expect(c.result({ interrupted: true }).interrupted).toBe(true);
+  });
+
+  it('reads completions-style text and plain JSON answers', async () => {
+    const { StreamCollector, responseFromJson } = await import('@/lib/stream-collect');
+    const c = new StreamCollector();
+    c.push('data: {"choices":[{"text":"def f():"}]}\n\ndata: {"choices":[{"text":" pass","finish_reason":"stop"}]}\n\n');
+    expect(c.result().message.content).toBe('def f(): pass');
+    const j = responseFromJson({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { total_tokens: 3 } });
+    expect(j).toMatchObject({ message: { content: 'ok' }, finish_reason: 'stop', usage: { total_tokens: 3 } });
   });
 });

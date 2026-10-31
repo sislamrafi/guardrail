@@ -123,6 +123,17 @@ describe('gateway', () => {
     expect(md).toMatch(/Sent to the model · spark-01, answered/);
   });
 
+  it('stores the reply: streamed ones rebuilt, plain ones as sent, blocked ones as the blocked message', async () => {
+    const s1 = await chat(secret, { model: 'qwen3-coder-30b', stream: true, messages: [{ role: 'user', content: 'stream a reply' }] });
+    await s1.text();
+    const streamed = getLog(String(lastLog().id))!.response!;
+    expect(streamed.streamed).toBe(true);
+    expect(String(streamed.message.content).length).toBeGreaterThan(0);
+    const s2 = await chat(secret, { model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'plain reply' }] });
+    const body = await s2.json();
+    expect(getLog(String(lastLog().id))!.response!.message.content).toBe(body.choices[0].message.content);
+  });
+
   it('deletes prompt files after the retention period', async () => {
     await chat(secret, { model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'old turn' }] });
     const row = lastLog();

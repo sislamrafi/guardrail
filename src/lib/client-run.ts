@@ -110,5 +110,5 @@ export async function replayLog(id: string, layers?: GuardLayer[], ip?: string |
   const groupId = !keyId && l.group_id ? l.group_id : undefined;
   if (!keyId && !groupId) throw new Error('Neither the key nor the group of this request exists any more.');
   const run = await runAsClient({ keyId, groupId, path: completions ? '/v1/completions' : '/v1/chat/completions', body, source: 'Replay', ip, layers });
-  return { original: { id: l.id, outcome: l.outcome, reason: l.reason, decisions: l.decisions ?? null, ts: l.ts }, replay: run };
+  return { original: { id: l.id, outcome: l.outcome, reason: l.reason, decisions: l.decisions ?? null, ts: l.ts, response: l.response ?? null }, replay: run };
 }

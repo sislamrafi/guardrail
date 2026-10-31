@@ -4,8 +4,8 @@ import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { diffMarks } from '@/components/prompt-view';
 import type { LayerResult } from '@/lib/pipeline';
-import type { Step } from '@/lib/logs';
-import { ChatView } from '../chat';
+import type { ModelResponse, Step } from '@/lib/logs';
+import { ChatView, MSG_KINDS, type MsgKind, ResponseTail, countKinds } from '../chat';
 import { Ico } from '../icons';
 import { Empty, Field, Loading, Note, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
@@ -272,7 +272,7 @@ const TITLES: Record<string, string> = {
 const EXPIRED = 'This prompt was deleted. Prompt files are kept for 20 days by default (GUARDRAIL_PROMPT_RETENTION_DAYS).';
 
 interface Replay {
-  original: { id: string; outcome: string; reason: string | null; decisions: LayerResult[] | null };
+  original: { id: string; outcome: string; reason: string | null; decisions: LayerResult[] | null; response?: ModelResponse | null };
   replay: { status: number; ms: number; text: string; error: string | null; log: LogEntry | null };
 }
 
@@ -282,6 +282,8 @@ export function LogDetail({ id }: { id: string }) {
   const [d, setD] = useState<LogEntry | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = usePref<'summary' | 'session' | 'sent'>('activity.tab', 'session');
+  // Which message types the chat shows; empty means all. Remembered in this browser.
+  const [show, setShow] = usePref<MsgKind[]>('activity.msgs', []);
   const [replay, setReplay] = useState<Replay | null>(null);
   const [replaying, setReplaying] = useState(false);
   const load = useCallback(() => api<LogEntry>(`logs/${encodeURIComponent(id)}`).then(setD, (e) => setErr((e as Error).message)), [id]);
@@ -358,13 +360,25 @@ export function LogDetail({ id }: { id: string }) {
             {l}
           </button>
         ))}
+        {tab !== 'summary' && (
+          <>
+            <KindFilter show={show} setShow={setShow} counts={countKinds(tab === 'session' ? d.prompt : d.forwarded, tab === 'session' ? d.response : null)} />
+          </>
+        )}
       </div>
-      {tab === 'session' && <ChatView messages={d.prompt} empty={d.prompt_expired ? EXPIRED : 'No prompt was recorded. The request was rejected before its body was read.'} tail={d.outcome === 'blocked' ? <BlockedTail d={d} /> : null} />}
+      {tab === 'session' && (
+        <ChatView
+          messages={d.prompt}
+          show={show}
+          empty={d.prompt_expired ? EXPIRED : 'No prompt was recorded. The request was rejected before its body was read.'}
+          tail={d.response || d.outcome === 'blocked' ? (d.response ? <ResponseTail r={d.response} show={show} outcome={d.outcome} ms={d.stages?.upstream ? `${ms(d.stages.upstream)} upstream` : undefined} /> : <BlockedTail d={d} />) : <ResponseTail r={null} show={show} outcome={d.outcome} />}
+        />
+      )}
       {tab === 'summary' && <Summary d={d} />}
       {tab === 'sent' && (
         <>
           {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by GuardRail (context or redaction).</Note>}
-          <ChatView messages={d.forwarded} marks={marks} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
+          <ChatView messages={d.forwarded} marks={marks} show={show} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
         </>
       )}
     </Page>
@@ -467,7 +481,17 @@ function ReplayView({ r, onClose }: { r: Replay; onClose: () => void }) {
           {(r.original.decisions ?? []).map((x) => (
             <DecisionRow key={x.id} r={x} />
           ))}
-          <p className="cx-muted small">The original model reply is not stored.</p>
+          {r.original.response ? (
+            <div className="cx-turn">
+              <div className="cx-turn-head">
+                <span>{r.original.response.blocked ? 'blocked reply' : r.original.response.error ? 'error' : 'reply'}</span>
+                {r.original.response.message.tool_calls?.length ? <span className="cx-muted small">{r.original.response.message.tool_calls.length} tool call(s)</span> : null}
+              </div>
+              <MdText text={r.original.response.error ?? (typeof r.original.response.message.content === 'string' && r.original.response.message.content ? r.original.response.message.content : r.original.response.message.tool_calls?.length ? r.original.response.message.tool_calls.map((c) => `${c.function?.name}(${c.function?.arguments ?? ''})`).join('\n') : '(empty reply)')} />
+            </div>
+          ) : (
+            <p className="cx-muted small">The original reply was not recorded (an older request).</p>
+          )}
         </div>
         <div className="cx-replay">
           <h3>Now</h3>
@@ -513,4 +537,23 @@ export function Timeline({ steps }: { steps: Step[] }) {
 
 export function NoActivity() {
   return <Empty icon="activity" title="Nothing selected" />;
+}
+
+/** Show only some message types in a chat: chips with counts; none picked (or "All") shows everything. */
+function KindFilter({ show, setShow, counts }: { show: MsgKind[]; setShow: (v: MsgKind[]) => void; counts: Record<MsgKind, number> }) {
+  return (
+    <div className="cx-kindfilter" role="group" aria-label="Message types">
+      <button type="button" className={`cx-chip ${show.length === 0 ? 'on' : ''}`} aria-pressed={show.length === 0} onClick={() => setShow([])}>
+        All
+      </button>
+      {MSG_KINDS.filter(([k]) => counts[k] > 0 || show.includes(k)).map(([k, l]) => {
+        const on = show.includes(k);
+        return (
+          <button key={k} type="button" className={`cx-chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => setShow(on ? show.filter((x) => x !== k) : [...show, k])}>
+            {l} <span>{counts[k]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }

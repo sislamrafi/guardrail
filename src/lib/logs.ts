@@ -15,6 +15,22 @@ export interface Step {
   why?: string;
 }
 
+/** The reply to one request, as the client got it (streams are put back together). */
+export interface ModelResponse {
+  message: PromptMessage & { tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]; reasoning?: string };
+  finish_reason?: string | null;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+  /** The reply was GuardRail's blocked message, not the model's. */
+  blocked?: boolean;
+  /** The upstream error text, when the model call failed. */
+  error?: string;
+  streamed?: boolean;
+  /** The client stopped reading before the stream ended. */
+  interrupted?: boolean;
+  /** Text was cut at the size limit. */
+  truncated?: boolean;
+}
+
 /** One message of a logged prompt. Completions requests are stored as a single user message. */
 export interface PromptMessage {
   role?: string;
@@ -52,6 +68,8 @@ export interface LogEntry {
   /** Read from prompt_file by getLog only; lists leave them out. */
   prompt?: PromptMessage[] | null;
   forwarded?: PromptMessage[] | null;
+  /** What came back for this request (model reply, tool calls, the blocked reply or the error), also kept in the file. */
+  response?: ModelResponse | null;
   /** True when the file was deleted by the retention rule. */
   prompt_expired?: boolean;
   /** Each guard layer's result, in order (see pipeline.ts). */
@@ -98,9 +116,9 @@ function maybePrune() {
 }
 
 export function writeLog(e: Partial<LogEntry> & { id: string; ts: number; outcome: Outcome }) {
-  const { prompt, forwarded, ...rest } = e;
+  const { prompt, forwarded, response, ...rest } = e;
   const row: Record<string, unknown> = { ...rest, stages: JSON.stringify(e.stages ?? {}), steps: JSON.stringify(e.steps ?? []), decisions: e.decisions ? JSON.stringify(e.decisions) : null, injected: e.injected ? JSON.stringify(e.injected) : null, test: e.test ? 1 : 0 };
-  if (prompt !== undefined || forwarded !== undefined) row.prompt_file = writePromptFile({ ...blankFileEntry, ...e });
+  if (prompt !== undefined || forwarded !== undefined || response !== undefined) row.prompt_file = writePromptFile({ ...blankFileEntry, ...e });
   getDb()
     .prepare(`INSERT OR REPLACE INTO request_logs (${COLS.join(', ')}) VALUES (${COLS.map((c) => '@' + c).join(', ')})`)
     .run(Object.fromEntries(COLS.map((c) => [c, row[c] ?? null])));
@@ -118,10 +136,10 @@ export function updateLog(id: string, patch: Partial<LogEntry>) {
     vals[k] = JSON_COLS.includes(k) ? JSON.stringify(v) : v;
   }
   if (sets.length) getDb().prepare(`UPDATE request_logs SET ${sets.join(', ')} WHERE id = @id`).run(vals);
-  // A stream finishes after its row was written; bring the file's steps up to date.
-  if (patch.steps) {
+  // A stream finishes after its row was written; bring the file's steps and reply up to date.
+  if (patch.steps || patch.response) {
     const l = getLog(id);
-    if (l?.prompt_file && (l.prompt || l.forwarded)) writePromptFile(l, l.prompt_file);
+    if (l?.prompt_file && (l.prompt || l.forwarded || patch.response)) writePromptFile({ ...l, ...patch }, l.prompt_file);
   }
 }
 
@@ -143,6 +161,7 @@ export function getLog(id: string): LogEntry | undefined {
   const file = e.prompt_file ? readPromptFile(e.prompt_file) : null;
   e.prompt = file?.prompt ?? null;
   e.forwarded = file?.forwarded ?? null;
+  e.response = file?.response ?? null;
   if (!file) e.prompt_expired = e.ts < Date.now() - retentionDays() * 86400_000;
   return e;
 }
