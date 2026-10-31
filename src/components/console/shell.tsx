@@ -31,7 +31,12 @@ const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'guard', label: 'Guard checks', icon: 'guard' },
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
-  { view: 'schemas', label: 'Schemas', icon: 'braces' },
+];
+// Bottom of the activity bar, above Account and Settings.
+const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
+  { view: 'servers', label: 'Servers', icon: 'servers', title: 'Servers and models' },
+  { view: 'studio', label: 'Studio', icon: 'studio', title: 'Studio: send test requests' },
+  { view: 'schemas', label: 'Schemas', icon: 'braces', title: 'Schemas' },
 ];
 // Views that start on the root group when you open them from the activity bar.
 const GROUP_VIEWS: View[] = ['overview', 'activity', 'guard'];
@@ -194,12 +199,11 @@ function Workbench() {
             </button>
           ))}
           <div className="cx-grow" />
-          <button type="button" className={`cx-act ${nav.view === 'studio' && showLeft ? 'on' : ''}`} title="Studio: send test requests" aria-label="Studio" onClick={() => pickView('studio')}>
-            <Ico n="studio" size={24} stroke={1.5} />
-          </button>
-          <button type="button" className={`cx-act ${nav.view === 'servers' && showLeft ? 'on' : ''}`} title="Servers and models" aria-label="Servers and models" aria-current={nav.view === 'servers' ? 'page' : undefined} onClick={() => pickView('servers')}>
-            <Ico n="servers" size={24} stroke={1.5} />
-          </button>
+          {BOTTOM.map((a) => (
+            <button key={a.view} type="button" className={`cx-act ${nav.view === a.view && showLeft ? 'on' : ''}`} title={a.title} aria-label={a.title} aria-current={nav.view === a.view ? 'page' : undefined} onClick={() => pickView(a.view)}>
+              <Ico n={a.icon} size={24} stroke={1.5} />
+            </button>
+          ))}
           <div className="cx-acc">
             <button type="button" className={`cx-act ${account ? 'on' : ''}`} title={`Signed in as ${sum?.name ?? 'Admin'}`} aria-label="Account" aria-expanded={account} onClick={() => setAccount(!account)}>
               <span className="cx-avatar">{(sum?.name ?? 'Admin').slice(0, 2).toUpperCase()}</span>
@@ -566,7 +570,7 @@ function QuickOpen({ q, setQ, data }: { q: string; setQ: (v: string | null) => v
     const out: { label: string; hint: string; icon: IconName; path: string; run?: () => void }[] = [
       ...THEMES.map(([t, label]) => ({ label: `Theme: ${label}`, hint: 'command', icon: 'settings' as IconName, path: '', run: () => applyTheme(t) })),
       ...TOP.map((t) => ({ label: t.label, hint: 'view', icon: t.icon, path: pathFor(t.view) })),
-      { label: 'Studio', hint: 'view', icon: 'studio', path: '/studio' },
+      ...BOTTOM.map((t) => ({ label: t.title, hint: 'view', icon: t.icon, path: pathFor(t.view) })),
       { label: 'Settings', hint: 'view', icon: 'settings', path: '/settings' },
       { label: 'New API key', hint: 'command', icon: 'plus', path: '/keys/new' },
       { label: 'Add a server', hint: 'command', icon: 'plus', path: '/servers/new' },

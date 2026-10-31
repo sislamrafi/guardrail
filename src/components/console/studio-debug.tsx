@@ -201,6 +201,7 @@ function PlanView({ settings, rev }: { settings: ScenarioSettings; rev: number }
               ['State', l.why],
               ['Model', l.type === 'patterns' ? 'built-in patterns' : `${l.model || '–'}${l.server ? ` · ${l.server}` : ''}`],
               ['Adapter', l.adapter],
+              ['When', l.stage === 'output' ? `after the model (checks the answer${l.onFail === 'retry' ? `, up to ${l.retries} retries` : ''})` : 'before the model'],
               ['Runs on', l.scope === 'all' ? 'every request' : 'only flagged requests'],
               ['On a hit', l.onFail],
               ['If it fails', l.onError],
@@ -303,7 +304,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
       </Stage>
       {decisions.length === 0 && <Stage mark="skip" title="Guard layers" answer={reached('layers') ? 'none ran' : 'not reached'} />}
       {decisions.map((r) => (
-        <Stage key={r.id} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.route ? ` → ${r.route.model ?? 'client model'}` : ''}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
+        <Stage key={r.id} mark={r.decision?.error ? 'error' : actMark(r.action)} title={`${r.n}. ${r.name}${r.stage === 'output' ? ` · answer #${r.attempt ?? 1}` : ''}`} answer={`${ACTION_LABEL[r.action] ?? r.action}${r.route ? ` → ${r.route.model ?? 'client model'}` : ''}${r.decision?.score != null ? ` · ${r.decision.score.toFixed(2)}` : ''}${r.decision ? ` · ${ms(r.decision.latency_ms)}` : ''}`}>
           {r.decision ? (
             <>
               <KV

@@ -46,3 +46,28 @@ export function blockedResponse(opts: { stream: boolean; model: string; text: st
 export function apiError(status: number, message: string, type: string, requestId: string, code?: string) {
   return Response.json({ error: { message, type, code: code ?? null, param: null } }, { status, headers: { 'x-guardrail-request-id': requestId } });
 }
+
+/** Send a finished chat or completions answer as an SSE stream (for answers checked before the client saw them). */
+export function sseFromJson(json: Record<string, unknown>, opts: { requestId: string; kind: 'chat' | 'completions' }) {
+  const enc = new TextEncoder();
+  const j = json as { id?: string; created?: number; model?: string; usage?: unknown; choices?: { message?: { content?: string | null; tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]; reasoning?: string }; text?: string; finish_reason?: string | null }[] };
+  const c = j.choices?.[0];
+  const base = { id: j.id ?? `chatcmpl-${opts.requestId}`, created: j.created ?? Math.floor(Date.now() / 1000), model: j.model ?? '' };
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
+    opts.kind === 'chat' ? { ...base, object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] } : { ...base, object: 'text_completion', choices: [{ index: 0, text: String(delta.content ?? ''), finish_reason: finish }] };
+  const text = opts.kind === 'chat' ? (c?.message?.content ?? '') : (c?.text ?? '');
+  const pieces = text ? (text.match(/[\s\S]{1,80}/g) ?? [text]) : [];
+  const stream = new ReadableStream<Uint8Array>({
+    start(ctl) {
+      const send = (o: unknown) => ctl.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+      if (opts.kind === 'chat') send(chunk({ role: 'assistant', content: '' }));
+      for (const p of pieces) send(chunk({ content: p }));
+      const calls = c?.message?.tool_calls ?? [];
+      if (calls.length) send(chunk({ tool_calls: calls.map((t, i) => ({ index: i, id: t.id, type: t.type ?? 'function', function: { name: t.function?.name, arguments: t.function?.arguments ?? '' } })) }));
+      send({ ...chunk({}, c?.finish_reason ?? 'stop'), ...(j.usage ? { usage: j.usage } : {}) });
+      ctl.enqueue(enc.encode('data: [DONE]\n\n'));
+      ctl.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-guardrail-request-id': opts.requestId, 'x-guardrail-checked': '1' } });
+}

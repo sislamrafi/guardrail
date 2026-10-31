@@ -54,7 +54,7 @@ export function useLayerToggle() {
 const saveLayers = (layers: GuardLayer[]) => api('settings', { method: 'PATCH', body: { guard: { layers } } });
 
 const TYPE_ICON: Record<GuardLayer['type'], 'guard' | 'filter' | 'shieldOff' | 'model'> = { classifier: 'model', judge: 'guard', patterns: 'filter', redactor: 'shieldOff', router: 'model' };
-const ON_FAIL = { block: 'Block', flag: 'Flag for later layers', redact: 'Redact and continue' } as const;
+const ON_FAIL = { block: 'Block', flag: 'Flag for later layers', redact: 'Redact and continue', retry: 'Ask the model to fix it' } as const;
 const ON_ERROR = { block: 'Block', allow: 'Allow', patterns: 'Use built-in patterns' } as const;
 
 function newLayer(layers: GuardLayer[]): GuardLayer {
@@ -80,9 +80,42 @@ export function LayersPanel({ data }: { data: Data }) {
     next.splice(to, 0, l);
     await ui.run(() => saveLayers(next), `${l.name} moved to position ${to + 1}`);
   };
-  const add = async () => {
-    const l = newLayer(layers);
+  const add = async (stage: 'input' | 'output' = 'input') => {
+    const l = normalizeLayer({ ...newLayer(layers), ...(stage === 'output' ? { stage: 'output', name: `Answer check ${layers.length + 1}`, onFail: 'retry', scope: 'all' } : {}) });
     if (await ui.run(() => saveLayers([...layers, l]), 'Layer added')) nav.go(pathFor('guard', l.id));
+  };
+  const row = (l: GuardLayer, i: number) => {
+    const st = layerState(l, g, data.groups);
+    return (
+      <div
+        key={l.id}
+        className={`cx-layer-row ${nav.path === pathFor('guard', l.id) ? 'sel' : ''} ${over === i ? 'drop-on' : ''}`}
+        draggable
+        onDragStart={() => setDrag(i)}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setOver(i);
+        }}
+        onDragLeave={() => setOver(null)}
+        onDrop={() => {
+          setOver(null);
+          if (drag !== null) void move(drag, i);
+          setDrag(null);
+        }}
+        onClick={() => nav.go(pathFor('guard', l.id))}
+        title={`${LAYER_TYPES[l.type]} · ${st.on ? 'on' : 'off'} for ${g.name} (from ${st.from})`}
+      >
+        <span className="cx-layer-n">{i + 1}</span>
+        <span className={`cx-ico ${st.on ? 'on' : ''}`}>
+          <Ico n={TYPE_ICON[l.type]} size={14} />
+        </span>
+        <span className="cx-label">{l.name}</span>
+        <span className="cx-meta">{l.scope === 'flagged' ? 'if flagged' : ''}</span>
+        <span onClick={(e) => e.stopPropagation()}>
+          <Switch on={st.on} label={`${l.name} for ${g.name}`} onChange={(v) => void toggle(g, l, v === l.enabled && g.parentId === null ? 'inherit' : v ? 'on' : 'off')} />
+        </span>
+      </div>
+    );
   };
   return (
     <div className="cx-details">
@@ -93,46 +126,23 @@ export function LayersPanel({ data }: { data: Data }) {
       <div className="cx-li static cx-anchor">
         <Ico n="key" size={14} /> <span className="cx-label">After authentication</span> <Pill>locked</Pill>
       </div>
-      {layers.map((l, i) => {
-        const st = layerState(l, g, data.groups);
-        return (
-          <div
-            key={l.id}
-            className={`cx-layer-row ${nav.path === pathFor('guard', l.id) ? 'sel' : ''} ${over === i ? 'drop-on' : ''}`}
-            draggable
-            onDragStart={() => setDrag(i)}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setOver(i);
-            }}
-            onDragLeave={() => setOver(null)}
-            onDrop={() => {
-              setOver(null);
-              if (drag !== null) void move(drag, i);
-              setDrag(null);
-            }}
-            onClick={() => nav.go(pathFor('guard', l.id))}
-            title={`${LAYER_TYPES[l.type]} · ${st.on ? 'on' : 'off'} for ${g.name} (from ${st.from})`}
-          >
-            <span className="cx-layer-n">{i + 1}</span>
-            <span className={`cx-ico ${st.on ? 'on' : ''}`}>
-              <Ico n={TYPE_ICON[l.type]} size={14} />
-            </span>
-            <span className="cx-label">{l.name}</span>
-            <span className="cx-meta">{l.scope === 'flagged' ? 'if flagged' : ''}</span>
-            <span onClick={(e) => e.stopPropagation()}>
-              <Switch on={st.on} label={`${l.name} for ${g.name}`} onChange={(v) => void toggle(g, l, v === l.enabled && g.parentId === null ? 'inherit' : v ? 'on' : 'off')} />
-            </span>
-          </div>
-        );
-      })}
-      <div className="cx-li static cx-anchor">
-        <Ico n="send" size={14} /> <span className="cx-label">Add context, call the model</span> <Pill>locked</Pill>
-      </div>
+      {layers.map((l, i) => (l.stage === 'output' ? null : row(l, i)))}
       <div className="cx-attach">
         <button type="button" className="cx-btn sm pri" onClick={() => void add()}>
           <Ico n="plus" size={14} /> Add layer
         </button>
+      </div>
+      <div className="cx-li static cx-anchor">
+        <Ico n="send" size={14} /> <span className="cx-label">Add context, call the model</span> <Pill>locked</Pill>
+      </div>
+      {layers.map((l, i) => (l.stage === 'output' ? row(l, i) : null))}
+      <div className="cx-attach">
+        <button type="button" className="cx-btn sm" title="Checks the model's answer before the client sees it" onClick={() => void add('output')}>
+          <Ico n="plus" size={14} /> Add check after the model
+        </button>
+      </div>
+      <div className="cx-li static cx-anchor">
+        <Ico n="forward" size={14} /> <span className="cx-label">Return the answer to the client</span> <Pill>locked</Pill>
       </div>
     </div>
   );
@@ -326,6 +336,7 @@ export function DecisionRow({ r }: { r: LayerResult }) {
         ))}
         <span className="cx-muted small grow">{d?.error ?? d?.reason ?? ''}</span>
         {r.read && r.read.length > 0 && <span className="cx-muted small" title="What this layer read">read: {r.read.join(', ')}</span>}
+        {r.stage === 'output' && <Pill tone="info">after the model · answer #{r.attempt ?? 1}</Pill>}
         {d?.suffix && <Pill tone="info">suffix · {d.suffix.model}</Pill>}
         {d?.cache && <span className="mono cx-muted small" title="Prompt tokens served from the cache">cache {d.cache.cached.toLocaleString()}/{d.cache.prompt.toLocaleString()}</span>}
       </summary>
@@ -368,6 +379,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
   const dirty = JSON.stringify(l) !== JSON.stringify(orig);
   const needsModel = l.type === 'classifier' || l.type === 'judge' || l.type === 'router';
   const router = l.type === 'router';
+  const output = l.stage === 'output';
 
 
   const save = async (next = l) => {
@@ -549,14 +561,31 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
       )}
 
       <Section title="Behaviour">
+        {!router && (
+          <Field label="When it runs" hint={output ? "After the model answers, before the client sees anything. Requests it applies to are not streamed token by token: the whole answer is checked first, which adds the model's full answer time plus the check." : 'Before the model is called.'}>
+            <Seg
+              value={output ? 'output' : 'input'}
+              label="When it runs"
+              onChange={(v) => set(v === 'output' ? { stage: 'output', onFail: 'retry', scope: 'all' } : { stage: 'input', onFail: l.onFail === 'retry' ? 'block' : l.onFail })}
+              options={[
+                ['input', 'Before the model (checks the request)'],
+                ['output', 'After the model (checks the answer)'],
+              ]}
+            />
+          </Field>
+        )}
         <div className="cx-form-row">
+          {!output && (
           <Field label="Runs on">
             <Seg value={l.scope} label="Runs on" onChange={(v) => set({ scope: v })} options={[['all', 'Every request'], ['flagged', 'Only flagged requests']]} />
           </Field>
+          )}
           {!router && (
           <Field label="When it says no">
             <select className="cx-input" value={l.onFail} onChange={(e) => set({ onFail: e.target.value as GuardLayer['onFail'] })}>
-              {Object.entries(ON_FAIL).map(([k, v]) => (
+              {Object.entries(ON_FAIL)
+                .filter(([k]) => output || k !== 'retry')
+                .map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>
@@ -576,7 +605,29 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
           </Field>
           )}
         </div>
-        {l.placement === 'suffix' && canSuffix(fmt) ? (
+        {output && (
+          <div className="cx-form">
+            {l.onFail === 'retry' && (
+              <>
+                <div className="cx-form-row">
+                  <Field label="Retries" hint="New answers to ask for, 0 to 5. Each one adds a model call and the checks again.">
+                    <input className="cx-input" type="number" min={0} max={5} value={l.retries ?? 2} onChange={(e) => set({ retries: Math.max(0, Math.min(5, Math.round(Number(e.target.value) || 0))) })} />
+                  </Field>
+                  <Field label="If it still fails">
+                    <Seg value={l.onExhausted ?? 'block'} label="If it still fails" onChange={(v) => set({ onExhausted: v })} options={[['block', 'Block it'], ['flag', 'Let it through, flagged']]} />
+                  </Field>
+                </div>
+                <Field label="Feedback sent with a rejected answer" hint="Added after the rejected answer, at the end of the conversation (so the cache is reused). {reason}, {categories} and {verdict} are filled in.">
+                  <textarea className="cx-input" rows={2} value={l.retryPrompt ?? ''} onChange={(e) => set({ retryPrompt: e.target.value })} />
+                </Field>
+              </>
+            )}
+            <Field label="Check only tool calls" hint="Check just the tools the model wants to run (cheaper), not the text of its answer.">
+              <Switch on={!!l.toolCallsOnly} label="Check only tool calls" onChange={(v) => set({ toolCallsOnly: v })} />
+            </Field>
+          </div>
+        )}
+        {output ? null : l.placement === 'suffix' && canSuffix(fmt) ? (
           <Field label="What this layer reads" hint="Suffix checks read the whole request as the model gets it (system prompt, context, tools, every message), so its prefix matches the real call.">
             <span className="cx-muted small">Everything (set by the suffix placement)</span>
           </Field>

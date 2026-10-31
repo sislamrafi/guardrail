@@ -2,7 +2,7 @@ import { getServer, errMsg } from './servers';
 import type { GuardSettings } from './settings';
 
 export interface Segment {
-  source: 'user message' | 'tool result' | 'system prompt' | 'tool call';
+  source: 'user message' | 'tool result' | 'system prompt' | 'tool call' | 'model answer';
   text: string;
 }
 

@@ -22,6 +22,9 @@ export interface LayerResult {
   bypassed: boolean;
   /** What the layer read (sources), when it ran. */
   read?: string[];
+  /** Output layers: which answer this checked (1 = the first, 2 = after one retry…). */
+  attempt?: number;
+  stage?: 'input' | 'output';
   /** Router layers: the answer and the model it picked (null: keep the client's model). */
   route?: { label: string | null; model: string | null };
 }
@@ -125,7 +128,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     // A suffix layer reads the whole request as the model gets it; others what they are set to read.
     const suffix = layer.placement === 'suffix' && input.conversation && canSuffix(adapterFor(layer, input.metaOf?.(layer.serverId, layer.model) ?? null)) ? input.conversation : null;
     const everything = { user: true, tool: true, system: true, toolCalls: true, history: true };
-    const segs = suffix && input.segmentsFor ? input.segmentsFor(everything) : layer.reads && input.segmentsFor ? input.segmentsFor(layer.reads) : segments;
+    const segs =
+      layer.stage === 'output' && layer.toolCallsOnly
+        ? segments.filter((x) => x.source === 'tool call')
+        : suffix && input.segmentsFor
+          ? input.segmentsFor(everything)
+          : layer.reads && input.segmentsFor && layer.stage !== 'output'
+            ? input.segmentsFor(layer.reads)
+            : segments;
     const read = [...new Set(segs.map((x) => x.source))];
     if (!segs.length && !flagged) {
       results.push({ ...base, action: 'nothing', read });
@@ -197,8 +207,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       } else results.push({ ...base, read, action: 'pass', decision: d, fellBack });
       continue;
     }
-    const act = d.verdict === 'flag' && layer.onFail === 'block' ? 'flag' : layer.onFail;
-    if (act === 'block') {
+    // Before the model, an unsure "flag" passes the request on to later judges; after it, a hit acts directly.
+    const act = d.verdict === 'flag' && layer.stage !== 'output' && (layer.onFail === 'block' || layer.onFail === 'retry') ? 'flag' : layer.onFail;
+    // "Retry" stops here like a block; the gateway then asks the model for a new answer.
+    if (act === 'block' || act === 'retry') {
       results.push({ ...base, read, action: 'block', decision: d, fellBack });
       return { results, block: { reason: d.reason, layer: layer.name }, cleared: false, redact, unresolved: false, route };
     }

@@ -20,7 +20,7 @@ export interface Plan {
   models: { allowed: string[]; picked: string; ok: boolean; servers: string[] };
   rules: { id: number; name: string; action: string; target: string; match: string; pattern: string; from: string }[];
   context: { placement: 'top' | 'end'; policy: string; tokens: number; files: { id: number; name: string; version: number; tokens: number; from: string; body: string }[] };
-  layers: { id: string; n: number; name: string; type: string; on: boolean; why: string; model: string; server: string | null; adapter: string; scope: string; onFail: string; onError: string; threshold: number; timeoutMs: number; groupLines: string[] }[];
+  layers: { id: string; n: number; name: string; type: string; on: boolean; why: string; model: string; server: string | null; adapter: string; scope: string; onFail: string; onError: string; threshold: number; timeoutMs: number; groupLines: string[]; stage: string; retries: number }[];
   unresolvedFlag: string;
   blockedReply: string;
   rateLimit: number;
@@ -90,7 +90,7 @@ export function planFor(input: { keyId?: number; groupId?: number; model: string
     const on = layerOn(l, eff);
     const why = !on ? (l.enabled && l.id in eff.layers ? `Turned off by ${res.sources.layers.join(' › ')}` : 'Switched off on the Guard checks page') : l.enabled ? 'On' : `Turned on by ${res.sources.layers.join(' › ')}`;
     const o = eff.layer_opts[l.id];
-    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l, modelMeta(l.serverId, l.model)), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: o?.threshold ?? l.threshold, timeoutMs: l.timeoutMs, groupLines: (o?.prompt_parts ?? []).map((p) => `${p.from}: ${p.text}`) };
+    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l, modelMeta(l.serverId, l.model)), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: o?.threshold ?? l.threshold, timeoutMs: l.timeoutMs, groupLines: (o?.prompt_parts ?? []).map((p) => `${p.from}: ${p.text}`), stage: l.stage ?? 'input', retries: l.retries ?? 2 };
   });
 
   return {

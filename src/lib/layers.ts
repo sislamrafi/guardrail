@@ -34,8 +34,21 @@ export interface GuardLayer {
   labelIndex: number;
   /** "all": every request. "flagged": only when an earlier layer flagged it, or when no earlier layer screened it. */
   scope: 'all' | 'flagged';
-  /** What a hit does: stop the request, pass it on to later layers as flagged, or redact the match. */
-  onFail: 'block' | 'flag' | 'redact';
+  /**
+   * What a hit does: stop the request, pass it on to later layers as flagged, or redact the match.
+   * After-the-model layers can also "retry": ask the model to answer again with the reason as feedback.
+   */
+  onFail: 'block' | 'flag' | 'redact' | 'retry';
+  /** "input" (default) checks the request before the model; "output" checks the model's answer. */
+  stage?: 'input' | 'output';
+  /** Output layers that retry: how many new answers to ask for (0-5). */
+  retries?: number;
+  /** Output layers: when the answer still fails after the retries, block it or let it through flagged. */
+  onExhausted?: 'block' | 'flag';
+  /** Output layers: the feedback added after a rejected answer. {reason}, {categories}, {verdict}. */
+  retryPrompt?: string;
+  /** Output layers: check only the tool calls in the answer (cheaper), not its text. */
+  toolCallsOnly?: boolean;
   /** When the model fails, times out or answers nonsense. "patterns" falls back to the built-in patterns. */
   onError: 'allow' | 'block' | 'patterns';
   timeoutMs: number;
@@ -59,6 +72,9 @@ export interface GuardLayer {
   /** Router layers: the model when the answer has no route or the decision fails; empty keeps the client's model. */
   fallbackModel?: string;
 }
+
+/** The feedback sent with a rejected answer (after-the-model layers that retry). */
+export const RETRY_PROMPT = 'Your previous answer was rejected by a safety check: {reason}. Please answer again without that problem.';
 
 export const LAYER_DEFAULTS: Omit<GuardLayer, 'id' | 'name' | 'type'> = {
   enabled: true,
@@ -101,7 +117,12 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     threshold: clamp(raw.threshold, 0.05, 0.99, LAYER_DEFAULTS.threshold),
     labelIndex: Math.round(clamp(raw.labelIndex, 0, 99, 1)),
     scope: pick(raw.scope, ['all', 'flagged'] as const, 'all'),
-    onFail: pick(raw.onFail, ['block', 'flag', 'redact'] as const, type === 'redactor' ? 'redact' : 'block'),
+    onFail: pick(raw.onFail, raw.stage === 'output' ? (['block', 'flag', 'redact', 'retry'] as const) : (['block', 'flag', 'redact'] as const), type === 'redactor' ? 'redact' : raw.stage === 'output' ? 'retry' : 'block'),
+    stage: raw.stage === 'output' ? 'output' : 'input',
+    retries: Math.round(clamp(raw.retries, 0, 5, 2)),
+    onExhausted: raw.onExhausted === 'flag' ? 'flag' : 'block',
+    retryPrompt: String(raw.retryPrompt ?? '').trim() || RETRY_PROMPT,
+    toolCallsOnly: raw.toolCallsOnly === true,
     onError: pick(raw.onError, ['allow', 'block', 'patterns'] as const, 'block'),
     timeoutMs: Math.round(clamp(raw.timeoutMs, 200, 60000, LAYER_DEFAULTS.timeoutMs)),
     reasoningEffort: pick(raw.reasoningEffort, ['low', 'medium', 'high'] as const, 'low'),

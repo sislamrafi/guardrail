@@ -2,8 +2,8 @@ import { StreamCollector, responseFromJson } from './stream-collect';
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
 import { clientIp as ipOf, ipAllowed } from './ip';
 import { contentText, newSegments, renderBlocked, Segment } from './guard';
-import type { GuardLayer } from './layers';
-import { applyRedactions, layerOn, runPipeline } from './pipeline';
+import { type GuardLayer, RETRY_PROMPT } from './layers';
+import { type LayerResult, applyRedactions, layerOn, runPipeline } from './pipeline';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
 import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
 import { groupAllowed, limitsFor, listLimits, takeToken } from './limits';
@@ -13,7 +13,7 @@ import { detectSchema, schemaForPath } from './schemas';
 import { getDb } from './db';
 import { errMsg, getServer, listModelsForRouting, markDown, modelMeta, Server } from './servers';
 import { getSettings } from './settings';
-import { apiError, blockedResponse } from './sse';
+import { apiError, blockedResponse, sseFromJson } from './sse';
 
 type Msg = { role?: string; content?: unknown };
 type Kind = 'chat' | 'completions';
@@ -237,12 +237,15 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // 5. Guard layers, in order (see pipeline.ts). The first two are the classic PIGuard + judge pair.
   let outcome: Outcome = redacted ? 'redacted' : 'answered';
   const groupName = groups.find((x) => x.id === key.groupId)?.name ?? 'this group';
-  const layers = opts.layers ?? settings.guard.layers;
+  const allLayers = opts.layers ?? settings.guard.layers;
+  // Layers before the model check the request; "after the model" layers check its answer (step 7b).
+  const layers = allLayers.filter((l) => l.stage !== 'output');
+  const outLayers = kind === 'chat' ? allLayers.filter((l) => l.stage === 'output' && layerOn(l, eff)) : [];
   // The context block and the message list the model gets, built once by one function, so a
   // "suffix" guard layer sends exactly the same prefix as the real call (and shares its cache).
   const files = filesByIds(eff.context);
   const ctx = buildContextBlock(settings.policyPrompt, files);
-  const suffixOn = kind === 'chat' && layers.some((l) => l.placement === 'suffix' && layerOn(l, eff));
+  const suffixOn = kind === 'chat' && allLayers.some((l) => (l.placement === 'suffix' || l.stage === 'output') && layerOn(l, eff));
   const forwardMessages = (msgs: Msg[]) => {
     const m = ctx ? injectContext(msgs, ctx, settings.contextPlacement) : msgs;
     // Anthropic and Gemini models only cache from explicit breakpoints: mark the end of the shared part.
@@ -334,6 +337,113 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   stages.context = lap();
   trace.forwarded = body;
   log.forwarded = promptForLog(kind === 'chat' ? body.messages : promptMessages(body.prompt));
+
+  // 7b. After-the-model layers: the answer is checked before the client sees any of it. A rejected
+  // answer can go back to the model with the reason as feedback (the conversation stays a prefix,
+  // so the provider cache is reused), up to the layer's retries; then it is blocked or let through.
+  if (outLayers.length) {
+    const callOnce = async (b: Record<string, unknown>): Promise<Record<string, unknown> | Response> => {
+      for (const r of routes) {
+        const t0 = at();
+        let up: Response;
+        try {
+          up = await fetch(`${r.server.url}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(r.server.api_key ? { Authorization: `Bearer ${r.server.api_key}` } : {}) }, body: JSON.stringify({ ...b, stream: false }), signal: req.signal });
+        } catch (e) {
+          markDown(r.server.id, e);
+          steps.push({ tone: 'warn', head: `${r.server.name} unreachable`, ms: at(), text: errMsg(e) });
+          continue;
+        }
+        log.server = r.server.name;
+        stages.upstream = (stages.upstream ?? 0) + (at() - t0);
+        if (!up.ok) {
+          const text = await up.text();
+          steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
+          finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
+          return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
+        }
+        const json = (await up.json()) as Record<string, unknown>;
+        if (typeof json.provider === 'string') lastProvider.set(`${r.server.id}::${model}`, json.provider);
+        return json;
+      }
+      const msg = `No server for ${model} is reachable right now.`;
+      finish('error', 502, msg);
+      return apiError(502, msg, 'api_error', id, 'backend_unavailable');
+    };
+    const produce = async (): Promise<Response> => {
+      let msgs = body.messages as Msg[];
+      const outResults: LayerResult[] = [];
+      for (let attempt = 1; ; attempt++) {
+        const json = await callOnce({ ...body, messages: msgs });
+        if (json instanceof Response) return json;
+        const resp = responseFromJson(json);
+        const text = typeof resp.message.content === 'string' ? resp.message.content : JSON.stringify(resp.message.content ?? '');
+        const calls = resp.message.tool_calls ?? [];
+        const segs: Segment[] = [...(text.trim() ? [{ source: 'model answer' as const, text }] : []), ...calls.map((c) => ({ source: 'tool call' as const, text: `${c.function?.name ?? 'tool'}(${c.function?.arguments ?? ''})` }))];
+        const check = await runPipeline({
+          segments: segs,
+          layers: outLayers,
+          resolution: res,
+          escalate: null,
+          unresolvedFlag: 'allow',
+          serverOf: (sid) => getServer(sid),
+          metaOf: modelMeta,
+          conversation: { body: { ...body, messages: [...msgs, resp.message] }, model, serverId: routes[0].server.id },
+        });
+        outResults.push(...check.results.map((x) => ({ ...x, stage: 'output' as const, attempt })));
+        log.decisions = [...pipe.results, ...outResults];
+        const flagged = check.results.filter((x) => x.action === 'flag');
+        if (!check.block) {
+          steps.push({ tone: flagged.length ? 'warn' : 'ok', head: `Answer #${attempt} checked: ${flagged.length ? `flagged by ${flagged.map((x) => x.name).join(', ')}` : 'passed'}`, ms: at(), text: `${outLayers.length} after-the-model layer(s) checked it before the client saw it.` });
+          finish(outcome, 200, null, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-guardrail-checked': '1' } });
+        }
+        const layer = outLayers.find((l) => l.name === check.block!.layer);
+        const d = check.results.find((x) => x.action === 'block')?.decision;
+        steps.push({ tone: 'warn', head: `Answer #${attempt} rejected by ${check.block.layer}`, ms: at(), text: check.block.reason, quote: (text || calls.map((c) => `${c.function?.name}(${c.function?.arguments ?? ''})`).join('\n')).slice(0, 600) });
+        if (layer?.onFail === 'retry' && attempt <= (layer.retries ?? 2)) {
+          const feedback = (layer.retryPrompt || RETRY_PROMPT)
+            .replace(/\{reason\}/g, check.block.reason.replace(/[.\s]+$/, ''))
+            .replace(/\{categories\}/g, d?.categories.join(', ') || 'none')
+            .replace(/\{verdict\}/g, d?.verdict ?? 'block');
+          msgs = [...msgs, resp.message as Msg, { role: 'user', content: feedback }];
+          steps.push({ tone: 'neutral', head: `Asked the model to fix it (retry ${attempt} of ${layer.retries ?? 2})`, ms: at(), text: feedback });
+          continue;
+        }
+        if (layer?.onFail === 'retry' && layer.onExhausted === 'flag') {
+          steps.push({ tone: 'warn', head: 'Retries used up: answer let through, flagged', ms: at(), text: check.block.reason });
+          finish('false_alarm', 200, check.block.reason, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id } });
+        }
+        return block(layer?.onFail === 'retry' ? `${check.block.reason} (still failing after ${layer.retries ?? 2} retries)` : check.block.reason, {});
+      }
+    };
+    if (!stream) return produce();
+    // Streaming clients wait for the checked answer; keep-alive comments keep the connection open.
+    const enc = new TextEncoder();
+    const out = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const t = setInterval(() => c.enqueue(enc.encode(': checking the answer\n\n')), 5000);
+        try {
+          const r = await produce();
+          clearInterval(t);
+          if (r.body) {
+            const reader = r.body.getReader();
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              c.enqueue(value);
+            }
+          }
+        } catch (e) {
+          c.enqueue(enc.encode(`data: ${JSON.stringify({ error: { message: errMsg(e) } })}\n\n`));
+        } finally {
+          clearInterval(t);
+          c.close();
+        }
+      },
+    });
+    return new Response(out, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id } });
+  }
 
   // 7. Forward to vLLM, failing over between servers
   for (const r of routes) {
