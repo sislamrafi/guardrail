@@ -3,7 +3,7 @@
 import { type Decision, callAdapter } from './adapters';
 import type { Effective, Resolution } from './groups';
 import { type Segment, builtinScore, judgeInput, windows } from './guard';
-import { type GuardLayer, adapterFor, mappingFor } from './layers';
+import { type GuardLayer, type ModelMeta, adapterFor, decisionFor, mappingFor } from './layers';
 import type { Server } from './servers';
 
 export type LayerAction = 'off' | 'skipped' | 'nothing' | 'pass' | 'flag' | 'block' | 'redact' | 'cleared';
@@ -84,6 +84,8 @@ export interface PipelineInput {
   escalate: { quote: string } | null;
   unresolvedFlag: 'block' | 'allow';
   serverOf: (id: number) => Server | undefined;
+  /** What the server said about a model (Decisions API, structured output), for Auto. */
+  metaOf?: (serverId: number | null, model: string) => ModelMeta | null;
 }
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
@@ -130,10 +132,13 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       ]
         .filter(Boolean)
         .join('\n\n');
+      const meta = input.metaOf?.(layer.serverId, layer.model) ?? null;
       d = server
         ? await callAdapter({
-            adapter: adapterFor(layer),
+            adapter: adapterFor(layer, meta),
+            structured: !!meta?.structured,
             mapping: mappingFor(layer),
+            decision: decisionFor(layer),
             url: server.url,
             apiKey: server.api_key,
             model: layer.model,

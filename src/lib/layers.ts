@@ -1,6 +1,7 @@
 // The guard pipeline: an ordered list of layers between "key accepted" and "call the model".
 // The old fixed pair (PIGuard, then the OSS judge) becomes two layers with ids "piguard" and "judge".
 import { type AdapterId, ADAPTERS, detectAdapter } from './adapters';
+import { DECISION_DEFAULT, type DecisionSchema, normalizeDecision } from './decisions';
 import { type CustomMapping, normalizeMapping, presetFor, withPreset, MAPPING_DEFAULT } from './mapping';
 
 export const LAYER_TYPES = {
@@ -39,6 +40,8 @@ export interface GuardLayer {
   reasoningEffort: 'low' | 'medium' | 'high';
   /** For the "custom" adapter: how to call the model and read its answer (null: the preset for the model, if any). */
   mapping?: CustomMapping | null;
+  /** For decision models: the question asked and what each answer means (null: the default injection question). */
+  decision?: DecisionSchema | null;
 }
 
 export const LAYER_DEFAULTS: Omit<GuardLayer, 'id' | 'name' | 'type'> = {
@@ -87,14 +90,36 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     timeoutMs: Math.round(clamp(raw.timeoutMs, 200, 60000, LAYER_DEFAULTS.timeoutMs)),
     reasoningEffort: pick(raw.reasoningEffort, ['low', 'medium', 'high'] as const, 'low'),
     mapping: raw.mapping ? normalizeMapping(raw.mapping) : null,
+    decision: raw.decision ? normalizeDecision(raw.decision) : null,
   };
 }
 
+/** What the model's server said about it, when known (see servers.modelMeta). */
+export interface ModelMeta {
+  api?: string | null;
+  structured?: boolean;
+}
+
+/**
+ * The adapter "Auto" picks, and why, in this order: the server's own metadata (OpenRouter marks
+ * Decisions-API models), then the model's name (known guard families), then the layer type.
+ */
+export function autoAdapter(l: Pick<GuardLayer, 'type' | 'model'>, meta?: ModelMeta | null): { adapter: AdapterId; why: string } {
+  if (meta?.api === 'decisions') return { adapter: 'decisions', why: 'the server lists it as a Decisions API model' };
+  if (!l.model) return { adapter: l.type === 'judge' ? 'json_judge' : 'classifier', why: 'no model picked yet' };
+  const byName = detectAdapter(l.model);
+  if (byName === 'decisions') return { adapter: 'decisions', why: 'its name is a known decision model' };
+  if (l.type === 'judge') {
+    if (byName !== 'json_judge' && byName !== 'classifier') return { adapter: byName, why: 'its name is a known guard model family' };
+    return { adapter: 'json_judge', why: meta?.structured ? 'a chat model; the server supports structured output, so the answer is forced to JSON' : 'a chat model with a system prompt' };
+  }
+  if (byName === 'json_judge') return { adapter: 'classifier', why: 'a classifier layer' };
+  return { adapter: byName, why: 'its name is a known guard model family' };
+}
+
 /** The adapter a layer actually uses. */
-export function adapterFor(l: GuardLayer): AdapterId {
-  if (l.adapter !== 'auto') return l.adapter;
-  if (l.type === 'judge') return /llama[-_]?guard|shieldgemma|granite[-_]?guardian|qwen3?[-_]?guard|wildguard|nemoguard|aegis/i.test(l.model) ? detectAdapter(l.model) : 'json_judge';
-  return detectAdapter(l.model) === 'json_judge' ? 'classifier' : detectAdapter(l.model);
+export function adapterFor(l: GuardLayer, meta?: ModelMeta | null): AdapterId {
+  return l.adapter !== 'auto' ? l.adapter : autoAdapter(l, meta).adapter;
 }
 
 interface Legacy {
@@ -159,3 +184,6 @@ export function mappingFor(l: GuardLayer): CustomMapping {
   const p = presetFor(l.model);
   return p ? withPreset(p) : MAPPING_DEFAULT;
 }
+
+/** The question a decision-model layer asks: its own, else the default prompt-injection question. */
+export const decisionFor = (l: GuardLayer): DecisionSchema => l.decision ?? DECISION_DEFAULT;

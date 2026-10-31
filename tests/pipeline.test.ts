@@ -192,3 +192,31 @@ describe('custom mapping adapter', () => {
     expect(d.error).toBeTruthy();
   });
 });
+
+describe('decision models (Decisions API)', () => {
+  it('reads yes/no, choice and score answers into verdicts', async () => {
+    const { DECISION_PRESETS, parseDecisionAnswer, buildDecisionRequest, decisionsUrl, schemaProblem } = await import('@/lib/decisions');
+    const inj = DECISION_PRESETS.injection.schema;
+    expect(parseDecisionAnswer({ answers: { decision: { type: 'noul', noul: 0.99 } } }, inj, 0.5)).toMatchObject({ verdict: 'block', score: 0.99 });
+    expect(parseDecisionAnswer({ answers: { decision: { type: 'noul', noul: 0.02 } } }, inj, 0.5)).toMatchObject({ verdict: 'allow' });
+    const tool = DECISION_PRESETS.tool_call.schema;
+    expect(parseDecisionAnswer({ answers: { decision: { type: 'choice', choice: 'ask', confidence: 0.7, probabilities: { approve: 0.2, deny: 0.1, ask: 0.7 } } } }, tool)).toMatchObject({ verdict: 'flag', categories: ['ask'], score: 0.8 });
+    const score = { question: 'score' as const, instructions: 'How risky?', criteria: 'fine\nrisky\ndangerous', outcomes: '' };
+    expect(parseDecisionAnswer({ answers: { decision: { type: 'score', score: 1.99 } } }, score, 0.7)).toMatchObject({ verdict: 'block' });
+    expect(parseDecisionAnswer({}, inj).error).toBeTruthy();
+    const body = buildDecisionRequest(tool, { model: 'typesafe/jev-1.14', policy: 'Be strict.', input: 'rm -rf /' });
+    expect(body).toMatchObject({ model: 'typesafe/jev-1.14', state: 'rm -rf /', questions: { decision: { type: 'choice', criteria: { approve: expect.any(String), deny: expect.any(String), ask: expect.any(String) } } } });
+    expect(String((body.questions.decision as { instructions: string }).instructions)).toContain('Be strict.');
+    expect(decisionsUrl('https://openrouter.ai/api')).toBe('https://openrouter.ai/api/alpha/decisions');
+    expect(decisionsUrl('https://openrouter.ai/api/v1')).toBe('https://openrouter.ai/api/alpha/decisions');
+    expect(schemaProblem({ ...inj, criteria: 'true = x' })).toMatch(/false/);
+  });
+
+  it('Auto picks Decisions from server metadata first, then the name', async () => {
+    const { autoAdapter } = await import('@/lib/layers');
+    expect(autoAdapter({ type: 'judge', model: 'some/odd-model' }, { api: 'decisions' }).adapter).toBe('decisions');
+    expect(autoAdapter({ type: 'classifier', model: 'typesafe/jev-1.14' }).adapter).toBe('decisions');
+    expect(autoAdapter({ type: 'judge', model: 'openai/gpt-oss-safeguard-20b' }, { structured: true }).why).toMatch(/structured/);
+    expect(autoAdapter({ type: 'judge', model: 'meta-llama/llama-guard-4-12b' }).adapter).toBe('llama_guard');
+  });
+});

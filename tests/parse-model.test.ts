@@ -3,12 +3,12 @@ import { detectKind, parseModel } from '../src/lib/servers';
 
 describe('parseModel', () => {
   it('reads vLLM max_model_len and has no price', () => {
-    expect(parseModel({ id: 'qwen', max_model_len: 32768 })).toEqual({ name: 'qwen', kind: 'text', contextLen: 32768, priceIn: null, priceOut: null });
+    expect(parseModel({ id: 'qwen', max_model_len: 32768 })).toEqual({ name: 'qwen', kind: 'text', contextLen: 32768, priceIn: null, priceOut: null, api: null, structured: false });
   });
 
   it('reads OpenRouter context_length and per-token pricing as USD per 1M', () => {
     const m = parseModel({ id: 'openai/gpt', context_length: 400000, pricing: { prompt: '0.0000003', completion: '0.0000012' } });
-    expect(m).toEqual({ name: 'openai/gpt', kind: 'text', contextLen: 400000, priceIn: 0.3, priceOut: 1.2 });
+    expect(m).toEqual({ name: 'openai/gpt', kind: 'text', contextLen: 400000, priceIn: 0.3, priceOut: 1.2, api: null, structured: false });
   });
 
   it('falls back to top_provider.context_length and treats free and variable prices', () => {
@@ -44,5 +44,14 @@ describe('detectKind', () => {
 
   it('is returned by parseModel', () => {
     expect(parseModel({ id: 'nomic-ai/nomic-embed-text-v1.5' }).kind).toBe('embedding');
+  });
+});
+
+describe('decision models from OpenRouter metadata', () => {
+  it('marks Decisions-API models and structured output', () => {
+    const jev = parseModel({ id: 'typesafe/jev-1.14', context_length: 262144, architecture: { modality: 'text+image->decisions', input_modalities: ['text', 'image'], output_modalities: ['decisions'] }, endpoints: ['/api/alpha/decisions'], supported_parameters: [] } as never);
+    expect(jev).toMatchObject({ kind: 'classifier', api: 'decisions', structured: false });
+    const judge = parseModel({ id: 'openai/gpt-oss-safeguard-20b', supported_parameters: ['response_format', 'structured_outputs'] } as never);
+    expect(judge).toMatchObject({ api: null, structured: true });
   });
 });

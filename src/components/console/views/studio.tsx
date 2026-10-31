@@ -15,6 +15,7 @@ import { api, useStore, useUi } from '../store';
 import type { Data, LogEntry, Scenario } from '../types';
 import { OUTCOME } from './activity';
 import { MdText } from '../md-text';
+import { ModelPicker } from '../model-picker';
 
 interface RunResult {
   status: number;
@@ -336,6 +337,9 @@ function Message({ m, turn }: { m: PromptMessage; turn?: Turn }) {
   );
 }
 
+// Studio sends as a client, so only models clients can use.
+const clientModel = (r: { enabled: boolean }) => r.enabled;
+
 function SettingsDialog({ s, data, onClose, onSave }: { s: ScenarioSettings; data: Data; onClose: () => void; onSave: (s: ScenarioSettings) => void }) {
   const [v, setV] = useState(s);
   const set = (p: Partial<ScenarioSettings>) => setV({ ...v, ...p });
@@ -380,12 +384,7 @@ function SettingsDialog({ s, data, onClose, onSave }: { s: ScenarioSettings; dat
       </div>
       <div className="cx-form-row">
         <Field label="Model" grow>
-          <select className="cx-input mono" value={v.model} onChange={(e) => set({ model: e.target.value })}>
-            {!data.models.includes(v.model) && <option value={v.model}>{v.model || 'Pick a model'}</option>}
-            {data.models.map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </select>
+          <ModelPicker servers={data.servers} value={{ serverId: null, model: v.model }} onPick={(_, model) => set({ model })} only={clientModel} />
         </Field>
         <Field label="Request schema">
           <select className="cx-input" value={v.schema} onChange={(e) => set({ schema: e.target.value as ScenarioSettings['schema'] })}>

@@ -11,7 +11,7 @@ import type { Data, GroupC, Resolution, SettingKey } from '../types';
 import { useItemTab } from '../prefs';
 import { SaveState, useAutoSave, useQuietSave } from '../autosave';
 import { layerState, useLayerToggle } from './guard';
-import type { GuardLayer } from '@/lib/layers';
+import { type GuardLayer, adapterFor } from '@/lib/layers';
 import type { LayerOpt } from '@/lib/groups';
 
 type StoredSetting = { mode: 'set' | 'add' | 'override'; value: unknown };
@@ -569,7 +569,11 @@ function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; la
   const toggle = useLayerToggle();
   const ls = layerState(layer, g, data.groups);
   const scoring = layer.type === 'classifier' || layer.type === 'patterns';
-  const judge = layer.type === 'judge';
+  // Lines a group adds go into the layer's system prompt, or a decision model's policy.
+  const mrow = data.servers.find((x) => x.id === layer.serverId)?.models.find((m) => m.name === layer.model);
+  const fmt = adapterFor(layer, mrow ? { api: mrow.api ?? null, structured: !!mrow.structured } : null);
+  const judge = layer.type === 'judge' || fmt === 'decisions';
+  const target = fmt === 'decisions' ? 'policy' : 'prompt';
   const opt = eff.layer_opts[layer.id];
   const [t, setT] = useState(own?.threshold != null ? String(own.threshold) : '');
   const [lines, setLines] = useState(own?.prompt ?? '');
@@ -627,7 +631,7 @@ function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; la
         {judge && (
           <>
             {inheritedLines.length > 0 && <pre className="cx-pre small">{inheritedLines.map((p) => `# from ${p.from}\n${p.text}`).join('\n\n')}</pre>}
-            <Field label={`Lines ${g.name} adds to ${layer.name}’s prompt`}>
+            <Field label={`Lines ${g.name} adds to ${layer.name}’s ${target}`}>
               <textarea className="cx-input mono" rows={3} value={lines} onChange={(e) => setLines(e.target.value)} placeholder="For example: Files in tests/fixtures contain fake secrets on purpose." />
             </Field>
             <div className="cx-form-row end">

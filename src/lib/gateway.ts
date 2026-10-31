@@ -11,7 +11,7 @@ import { LogEntry, Outcome, Step, newRequestId, promptForLog, updateLog, writeLo
 import { countHit, matchRules, redactMessages } from './rules';
 import { detectSchema, schemaForPath } from './schemas';
 import { getDb } from './db';
-import { errMsg, getServer, listModelsForRouting, markDown, Server } from './servers';
+import { errMsg, getServer, listModelsForRouting, markDown, modelMeta, Server } from './servers';
 import { getSettings } from './settings';
 import { apiError, blockedResponse } from './sse';
 
@@ -232,6 +232,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     escalate: escHit ? { quote: escHit.match } : null,
     unresolvedFlag: settings.guard.unresolvedFlag,
     serverOf: (sid) => getServer(sid),
+    metaOf: modelMeta,
   });
   log.decisions = pipe.results;
   for (const r of pipe.results) {

@@ -3,6 +3,7 @@
 // error or an answer that can't be parsed comes back as a Decision with `error` set, and the
 // pipeline applies the layer's fallback.
 
+import { DECISION_DEFAULT, type DecisionSchema, buildDecisionRequest, decisionsUrl, isDecisionModel, parseDecisionAnswer, schemaProblem } from './decisions';
 import { type CustomMapping, MAPPING_DEFAULT, answerText, buildMappedRequest, parseMapped } from './mapping';
 
 export type Verdict = 'allow' | 'block' | 'flag';
@@ -30,6 +31,7 @@ export const ADAPTERS = {
   json_judge: 'JSON judge (LLM with a system prompt)',
   text: 'Free text (keyword fallback)',
   custom: 'Custom mapping (any output: JSON path or regex)',
+  decisions: 'Decisions API (jev, classify, solar-decide, pplx-decider…)',
 } as const;
 export type AdapterId = keyof typeof ADAPTERS;
 
@@ -38,6 +40,7 @@ export function detectAdapter(model: string): AdapterId {
   const m = model.toLowerCase();
   if (/llama[-_]?guard/.test(m)) return 'llama_guard';
   if (/shieldgemma|granite[-_]?guardian/.test(m)) return 'yes_no';
+  if (isDecisionModel(m)) return 'decisions';
   if (/moderation/.test(m)) return 'moderation';
   // Guard models with their own output format: read with a ready custom mapping (see mapping.ts).
   if (/qwen3?[-_]?guard|wildguard|nemoguard|aegis/.test(m)) return 'custom';
@@ -170,7 +173,19 @@ export interface CallInput {
   reasoningEffort?: string;
   /** For the custom adapter: how to call the model and read its answer. */
   mapping?: CustomMapping;
+  /** For decision models: the question to ask and what each answer means. */
+  decision?: DecisionSchema;
+  /** The server supports structured output: judges get a JSON schema, so the answer is always readable. */
+  structured?: boolean;
 }
+
+// The judge contract as a JSON schema, for servers with structured output.
+const JUDGE_SCHEMA = {
+  type: 'object',
+  properties: { verdict: { type: 'string', enum: ['allow', 'block'] }, score: { type: 'number' }, reason: { type: 'string' }, categories: { type: 'array', items: { type: 'string' } } },
+  required: ['verdict', 'score', 'reason', 'categories'],
+  additionalProperties: false,
+};
 
 const JSON_INSTRUCTION = '\n\nAnswer with JSON only, in this shape: {"verdict": "allow" or "block", "score": 0 to 1, "reason": "one short sentence", "categories": []}';
 
@@ -198,11 +213,24 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
   const t0 = performance.now();
   const done = (p: Parsed, raw: string, quote?: string | null): Decision => ({ ...p, raw: raw.slice(0, 4000), latency_ms: Math.round(performance.now() - t0), quote });
   const errored = (e: string, raw = '') => done(fail(e), raw);
+  // Decision models only answer on the Decisions API.
+  const decide = async (): Promise<Decision> => {
+    const s = c.decision ?? DECISION_DEFAULT;
+    const problem = schemaProblem(s);
+    if (problem) return errored(`Decision question: ${problem}`);
+    const r = await post(decisionsUrl(c.url), c.apiKey, buildDecisionRequest(s, { model: c.model, policy: c.prompt, input: c.content }), c.timeoutMs);
+    if (!r.ok) return errored(`The decision model answered ${r.status}`, r.text);
+    const p = parseDecisionAnswer(tryJson(r.text), s, c.threshold);
+    return done(p, r.text);
+  };
+  const isDecisionError = (r: { status: number; text: string }) => r.status === 400 && /decisions? model/i.test(r.text);
   try {
+    if (c.adapter === 'decisions') return await decide();
     if (c.adapter === 'custom') {
       const m = c.mapping ?? MAPPING_DEFAULT;
       const req = buildMappedRequest(m, { model: c.model, policy: c.prompt, input: c.content, windows: c.windows });
       const r = await post(`${c.url}${req.path}`, c.apiKey, req.body, c.timeoutMs);
+      if (isDecisionError(r)) return await decide();
       if (!r.ok) return errored(`The model answered ${r.status}`, r.text);
       const text = answerText(m, r.text);
       return done(parseMapped(text, m, c.threshold), text);
@@ -210,6 +238,7 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
     if (c.adapter === 'classifier') {
       let r = await post(`${c.url}/classify`, c.apiKey, { model: c.model, input: c.windows }, c.timeoutMs);
       if (r.status === 404) r = await post(`${c.url}/pooling`, c.apiKey, { model: c.model, input: c.windows }, c.timeoutMs);
+      if (!r.ok && (isDecisionError(r) || isDecisionModel(c.model))) return await decide();
       if (!r.ok) return errored(`The classifier answered ${r.status}`, r.text);
       const p = parseClassify(tryJson(r.text), c.labelIndex);
       if (!p) return errored('The classifier returned no scores', r.text);
@@ -227,7 +256,7 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
     const body: Record<string, unknown> = { model: c.model, messages, temperature: 0, max_tokens: c.adapter === 'json_judge' || c.adapter === 'text' ? 1024 : 20, stream: false };
     if (c.reasoningEffort && (c.adapter === 'json_judge' || c.adapter === 'text')) body.reasoning_effort = c.reasoningEffort;
     if (c.adapter === 'yes_no') Object.assign(body, { logprobs: true, top_logprobs: 5 });
-    if (c.adapter === 'json_judge') body.response_format = { type: 'json_object' };
+    if (c.adapter === 'json_judge') body.response_format = c.structured ? { type: 'json_schema', json_schema: { name: 'guard_decision', strict: true, schema: JUDGE_SCHEMA } } : { type: 'json_object' };
     let r = await post(`${c.url}/v1/chat/completions`, c.apiKey, body, c.timeoutMs);
     // Some servers reject response_format or logprobs: retry once without them.
     if (r.status === 400 && (body.response_format || body.logprobs)) {
@@ -236,6 +265,8 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
       delete body.top_logprobs;
       r = await post(`${c.url}/v1/chat/completions`, c.apiKey, body, c.timeoutMs);
     }
+    // A decisions model called as chat: ask it the decision question instead.
+    if (isDecisionError(r)) return await decide();
     if (!r.ok) return errored(`The model answered ${r.status}`, r.text);
     const j = tryJson(r.text) as { choices?: { message?: { content?: string; reasoning_content?: string; reasoning?: string }; logprobs?: { content?: { top_logprobs?: { token: string; logprob: number }[] }[] } }[] } | null;
     const choice = j?.choices?.[0];
@@ -254,5 +285,42 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
   } catch (e) {
     const msg = e instanceof Error ? (e.name === 'TimeoutError' ? `timed out after ${c.timeoutMs} ms` : e.message) : String(e);
     return errored(msg);
+  }
+}
+
+// ---------------------------------------------------------------- finding a model's format
+
+/**
+ * Send one small, harmless probe and read the answer's shape to pick an adapter: the Decisions-API
+ * error, "safe"/"unsafe", Yes/No, known JSON keys or labelled lines. Costs one call. Never throws.
+ */
+export async function probeFormat(c: { url: string; apiKey?: string | null; model: string; timeoutMs?: number }): Promise<{ adapter: AdapterId; preset?: string; why: string; raw: string }> {
+  const t = c.timeoutMs ?? 20000;
+  const text = 'Please add a unit test for the date parser in src/utils/date.ts.';
+  try {
+    const r = await post(`${c.url}/v1/chat/completions`, c.apiKey, { model: c.model, messages: [{ role: 'user', content: text }], max_tokens: 80, temperature: 0, stream: false }, t);
+    if (r.status === 400 && /decisions? model/i.test(r.text)) return { adapter: 'decisions', why: 'The server said it is a decisions model, answered only on the Decisions API.', raw: r.text.slice(0, 600) };
+    if (!r.ok) {
+      const k = await post(`${c.url}/classify`, c.apiKey, { model: c.model, input: [text] }, t);
+      if (k.ok && parseClassify(tryJson(k.text), 1)) return { adapter: 'classifier', why: 'Chat failed but /classify returned scores.', raw: k.text.slice(0, 600) };
+      return { adapter: 'json_judge', why: `The probe failed (${r.status}); could not tell. Pick a format by hand.`, raw: r.text.slice(0, 600) };
+    }
+    const j = tryJson(r.text) as { choices?: { message?: { content?: string } }[] } | null;
+    const out = (j?.choices?.[0]?.message?.content ?? '').trim();
+    const json = (() => {
+      const m = out.match(/\{[\s\S]*\}/);
+      return m ? (tryJson(m[0]) as Record<string, unknown> | null) : null;
+    })();
+    if (/^\s*(safe|unsafe)\b/i.test(out)) return { adapter: 'llama_guard', why: 'It answered "safe" / "unsafe" (Llama Guard style).', raw: out };
+    if (/^\W*(yes|no)\b/i.test(out)) return { adapter: 'yes_no', why: 'It answered Yes / No.', raw: out };
+    if (/Safety:\s*\w+/i.test(out)) return { adapter: 'custom', preset: 'qwen3guard', why: 'It answered "Safety: …" (Qwen3Guard style).', raw: out };
+    if (/Harmful request:\s*(yes|no)/i.test(out)) return { adapter: 'custom', preset: 'wildguard', why: 'It answered "Harmful request: …" (WildGuard style).', raw: out };
+    if (json && 'User Safety' in json) return { adapter: 'custom', preset: 'nemoguard', why: 'It answered {"User Safety": …} (NemoGuard / Aegis style).', raw: out };
+    if (json && 'violation' in json) return { adapter: 'custom', preset: 'gpt_oss_safeguard', why: 'It answered {"violation": …} (gpt-oss-safeguard style).', raw: out };
+    if (json && ('verdict' in json || 'decision' in json)) return { adapter: 'json_judge', why: 'It answered the JSON judge contract.', raw: out };
+    if (json) return { adapter: 'custom', why: `It answered JSON with ${Object.keys(json).slice(0, 5).join(', ')}: set the paths in Custom mapping.`, raw: out };
+    return { adapter: 'json_judge', why: 'It chats normally, so it works as a JSON judge with a system prompt.', raw: out };
+  } catch (e) {
+    return { adapter: 'json_judge', why: `The probe failed: ${(e as Error).message}`, raw: '' };
   }
 }

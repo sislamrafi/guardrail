@@ -8,10 +8,11 @@ import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './l
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
-import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
+import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, modelMeta, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
+import { probeFormat } from './adapters';
 import { planFor } from './studio-plan';
 import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
 
@@ -284,6 +285,16 @@ const routes: Record<string, Handler> = {
     const c = countByFilter(since);
     return { ...c, falseAlarms: falseAlarmCount(since) };
   },
+  // One small probe to tell which response format a model speaks (costs one model call).
+  'POST guard/detect': async ({ body }) => {
+    const server = getServer(num(body.serverId, 'server'));
+    if (!server) throw new HttpError(404, 'Server not found.');
+    const model = String(body.model ?? '');
+    if (!model) throw new Error('Pick a model first.');
+    const meta = modelMeta(server.id, model);
+    if (meta?.api === 'decisions') return { adapter: 'decisions', why: 'The server lists this model as Decisions-API only (no probe needed).', raw: '' };
+    return probeFormat({ url: server.url, apiKey: server.api_key, model });
+  },
   'POST guard/test': async ({ body }) => {
     const s = getSettings();
     const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
@@ -291,7 +302,7 @@ const routes: Record<string, Handler> = {
     const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
     // Optionally try unsaved layers from the editor.
     const layers = Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers;
-    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id) });
+    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta });
     return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
   },
 

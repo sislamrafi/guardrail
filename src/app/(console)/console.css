@@ -693,3 +693,18 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-kindfilter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 2px; margin-left: auto; }
 .cx-subtabs:has(.cx-kindfilter) { flex-wrap: wrap; }
 .cx-kindfilter .cx-chip { height: 22px; font-size: 11.5px; }
+
+/* model picker: a searchable table in a popover */
+.cx-mpick { position: relative; min-width: 0; }
+.cx .cx-mpick-btn { width: 100%; display: flex !important; align-items: center; gap: 8px; text-align: left; cursor: pointer; border: 1px solid var(--edge-2) !important; padding: 0 8px !important; }
+.cx-mpick-btn .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-mpick-pop { position: fixed; z-index: 80; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--widget); border: 1px solid var(--widget-edge, var(--edge-2)); border-radius: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+.cx-mpick-list { max-height: 360px; overflow: auto; border: 1px solid var(--edge); border-radius: 4px; }
+.cx-mpick-table { width: 100%; font-size: 12px; }
+.cx-mpick-table th { position: sticky; top: 0; z-index: 1; background: var(--side); }
+.cx .cx-mpick-table th button { font-weight: 600; color: var(--dim); }
+.cx .cx-mpick-table th button.on { color: var(--fg-hi); }
+.cx-mpick-table th.num, .cx-mpick-table td.num { text-align: right; }
+.cx-mpick-table td { white-space: nowrap; padding-top: 4px; padding-bottom: 4px; }
+.cx-mpick-table tr.active td { background: var(--hover); }
+.cx-mpick-table tr.sel td { background: var(--sel); }

@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -196,6 +196,9 @@ function migrate(db: Database.Database) {
   if (!modelCols.has('kind')) db.exec('ALTER TABLE models ADD COLUMN kind TEXT');
   if (!modelCols.has('kind_override')) db.exec('ALTER TABLE models ADD COLUMN kind_override TEXT');
   if (!modelCols.has('manual')) db.exec('ALTER TABLE models ADD COLUMN manual INTEGER NOT NULL DEFAULT 0');
+  // How a model must be called ("decisions" for Decisions-API-only models) and whether it does structured output.
+  if (!modelCols.has('api')) db.exec('ALTER TABLE models ADD COLUMN api TEXT');
+  if (!modelCols.has('structured')) db.exec('ALTER TABLE models ADD COLUMN structured INTEGER NOT NULL DEFAULT 0');
   // Saved Studio scenarios (chat transcript + settings).
   db.exec(`CREATE TABLE IF NOT EXISTS studio_scenarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

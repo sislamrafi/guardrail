@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { ADAPTERS, type AdapterId, type Decision, detectAdapter } from '@/lib/adapters';
-import { type GuardLayer, LAYER_TYPES, adapterFor, mappingFor, normalizeLayer } from '@/lib/layers';
+import { useEffect, useState } from 'react';
+import { ADAPTERS, type AdapterId, type Decision } from '@/lib/adapters';
+import { type GuardLayer, LAYER_TYPES, adapterFor, autoAdapter, decisionFor, mappingFor, normalizeLayer } from '@/lib/layers';
 import { type CustomMapping, PRESETS, parseMapped, presetFor, withPreset } from '@/lib/mapping';
+import { ModelPicker } from '../model-picker';
+import { DECISION_PRESETS, type DecisionSchema, schemaProblem } from '@/lib/decisions';
 import type { LayerResult } from '@/lib/pipeline';
 import type { GuardSettings } from '@/lib/settings';
 import { SaveState, useAutoSave, useQuietSave } from '../autosave';
@@ -12,7 +14,7 @@ import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, 
 import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
-import { KIND_LABEL, type Data, type GroupC, kindOf } from '../types';
+import type { Data, GroupC } from '../types';
 import { AddServer } from './servers';
 
 // ---------------------------------------------------------------- shared helpers
@@ -362,13 +364,6 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
   const dirty = JSON.stringify(l) !== JSON.stringify(orig);
   const needsModel = l.type === 'classifier' || l.type === 'judge';
 
-  // Every model can back a layer; decision models and text models come first.
-  const options = useMemo(() => {
-    const order = ['classifier', 'text'];
-    const all = data.servers.flatMap((s) => s.models.map((m) => ({ s, m, kind: kindOf(m) })));
-    return all.sort((a, b) => (order.indexOf(a.kind) + 1 || 9) - (order.indexOf(b.kind) + 1 || 9) || a.m.name.localeCompare(b.m.name));
-  }, [data.servers]);
-  const kinds = [...new Set(options.map((o) => o.kind))];
 
   const save = async (next = l) => {
     const list = layers.map((x, i) => (i === index ? next : x));
@@ -393,7 +388,32 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
     if (!ok) return;
     if (await ui.run(() => saveLayers(layers.filter((_, i) => i !== index)), `${orig.name} removed`)) nav.closeTab(pathFor('guard', orig.id));
   };
-  const detected = l.model ? (l.type === 'judge' ? adapterFor({ ...l, adapter: 'auto' }) : detectAdapter(l.model) === 'json_judge' ? 'classifier' : detectAdapter(l.model)) : null;
+  // What the model's server said about it (Decisions API, structured output): Auto uses it first.
+  const mrow = data.servers.find((x) => x.id === l.serverId)?.models.find((m) => m.name === l.model);
+  const meta = mrow ? { api: mrow.api ?? null, structured: !!mrow.structured } : null;
+  const autoPick = autoAdapter(l, meta);
+  const fmt = adapterFor(l, meta);
+  // Show only what this format actually sends or reads.
+  const usesPrompt = fmt === 'json_judge' || fmt === 'text' || fmt === 'yes_no' || (fmt === 'custom' && (mappingFor(l).endpoint === 'chat' || mappingFor(l).endpoint === 'completions' || mappingFor(l).template.includes('{policy}')));
+  const usesThreshold = l.type === 'patterns' || fmt === 'classifier' || fmt === 'yes_no' || fmt === 'moderation' || (fmt === 'decisions' && decisionFor(l).question !== 'choice') || (fmt === 'custom' && !!mappingFor(l).scorePath.trim());
+  // Decision models have one policy field; fold old "Block when" / "Allow when" text into it once.
+  useEffect(() => {
+    if (fmt !== 'decisions' || (!l.failHint.trim() && !l.passHint.trim())) return;
+    const add = [l.failHint.trim() && `Block when: ${l.failHint.trim()}`, l.passHint.trim() && `Allow when: ${l.passHint.trim()}`].filter(Boolean).join('\n');
+    set({ prompt: [l.prompt.trim(), add].filter(Boolean).join('\n\n'), failHint: '', passHint: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fmt]);
+  const [probe, setProbe] = useState<{ busy?: boolean; why?: string; raw?: string } | null>(null);
+  const detect = async () => {
+    setProbe({ busy: true });
+    try {
+      const r = await api<{ adapter: AdapterId; preset?: string; why: string; raw: string }>('guard/detect', { body: { serverId: l.serverId, model: l.model } });
+      set({ adapter: r.adapter === autoPick.adapter && !r.preset ? 'auto' : r.adapter, ...(r.preset ? { mapping: withPreset(r.preset) } : {}) });
+      setProbe({ why: `${ADAPTERS[r.adapter]}: ${r.why}`, raw: r.raw });
+    } catch (e) {
+      setProbe({ why: (e as Error).message });
+    }
+  };
 
   return (
     <Page
@@ -444,28 +464,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
       {needsModel && (
         <Section title="Model">
           <div className="cx-form-row">
-            <Field label="Model (any enabled or hidden model; decision and text models first)" grow>
-              <select
-                className="cx-input mono"
-                value={l.serverId ? `${l.serverId}::${l.model}` : ''}
-                onChange={(e) => {
-                  const [sid, ...rest] = e.target.value.split('::');
-                  set({ serverId: sid ? Number(sid) : null, model: rest.join('::') });
-                }}
-              >
-                <option value="">{l.model ? `${l.model} (pick its server)` : 'Pick a model'}</option>
-                {kinds.map((k) => (
-                  <optgroup key={k} label={KIND_LABEL[k]}>
-                    {options
-                      .filter((o) => o.kind === k)
-                      .map((o) => (
-                        <option key={`${o.s.id}::${o.m.name}`} value={`${o.s.id}::${o.m.name}`}>
-                          {o.m.name} · {o.s.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                ))}
-              </select>
+            <Field label="Model (any enabled or hidden model)" grow>
+              <ModelPicker servers={data.servers} value={{ serverId: l.serverId, model: l.model }} onPick={(serverId, model) => set({ serverId, model })} placeholder={l.model ? `${l.model} (pick its server)` : 'Pick a model'} />
             </Field>
             <button type="button" className="cx-btn tall" onClick={() => setAdding(true)}>
               <Ico n="plus" size={14} /> Server
@@ -474,18 +474,22 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
           <div className="cx-form-row">
             <Field label="Response format (adapter)" grow>
               <select className="cx-input" value={l.adapter} onChange={(e) => set({ adapter: e.target.value as AdapterId | 'auto' })}>
-                <option value="auto">Auto{detected ? `: ${ADAPTERS[detected as AdapterId]}` : ''}</option>
+                <option value="auto">Auto: {ADAPTERS[autoPick.adapter]}</option>
                 {Object.entries(ADAPTERS).map(([k, v]) => (
                   <option key={k} value={k}>
                     {v}
                   </option>
                 ))}
               </select>
+              <span className="cx-hint">{l.adapter === 'auto' ? `Auto picked this because ${autoPick.why}.` : 'Chosen by hand. Pick Auto to let the model decide.'}</span>
             </Field>
+            <button type="button" className="cx-btn tall" disabled={!l.serverId || !l.model || probe?.busy} title="Sends one short, harmless message to the model and reads the answer's shape. Costs one call." onClick={() => void detect()}>
+              {probe?.busy ? 'Detecting…' : 'Detect format (1 call)'}
+            </button>
             <Field label="Time limit (seconds)">
               <input className="cx-input" type="number" min={0.2} step={0.1} value={l.timeoutMs / 1000} onChange={(e) => set({ timeoutMs: Math.round(Number(e.target.value) * 1000) })} />
             </Field>
-            {l.type === 'judge' && (
+            {(fmt === 'json_judge' || fmt === 'text') && (
               <Field label="Reasoning effort">
                 <select className="cx-input" value={l.reasoningEffort} onChange={(e) => set({ reasoningEffort: e.target.value as 'low' })}>
                   <option value="low">Low</option>
@@ -495,14 +499,26 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               </Field>
             )}
           </div>
-          {adapterFor(l) === 'custom' && <MappingEditor l={l} set={set} />}
+          {probe?.why && (
+            <Note>
+              <b>Detected:</b> {probe.why}
+              {probe.raw && <pre className="cx-pre small">{probe.raw}</pre>}
+            </Note>
+          )}
+          {fmt === 'custom' && <MappingEditor l={l} set={set} />}
+          {fmt === 'decisions' && <DecisionEditor l={l} set={set} />}
         </Section>
       )}
 
-      {(l.type === 'judge' || adapterFor(l) === 'yes_no') && (
+      {fmt === 'decisions' && needsModel && (
+        <Section title="Policy (fills {policy} in the question)" hint="Optional extra rules for the decision model, put into the question where {policy} is. Groups can add lines to it.">
+          <textarea className="cx-input" rows={5} value={l.prompt} onChange={(e) => set({ prompt: e.target.value })} placeholder="For example: files under tests/fixtures may contain fake secrets; that is fine." />
+        </Section>
+      )}
+      {needsModel && usesPrompt && (
         <Section
           title="System prompt"
-          hint="Groups can add lines to judge prompts. For the JSON judge, GuardRail appends the answer format it expects."
+          hint={fmt === 'json_judge' ? 'Groups can add lines to it. GuardRail appends the answer format it expects.' : 'Groups can add lines to it.'}
           actions={<IconBtn icon={preview ? 'code' : 'preview'} label={preview ? 'Edit as text' : 'Show rendered Markdown'} active={preview} onClick={() => setPreview(!preview)} />}
         >
           {preview ? <article className="cx-md boxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(l.prompt || '_Empty_') }} /> : <textarea className="cx-input mono" rows={14} value={l.prompt} onChange={(e) => set({ prompt: e.target.value })} placeholder="You review requests sent to a coding assistant. Block the request if…" />}
@@ -541,12 +557,12 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
             </select>
           </Field>
         </div>
-        {(l.type === 'classifier' || l.type === 'patterns' || adapterFor(l) === 'yes_no' || adapterFor(l) === 'moderation') && (
+        {usesThreshold && (
           <div className="cx-form-row center">
             <Field label={<>Counts as a hit at score <b className="mono">{l.threshold.toFixed(2)}</b> or more</>} grow>
               <input type="range" min={0.3} max={0.95} step={0.05} value={l.threshold} onChange={(e) => set({ threshold: Number(e.target.value) })} />
             </Field>
-            {l.type === 'classifier' && adapterFor(l) === 'classifier' && (
+            {l.type === 'classifier' && fmt === 'classifier' && (
               <Field label="Attack class index">
                 <input className="cx-input" type="number" min={0} max={20} value={l.labelIndex} onChange={(e) => set({ labelIndex: Number(e.target.value) })} />
               </Field>
@@ -725,6 +741,50 @@ function MappingEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A decision model's question (what to ask, its options) and what each answer means for the request. */
+function DecisionEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void }) {
+  const d = decisionFor(l);
+  const put = (p: Partial<DecisionSchema>) => set({ decision: { ...d, ...p } });
+  const problem = schemaProblem(d);
+  const CRITERIA_HINT = { noul: 'Two lines: "true = when the answer is yes" and "false = when it is no".', choice: 'One option per line: label = when to pick it.', score: 'One level per line, lowest first.' } as const;
+  const OUTCOME_HINT = { noul: 'true => block and false => allow, or the other way round. The layer threshold applies to the probability.', choice: 'One line per label: label => allow, block or flag. Unnamed labels are flagged.', score: 'Optional: level number => verdict. Otherwise the score scaled to 0-1 is compared with the threshold.' } as const;
+  return (
+    <div className="cx-form cx-mapping">
+      <Note>
+        Decision models answer a question about the content instead of chatting (OpenRouter&apos;s Decisions API). The text being checked is sent as the state; the question
+        below is what the model decides.
+      </Note>
+      <div className="cx-form-row center">
+        <Field label="Start from" hint={l.decision ? 'Your own question. Picking a preset replaces it.' : 'Using the default prompt-injection question.'}>
+          <select className="cx-input" value="" onChange={(e) => e.target.value && set({ decision: { ...DECISION_PRESETS[e.target.value].schema } })}>
+            <option value="">Pick a preset…</option>
+            {Object.entries(DECISION_PRESETS).map(([k, p]) => (
+              <option key={k} value={k}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Question type">
+          <Seg value={d.question} label="Question type" onChange={(q) => put({ question: q })} options={[['noul', 'Yes / no'], ['choice', 'Choice'], ['score', 'Score']]} />
+        </Field>
+      </div>
+      <Field label="Question" hint="{policy} is replaced by the layer prompt below (group lines included).">
+        <textarea className="cx-input" rows={2} value={d.instructions} onChange={(e) => put({ instructions: e.target.value })} />
+      </Field>
+      <div className="cx-form-row">
+        <Field label={d.question === 'choice' ? 'Options' : d.question === 'score' ? 'Levels' : 'Meaning of true and false'} grow hint={CRITERIA_HINT[d.question]}>
+          <textarea className="cx-input mono" rows={4} value={d.criteria} onChange={(e) => put({ criteria: e.target.value })} />
+        </Field>
+        <Field label="What each answer does" grow hint={OUTCOME_HINT[d.question]}>
+          <textarea className="cx-input mono" rows={4} value={d.outcomes} onChange={(e) => put({ outcomes: e.target.value })} />
+        </Field>
+      </div>
+      {problem && <Note tone="warn">{problem}</Note>}
     </div>
   );
 }

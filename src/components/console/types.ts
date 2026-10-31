@@ -68,6 +68,9 @@ export interface ModelC {
   kind?: ModelKind | null;
   kind_override?: ModelKind | null;
   manual?: number;
+  /** "decisions" for models only reachable on the Decisions API. */
+  api?: string | null;
+  structured?: number;
   enabled: number;
   present: number;
 }

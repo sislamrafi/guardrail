@@ -9,7 +9,7 @@ import { getKey } from './keys';
 import { adapterFor } from './layers';
 import { layerOn } from './pipeline';
 import { listRules } from './rules';
-import { getServer } from './servers';
+import { getServer, modelMeta } from './servers';
 import { getSettings } from './settings';
 
 export interface Plan {
@@ -90,7 +90,7 @@ export function planFor(input: { keyId?: number; groupId?: number; model: string
     const on = layerOn(l, eff);
     const why = !on ? (l.enabled && l.id in eff.layers ? `Turned off by ${res.sources.layers.join(' › ')}` : 'Switched off on the Guard checks page') : l.enabled ? 'On' : `Turned on by ${res.sources.layers.join(' › ')}`;
     const o = eff.layer_opts[l.id];
-    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: o?.threshold ?? l.threshold, timeoutMs: l.timeoutMs, groupLines: (o?.prompt_parts ?? []).map((p) => `${p.from}: ${p.text}`) };
+    return { id: l.id, n: i + 1, name: l.name, type: l.type, on, why, model: l.model, server: l.serverId ? (getServer(l.serverId)?.name ?? null) : null, adapter: l.type === 'patterns' ? 'built-in' : adapterFor(l, modelMeta(l.serverId, l.model)), scope: l.scope, onFail: l.onFail, onError: l.onError, threshold: o?.threshold ?? l.threshold, timeoutMs: l.timeoutMs, groupLines: (o?.prompt_parts ?? []).map((p) => `${p.from}: ${p.text}`) };
   });
 
   return {

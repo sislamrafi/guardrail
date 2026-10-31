@@ -27,6 +27,10 @@ export interface Model {
   kind_override: ModelKind | null;
   /** Added by hand because discovery missed it. */
   manual: number;
+  /** "decisions" when the server says the model only answers on its Decisions API. */
+  api: string | null;
+  /** 1 when the server says the model supports structured (JSON schema) output. */
+  structured: number;
   enabled: number;
   present: number;
   discovered_at: number;
@@ -43,6 +47,10 @@ export interface DiscoveredModel {
   priceIn?: number | null;
   /** USD per 1M output tokens, when the server reports it. */
   priceOut?: number | null;
+  /** "decisions": only reachable on the Decisions API (OpenRouter output modality / endpoints). */
+  api?: string | null;
+  /** The server lists structured_outputs or response_format among its parameters. */
+  structured?: boolean;
 }
 
 interface RawModel {
@@ -56,6 +64,8 @@ interface RawModel {
   architecture?: { modality?: string; input_modalities?: string[]; output_modalities?: string[] }; // OpenRouter
   task?: string; // some vLLM builds
   type?: string;
+  endpoints?: string[]; // OpenRouter: e.g. ["/api/alpha/decisions"] for decision models
+  supported_parameters?: string[]; // OpenRouter
 }
 
 const NAME_RULES: [RegExp, ModelKind][] = [
@@ -86,6 +96,7 @@ export function detectKind(m: RawModel): ModelKind {
     const [inStr = '', outStr = ''] = (a.modality ?? '').split('->');
     const ins = a.input_modalities ?? inStr.split('+').filter(Boolean);
     const outs = a.output_modalities ?? outStr.split('+').filter(Boolean);
+    if (outs.includes('decisions')) return 'classifier';
     if (outs.includes('embeddings') || outs.includes('embedding')) return 'embedding';
     if (outs.includes('image')) return 'image';
     if (outs.includes('audio') || (ins.includes('audio') && !outs.includes('text'))) return 'audio';
@@ -107,6 +118,14 @@ function perMillion(v: unknown): number | null {
   return Math.round(n * 1e6 * 1e6) / 1e6;
 }
 
+const isDecisionsRaw = (m: RawModel) => !!(m.architecture?.output_modalities?.includes('decisions') || /->\s*decisions/.test(m.architecture?.modality ?? '') || m.endpoints?.some((e) => /decisions/.test(e)));
+
+/** What the server said about one model, for picking a guard adapter (see adapterFor). */
+export function modelMeta(serverId: number | null, name: string): { api: string | null; structured: boolean; kind: ModelKind | null } | null {
+  const r = getDb().prepare(`SELECT api, structured, COALESCE(kind_override, kind) kind FROM models WHERE name = ? ${serverId ? 'AND server_id = ?' : ''} LIMIT 1`).get(...(serverId ? [name, serverId] : [name])) as { api: string | null; structured: number; kind: ModelKind | null } | undefined;
+  return r ? { api: r.api, structured: !!r.structured, kind: r.kind } : null;
+}
+
 export function parseModel(m: RawModel): DiscoveredModel {
   return {
     name: m.id,
@@ -114,6 +133,8 @@ export function parseModel(m: RawModel): DiscoveredModel {
     contextLen: posInt(m.max_model_len) ?? posInt(m.context_length) ?? posInt(m.top_provider?.context_length) ?? posInt(m.context_window) ?? posInt(m.max_context_length),
     priceIn: perMillion(m.pricing?.prompt),
     priceOut: perMillion(m.pricing?.completion),
+    api: isDecisionsRaw(m) ? 'decisions' : null,
+    structured: (m.supported_parameters ?? []).some((p) => p === 'structured_outputs' || p === 'response_format'),
   };
 }
 
@@ -238,8 +259,8 @@ export function createServer(input: {
       .run(name, url, input.apiKey || null, 'inference', input.models.length ? 'online' : 'unknown', input.latency ?? null, now(), now());
     const id = Number(r.lastInsertRowid);
     const enabled = new Set(input.enabled ?? input.models.map((m) => m.name));
-    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    for (const m of input.models) ins.run(id, m.name, posInt(m.contextLen), numOrNull(m.priceIn), numOrNull(m.priceOut), kindOf(m), enabled.has(m.name) ? 1 : 0, now());
+    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, api, structured, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const m of input.models) ins.run(id, m.name, posInt(m.contextLen), numOrNull(m.priceIn), numOrNull(m.priceOut), kindOf(m), m.api ?? null, m.structured ? 1 : 0, enabled.has(m.name) ? 1 : 0, now());
     return id;
   });
   try {
@@ -297,9 +318,9 @@ export async function rediscover(id: number) {
       for (const m of existing) if (!m.manual) db.prepare('UPDATE models SET present = ? WHERE id = ?').run(names.has(m.name) ? 1 : 0, m.id);
       for (const m of models) {
         if (have.has(m.name)) {
-          db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ?, kind = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), id, m.name);
+          db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ?, kind = ?, api = ?, structured = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), m.api ?? null, m.structured ? 1 : 0, id, m.name);
         } else {
-          db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), now());
+          db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, api, structured, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), m.api ?? null, m.structured ? 1 : 0, now());
           added++;
         }
       }
