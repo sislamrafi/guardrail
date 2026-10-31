@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PromptMessage } from '@/lib/logs';
 import type { ScenarioSettings, Turn } from '@/lib/studio';
 import { buildRequest } from '@/lib/studio-body';
@@ -129,6 +129,14 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [messages, runs, busy]);
+  // The message box grows with its text, up to about eight lines, then scrolls.
+  const box = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const t = box.current;
+    if (!t) return;
+    t.style.height = 'auto';
+    t.style.height = `${Math.min(t.scrollHeight, 8 * 20 + 8)}px`;
+  }, [input]);
 
   const persist = (patch: Partial<Scenario>) => api(`studio/scenarios/${sc.id}`, { method: 'PATCH', body: patch });
 
@@ -241,12 +249,12 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
             })}
           </div>
         )}
-        <div className="cx-form-row nowrap">
+        <div className="cx-composer-box">
           <textarea
-            className="cx-input grow"
-            rows={2}
+            ref={box}
+            rows={1}
             value={input}
-            placeholder={pending.length ? 'Optional follow-up message' : 'Message the model (⌘↵ to send)'}
+            placeholder={pending.length ? 'Optional follow-up (⌘↵ to send)' : 'Message the model (⌘↵ to send)'}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -256,8 +264,8 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
             }}
             aria-label="Message"
           />
-          <button type="button" className="cx-btn pri tall" disabled={busy || (!input.trim() && !pending.length)} onClick={submit}>
-            <Ico n="send" size={14} /> Send
+          <button type="button" className="cx-send" disabled={busy || (!input.trim() && !pending.length)} onClick={submit} aria-label="Send" title="Send (⌘↵)">
+            <Ico n="send" size={15} />
           </button>
         </div>
       </div>

@@ -445,6 +445,14 @@ select.cx-input { padding-right: 4px; }
 .cx-studio-empty { color: var(--dim); text-align: center; padding: 40px 0; }
 .cx-composer { flex: none; border-top: 1px solid var(--edge); padding: 10px 16px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--side); }
 .cx-composer textarea { resize: none; }
+.cx-composer-box { display: flex; align-items: flex-end; gap: 6px; padding: 5px 5px 5px 8px; background: var(--input); border: 1px solid var(--edge-2); border-radius: 10px; transition: border-color .12s, box-shadow .12s; }
+.cx-composer-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cx-composer-box textarea { flex: 1; min-width: 0; height: 28px; max-height: 168px; padding: 4px 0; border: 0; outline: none; background: transparent; color: var(--fg); font: inherit; line-height: 20px; overflow-y: auto; }
+.cx-composer-box textarea::placeholder { color: var(--faint); }
+.cx .cx-send { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: var(--accent); color: #fff; cursor: pointer; }
+.cx .cx-send:hover:not(:disabled) { background: var(--accent-hi); }
+.cx-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cx .cx-send:disabled { background: var(--btn); color: var(--dim); box-shadow: inset 0 0 0 1px var(--edge-2); opacity: 1; }
 .cx-trace { align-self: stretch; border: 1px dashed var(--edge-2); border-radius: 6px; }
 .cx-trace-body { padding: 6px 10px 10px; }
 
