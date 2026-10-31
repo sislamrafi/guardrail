@@ -1,0 +1,100 @@
+/* Design board: VS Code Dark Modern look. Everything is scoped under .vsd. */
+.vsd {
+  --d-bg: #1f1f1f;
+  --d-bar: #181818;
+  --d-side: #181818;
+  --d-line: #2b2b2b;
+  --d-hover: #2a2d2e;
+  --d-sel: #04395e;
+  --d-ink: #cccccc;
+  --d-dim: #9d9d9d;
+  --d-accent: #0078d4;
+  --d-pin: #f14c4c;
+  --d-area: #3794ff;
+  --d-done: #4ec9b0;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--d-bg);
+  color: var(--d-ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+.vsd button { font: inherit; color: inherit; }
+.vsd-dim { color: var(--d-dim); }
+
+.vsd-top { height: 38px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 10px; background: var(--d-bar); border-bottom: 1px solid var(--d-line); }
+.vsd-brand { display: flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; min-width: 0; }
+.vsd-logo { color: var(--d-accent); }
+.vsd-chip { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: #2d2d2d; color: var(--d-dim); font-weight: 400; font-size: 12px; }
+.vsd-tools { flex: 1; display: flex; justify-content: center; align-items: center; gap: 4px; }
+.vsd-right { display: flex; align-items: center; gap: 10px; }
+.vsd-sep { width: 1px; height: 18px; background: var(--d-line); margin: 0 6px; }
+.vsd-tool { width: 30px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; cursor: pointer; color: var(--d-dim); }
+.vsd-tool:hover { background: var(--d-hover); color: var(--d-ink); }
+.vsd-tool.on { background: var(--d-sel); color: #fff; outline: 1px solid var(--d-accent); }
+.vsd-btn { height: 26px; padding: 0 10px; border: 1px solid #3c3c3c; border-radius: 4px; background: #2d2d2d; cursor: pointer; white-space: nowrap; }
+.vsd-btn:hover { background: #37373d; }
+.vsd-btn.off { color: var(--d-dim); }
+.vsd-btn.pri { background: var(--d-accent); border-color: var(--d-accent); color: #fff; }
+.vsd-btn.pri:hover { background: #026ec1; }
+.vsd-btn:disabled { opacity: .5; cursor: default; }
+.vsd-btn.danger { background: transparent; border-color: #5a1d1d; color: #f48771; }
+.vsd-btn.danger:hover { background: #5a1d1d; }
+.vsd-save { font-size: 12px; color: var(--d-dim); min-width: 64px; text-align: right; }
+.vsd-save.saved { color: var(--d-done); }
+.vsd-save.error { color: var(--d-pin); }
+
+.vsd-body { flex: 1; min-height: 0; display: flex; }
+.vsd-stage { flex: 1; min-width: 0; overflow: auto; padding: 16px; background: #141414; }
+.vsd-surface { position: relative; width: max-content; margin: 0 auto; user-select: none; touch-action: none; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); }
+.vsd-surface img { display: block; max-width: none; pointer-events: none; }
+.vsd-stage.fit .vsd-surface { width: 100%; max-width: calc((100vh - 70px) * 1.779); }
+.vsd-stage.fit .vsd-surface img { width: 100%; height: auto; }
+.vsd-surface.tool-pin { cursor: crosshair; }
+.vsd-surface.tool-area { cursor: cell; }
+.vsd-missing { position: absolute; inset: 0; display: grid; place-items: center; color: var(--d-dim); min-height: 200px; min-width: 400px; }
+
+.vsd-mark { position: absolute; }
+.vsd-pin { width: 26px; height: 26px; margin: -26px 0 0 -13px; border: 2px solid #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--d-pin); color: #fff; font-size: 11px; font-weight: 700; cursor: grab; display: grid; place-items: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .5); padding: 0; }
+.vsd-pin > span { transform: rotate(45deg); line-height: 1; }
+.vsd-pin.sel { background: var(--d-accent); z-index: 3; }
+.vsd-pin.done { background: #2f6f62; opacity: .8; }
+.vsd-area { position: absolute; border: 2px dashed var(--d-area); background: rgba(55, 148, 255, .12); border-radius: 3px; cursor: grab; }
+.vsd-area.sel { border-style: solid; background: rgba(55, 148, 255, .2); z-index: 2; }
+.vsd-area.done { border-color: var(--d-done); background: rgba(78, 201, 176, .08); }
+.vsd-area.draft { pointer-events: none; }
+.vsd-area > .vsd-num { position: absolute; top: -11px; left: -11px; }
+
+.vsd-num { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--d-pin); color: #fff; font-size: 11px; font-weight: 700; }
+.vsd-num.sq, .vsd-area > .vsd-num { border-radius: 4px; background: var(--d-area); }
+li.done .vsd-num, .vsd-area.done > .vsd-num { background: #2f6f62; }
+
+.vsd-pop { position: absolute; z-index: 10; width: 280px; background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .6); padding: 8px; display: flex; flex-direction: column; gap: 8px; cursor: default; user-select: text; }
+.vsd-pop-head { display: flex; align-items: center; gap: 8px; }
+.vsd-pop-head .vsd-region { flex: 1; }
+.vsd-x { border: 0; background: transparent; cursor: pointer; font-size: 18px; line-height: 1; color: var(--d-dim); padding: 0 4px; }
+.vsd-x:hover { color: #fff; }
+.vsd-pop textarea { width: 100%; min-height: 110px; resize: vertical; background: #313131; color: var(--d-ink); border: 1px solid #3c3c3c; border-radius: 4px; padding: 8px; font: inherit; outline: none; }
+.vsd-pop textarea:focus { border-color: var(--d-accent); }
+.vsd-pop-foot { display: flex; justify-content: space-between; align-items: center; }
+
+.vsd-side { width: 320px; flex: none; display: flex; flex-direction: column; background: var(--d-side); border-left: 1px solid var(--d-line); min-height: 0; }
+.vsd-side-head { display: flex; justify-content: space-between; padding: 10px 14px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.vsd-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--d-dim); padding: 0 14px 8px; cursor: pointer; }
+.vsd-pop .vsd-check { padding: 0; }
+.vsd-check input { accent-color: var(--d-accent); }
+.vsd-empty { padding: 8px 14px; color: var(--d-ink); font-size: 12.5px; }
+.vsd-list { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; }
+.vsd-list li { display: flex; gap: 10px; padding: 8px 14px; cursor: pointer; border-left: 2px solid transparent; }
+.vsd-list li:hover { background: var(--d-hover); }
+.vsd-list li.sel { background: var(--d-sel); border-left-color: var(--d-accent); }
+.vsd-list li.done .vsd-text { text-decoration: line-through; color: var(--d-dim); }
+.vsd-region { font-size: 11px; color: var(--d-dim); text-transform: uppercase; letter-spacing: .03em; }
+.vsd-text { white-space: pre-wrap; word-break: break-word; }
+.vsd-keys { padding: 8px 14px; border-top: 1px solid var(--d-line); font-size: 11px; }
+
+@media (max-width: 900px) {
+  .vsd-side { width: 240px; }
+  .vsd-brand .vsd-dim, .vsd-chip { display: none; }
+}
