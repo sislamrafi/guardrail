@@ -1,6 +1,7 @@
 // Line icons drawn on a 24px grid, sized like VS Code codicons.
 const P: Record<string, string> = {
-  overview: 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z',
+  // Lucide layout-dashboard: four rounded tiles of different heights.
+  overview: 'M4 3h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM15 3h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM15 12h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zM4 16h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1z',
   activity: 'M3 12h4l3-8 4 16 3-8h4',
   guard: 'M12 3l8 3v6c0 4.6-3.4 8.4-8 9-4.6-.6-8-4.4-8-9V6z',
   servers: 'M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01',

@@ -319,7 +319,7 @@ function ServersSide({ data }: { data: Data }) {
     text: s.name,
     icon: 'servers',
     iconClass: `srv ${s.status}`,
-    meta: s.role === 'guard' ? 'guard' : `${s.models.filter((m) => m.enabled).length}/${s.models.length}`,
+    meta: `${s.models.filter((m) => m.enabled).length}/${s.models.length}`,
     title: `${s.url} · ${s.status}${s.latency_ms != null ? ` · ${s.latency_ms} ms` : ''}`,
     selected: nav.path === pathFor('servers', s.id),
     onOpen: () => nav.go(pathFor('servers', s.id)),
@@ -341,11 +341,11 @@ function ServersSide({ data }: { data: Data }) {
       icon: 'model',
       iconClass: m.enabled ? 'on' : '',
       dim: !m.enabled || !m.present,
-      meta: !m.present ? 'gone' : s.role === 'guard' ? 'guard' : m.enabled ? 'on' : 'off',
+      meta: !m.present ? 'gone' : m.enabled ? 'on' : 'off',
       title: `${m.name}${m.enabled ? ' · clients can use it' : ' · hidden from clients'}`,
       onOpen: () => nav.go(pathFor('servers', s.id)),
-      actions: s.role === 'inference' ? [{ icon: m.enabled ? 'check' : 'plus', label: m.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`, run: () => void act.toggleModel(m.id, !m.enabled) }] : [],
-      menu: () => (s.role === 'inference' ? [{ label: m.enabled ? 'Turn off for clients' : 'Turn on for clients', run: () => void act.toggleModel(m.id, !m.enabled) }] : []),
+      actions: [{ icon: m.enabled ? 'check' : 'plus', label: m.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`, run: () => void act.toggleModel(m.id, !m.enabled) }],
+      menu: () => [{ label: m.enabled ? 'Turn off for clients' : 'Turn on for clients', run: () => void act.toggleModel(m.id, !m.enabled) }],
     })),
   }));
   return (

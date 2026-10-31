@@ -262,7 +262,7 @@ describe('gateway', () => {
       expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
       const log = lastLog();
       expect([log.outcome, log.c1_status, log.c2_status]).toEqual(['blocked', 'flagged', 'error']);
-      expect(String(log.steps)).toContain('Check 2 · off for NoJudge');
+      expect(String(log.steps)).toContain('Check 2 · OSS judge is off for NoJudge');
     });
 
     it('lets a sub-group switch a check back on under a group that turned it off', async () => {

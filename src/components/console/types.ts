@@ -66,6 +66,7 @@ export interface ModelC {
   price_out?: number | null;
   kind?: ModelKind | null;
   kind_override?: ModelKind | null;
+  manual?: number;
   enabled: number;
   present: number;
 }

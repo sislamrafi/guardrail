@@ -8,6 +8,7 @@ import { Empty, Field, GroupSelect, Loading, Note, Page, Pill, Section, Seg, Sta
 import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { Data, GroupC, Resolution, SettingKey } from '../types';
+import { layerState, useLayerToggle } from './guard';
 
 type StoredSetting = { mode: 'set' | 'add' | 'override'; value: unknown };
 
@@ -300,7 +301,7 @@ function Access({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save:
     void save('models', { mode: base as StoredSetting['mode'], value: next }, on ? `${m === '*' ? 'All models' : m} allowed` : `${m === '*' ? 'All models' : m} removed`);
   };
   const ownServers = (own.servers?.value as number[] | null | undefined) ?? null;
-  const inference = data.servers.filter((s) => s.role === 'inference');
+  const inference = data.servers;
   const models = data.models.filter((m) => !q || m.toLowerCase().includes(q.toLowerCase()));
   return (
     <>
@@ -460,36 +461,9 @@ function Context({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save
   );
 }
 
-function CheckRow({ k, title, sub, g, res, save }: { k: 'piguard_enabled' | 'oss_enabled'; title: string; sub: string; g: GroupC; res: Res; save: Save }) {
-  const isRoot = g.parentId === null;
-  const stored = g.settings[k] as StoredSetting | undefined;
-  const cur = !stored ? 'inherit' : stored.value === true ? 'on' : 'off';
-  const effective = res.resolution.effective[k];
-  return (
-    <div className="cx-list-row tall">
-      <div className="grow">
-        <b>{title}</b>
-        <div className="cx-muted small">{sub}</div>
-        <div className="small">
-          <Pill tone={effective ? 'ok' : 'warn'}>{effective ? 'On' : 'Off'}</Pill> <span className="cx-muted">from {res.resolution.sources[k].join(' + ')}</span>
-        </div>
-      </div>
-      <Seg
-        value={cur}
-        label={title}
-        onChange={(v) => void save(k, v === 'inherit' ? null : { mode: 'override', value: v === 'on' }, `${title}: ${v === 'inherit' ? (isRoot ? 'back to the Guard checks defaults' : 'same as parent') : v}`)}
-        options={[
-          ['inherit', isRoot ? 'Guard defaults' : 'Same as parent'],
-          ['on', 'On'],
-          ['off', 'Off (bypass)'],
-        ]}
-      />
-    </div>
-  );
-}
-
 function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: Save }) {
   const nav = useNav();
+  const toggle = useLayerToggle();
   const eff = res.resolution.effective;
   const src = res.resolution.sources;
   const st = g.settings as Record<string, StoredSetting | undefined>;
@@ -508,15 +482,38 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
     const parts = eff.oss_prompt_parts.filter((p) => p.from !== g.name);
     return [st.oss_prompt?.mode === 'override' ? '' : '# Default prompt (Guard checks)', ...parts.map((p) => `# from ${p.from}\n${p.text}`)].filter(Boolean).join('\n\n');
   }, [eff, g.name, st.oss_prompt]);
-  void data;
   return (
     <>
-      <Section title="Checks" hint={<>Every group is checked as the <button type="button" className="cx-link" onClick={() => nav.go('/guard')}>Guard checks</button> defaults say. Turn a check off here to let {g.name} and its sub-groups skip it.</>}>
+      <Section title="Guard layers" hint={<>Each layer is on or off for {g.name} and its sub-groups. Edit the layers themselves in <button type="button" className="cx-link" onClick={() => nav.go('/guard')}>Guard checks</button>.</>}>
         <div className="cx-list">
-          <CheckRow k="piguard_enabled" title="PIGuard (check 1)" sub="Scores every new message and tool result." g={g} res={res} save={save} />
-          <CheckRow k="oss_enabled" title="Second check (OSS judge)" sub="Reads what PIGuard flagged and decides to block or allow." g={g} res={res} save={save} />
+          {data.settings.guard.layers.map((l, i) => {
+            const st = layerState(l, g, data.groups);
+            return (
+              <div key={l.id} className="cx-list-row tall">
+                <span className="cx-layer-n">{i + 1}</span>
+                <div className="grow">
+                  <button type="button" className="cx-link" onClick={() => nav.go(`/guard/${l.id}`)}>
+                    <b>{l.name}</b>
+                  </button>
+                  <div className="small">
+                    <Pill tone={st.on ? 'ok' : 'warn'}>{st.on ? 'On' : 'Off'}</Pill> <span className="cx-muted">from {st.from}</span>
+                  </div>
+                </div>
+                <Seg
+                  value={st.own === null ? 'inherit' : st.own ? 'on' : 'off'}
+                  label={`${l.name} for ${g.name}`}
+                  onChange={(v) => void toggle(g, l, v)}
+                  options={[
+                    ['inherit', g.parentId === null ? 'Layer default' : 'Same as parent'],
+                    ['on', 'On'],
+                    ['off', 'Off (bypass)'],
+                  ]}
+                />
+              </div>
+            );
+          })}
         </div>
-        {!eff.piguard_enabled && !eff.oss_enabled && <Note tone="bad">Both checks are off for {g.name}. Its requests go straight to the model unscreened.</Note>}
+        {data.settings.guard.layers.every((l) => !layerState(l, g, data.groups).on) && <Note tone="bad">Every guard layer is off for {g.name}. Its requests go straight to the model unscreened.</Note>}
       </Section>
       <div className="cx-stats wide">
         <Stat label="PIGuard flags at" value={eff.piguard_threshold.toFixed(2)} hint={`From ${src.piguard_threshold.join(' + ')}`} />

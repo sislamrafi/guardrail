@@ -1,5 +1,6 @@
 import { estimateTokens, createFile, deleteFile, fileHistory, getFile, listFiles, updateFile } from './context';
-import { builtinScore, runCheck1, runCheck2 } from './guard';
+import { normalizeLayer } from './layers';
+import { runPipeline } from './pipeline';
 import { SETTING_DEFS, SettingKey, chainOf, createGroup, deleteGroup, getGroup, groupPath, listGroups, resolveGroup, setGroupSetting, updateGroup } from './groups';
 import { cleanExceptions, createKey, deleteKey, getKey, listKeys, requestsToday, revealKey, rotateKey, updateKey } from './keys';
 import { weakSecret } from './secret-box';
@@ -7,7 +8,7 @@ import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './l
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
-import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
+import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, handleCompletion, Trace } from './gateway';
 
@@ -60,6 +61,9 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
   return out;
 }
 
+/** ?test=include|only shows Studio and replay traffic too; by default it is left out. */
+const testScope = (url: URL) => (['include', 'only'].includes(url.searchParams.get('test') ?? '') ? (url.searchParams.get('test') as 'include' | 'only') : 'exclude');
+
 /** ?group=<id> as that group and its sub-groups; the root group (or none) means every log. */
 function groupScope(url: URL): number[] | undefined {
   const id = Number(url.searchParams.get('group'));
@@ -102,7 +106,7 @@ const routes: Record<string, Handler> = {
   'POST servers/discover': async ({ body }) => {
     try {
       const r = await discover(String(body.url ?? ''), (body.apiKey as string) || null);
-      return { ok: true, url: r.base, latency: r.latency, models: r.models };
+      return { ok: true, url: r.base, latency: r.latency, models: r.models, notes: r.notes };
     } catch (e) {
       return { ok: false, error: errMsg(e) };
     }
@@ -120,6 +124,7 @@ const routes: Record<string, Handler> = {
   'PATCH servers/:id': ({ params, body }) =>
     updateServer(num(params[0]), { name: body.name as string, url: body.url as string, apiKey: body.apiKey as string | null | undefined, role: body.role as 'inference' | 'guard' }),
   'DELETE servers/:id': ({ params }) => deleteServer(num(params[0])),
+  'POST servers/:id/models': ({ params, body }) => addModelByHand(num(params[0]), String(body.name ?? '')),
   'POST servers/:id/rediscover': ({ params }) => rediscover(num(params[0])),
   'PATCH models/:id': ({ params, body }) => {
     const id = num(params[0]);
@@ -142,7 +147,7 @@ const routes: Record<string, Handler> = {
   // ---- groups ----
   'GET groups': () => {
     const files = listFiles().map((f) => ({ id: f.id, name: f.name, tokens: estimateTokens(f.body) }));
-    const servers = listServers().filter((s) => s.role === 'inference').map((s) => ({ id: s.id, name: s.name }));
+    const servers = listServers().map((s) => ({ id: s.id, name: s.name }));
     const models = [...new Set(listModels().filter((m) => m.enabled && servers.some((s) => s.id === m.server_id)).map((m) => m.name))].sort();
     const modelServers = Object.fromEntries(models.map((m) => [m, listModels().filter((x) => x.name === m && x.enabled).map((x) => servers.find((s) => s.id === x.server_id)?.name).filter(Boolean)]));
     return { groups: treeOrder(groupsView()), defs: SETTING_DEFS, files, servers, models, modelServers, settings: getSettings() };
@@ -217,7 +222,7 @@ const routes: Record<string, Handler> = {
         return { ...g, context: r.effective.context, own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [], mode: g.settings.context?.mode ?? null, keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name) };
       }),
       settings: getSettings(),
-      cache: listServers().filter((s) => s.role === 'inference' && s.cache_hit_rate !== null).map((s) => ({ name: s.name, rate: s.cache_hit_rate })),
+      cache: listServers().filter((s) => s.cache_hit_rate !== null).map((s) => ({ name: s.name, rate: s.cache_hit_rate })),
     };
   },
   'POST context': ({ body }) => createFile(String(body.name ?? ''), String(body.body ?? '')),
@@ -247,17 +252,14 @@ const routes: Record<string, Handler> = {
   'POST guard/test': async ({ body }) => {
     const s = getSettings();
     const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
-    const eff = resolveGroup(gid).effective;
+    const resolution = resolveGroup(gid);
     const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
-    const c1 = await runCheck1(segments, s.guard);
-    const flagged = c1.score >= eff.piguard_threshold;
-    // Same routing as the gateway, for the chosen group: with PIGuard off, check 2 judges everything (if it is on).
-    const c1On = s.guard.enabled && eff.piguard_enabled;
-    const c2On = s.guard.enabled && eff.oss_enabled;
-    const toCheck2 = c1On ? flagged : c2On;
-    const c2 = toCheck2 ? await runCheck2(segments, c1On ? c1.quote : null, eff.oss_prompt, { ...s.guard, oss: { ...s.guard.oss, enabled: c2On } }) : null;
-    return { threshold: eff.piguard_threshold, c1, c1On, c2On, flagged, c2, builtin: builtinScore(segments) };
+    // Optionally try unsaved layers from the editor.
+    const layers = Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers;
+    const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id) });
+    return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
   },
+
 
   // ---- activity ----
   'GET overview': ({ url }) => {
@@ -267,8 +269,8 @@ const routes: Record<string, Handler> = {
   'GET logs': ({ url }) => {
     const p = url.searchParams;
     return {
-      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url) }),
-      counts: countByFilter(undefined, groupScope(url)),
+      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url), test: testScope(url) }),
+      counts: countByFilter(undefined, groupScope(url), testScope(url)),
     };
   },
   'GET logs/:id': ({ params }) => {
@@ -378,8 +380,8 @@ const routes: Record<string, Handler> = {
   'GET summary': () => {
     const servers = listServers();
     return {
-      online: servers.filter((s) => s.role === 'inference' && s.status === 'online').length,
-      servers: servers.filter((s) => s.role === 'inference').length,
+      online: servers.filter((s) => s.status === 'online').length,
+      servers: servers.length,
       groups: listGroups().length,
       keys: listKeys().filter((k) => !k.revoked).length,
       guard: getSettings().guard.piguard.enabled || getSettings().guard.oss.enabled,

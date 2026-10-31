@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { LayerResult } from './pipeline';
 import { getDb } from './db';
 import { prunePromptFiles, readPromptFile, retentionDays, writePromptFile } from './prompt-files';
 
@@ -52,9 +53,15 @@ export interface LogEntry {
   forwarded?: PromptMessage[] | null;
   /** True when the file was deleted by the retention rule. */
   prompt_expired?: boolean;
+  /** Each guard layer's result, in order (see pipeline.ts). */
+  decisions?: LayerResult[] | null;
+  /** What GuardRail added to the request: context files, policy prompt, tokens, placement. */
+  injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string } | null;
+  /** Studio or replay traffic, kept out of normal lists and stats. */
+  test?: boolean;
 }
 
-type Row = Omit<LogEntry, 'stages' | 'steps' | 'prompt' | 'forwarded' | 'prompt_expired'> & { stages: string; steps: string };
+type Row = Omit<LogEntry, 'stages' | 'steps' | 'prompt' | 'forwarded' | 'prompt_expired' | 'decisions' | 'injected' | 'test'> & { stages: string; steps: string; decisions: string | null; injected: string | null; test: number | null };
 
 /** A shallow copy of the messages for the prompt file; anything that isn't a list is no prompt. */
 export function promptForLog(messages: unknown): PromptMessage[] | null {
@@ -64,8 +71,8 @@ export function promptForLog(messages: unknown): PromptMessage[] | null {
 
 export const newRequestId = () => 'req_' + crypto.randomBytes(6).toString('hex');
 
-const COLS = ['id', 'ts', 'key_id', 'key_name', 'owner', 'group_id', 'group_name', 'ip', 'path', 'schema', 'model', 'server', 'c1_score', 'c1_status', 'c2_status', 'c2_reason', 'outcome', 'status_code', 'reason', 'latency_ms', 'tokens_out', 'stages', 'steps', 'feedback', 'prompt_file'] as const;
-const JSON_COLS = ['stages', 'steps'];
+const COLS = ['id', 'ts', 'key_id', 'key_name', 'owner', 'group_id', 'group_name', 'ip', 'path', 'schema', 'model', 'server', 'c1_score', 'c1_status', 'c2_status', 'c2_reason', 'outcome', 'status_code', 'reason', 'latency_ms', 'tokens_out', 'stages', 'steps', 'feedback', 'prompt_file', 'decisions', 'injected', 'test'] as const;
+const JSON_COLS = ['stages', 'steps', 'decisions', 'injected'];
 const SELECT_COLS = COLS.join(', ');
 
 // Pruning runs at most this often, from the write path, so no separate job is needed.
@@ -91,7 +98,7 @@ function maybePrune() {
 
 export function writeLog(e: Partial<LogEntry> & { id: string; ts: number; outcome: Outcome }) {
   const { prompt, forwarded, ...rest } = e;
-  const row: Record<string, unknown> = { ...rest, stages: JSON.stringify(e.stages ?? {}), steps: JSON.stringify(e.steps ?? []) };
+  const row: Record<string, unknown> = { ...rest, stages: JSON.stringify(e.stages ?? {}), steps: JSON.stringify(e.steps ?? []), decisions: e.decisions ? JSON.stringify(e.decisions) : null, injected: e.injected ? JSON.stringify(e.injected) : null, test: e.test ? 1 : 0 };
   if (prompt !== undefined || forwarded !== undefined) row.prompt_file = writePromptFile({ ...blankFileEntry, ...e });
   getDb()
     .prepare(`INSERT OR REPLACE INTO request_logs (${COLS.join(', ')}) VALUES (${COLS.map((c) => '@' + c).join(', ')})`)
@@ -117,7 +124,7 @@ export function updateLog(id: string, patch: Partial<LogEntry>) {
   }
 }
 
-const parse = (r: Row): LogEntry => ({ ...r, stages: safeJson(r.stages, {}), steps: safeJson(r.steps, []) });
+const parse = (r: Row): LogEntry => ({ ...r, stages: safeJson(r.stages, {}), steps: safeJson(r.steps, []), decisions: safeJson(r.decisions, null), injected: safeJson(r.injected, null), test: !!r.test });
 
 function safeJson<T>(s: string | null | undefined, d: T): T {
   if (s === null || s === undefined) return d;
@@ -153,9 +160,13 @@ export interface LogScope {
   groups?: number[];
   since?: number;
   until?: number;
+  /** Studio and replay traffic is left out unless asked for. */
+  test?: 'exclude' | 'include' | 'only';
 }
 
 function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
+  if ((scope.test ?? 'exclude') === 'exclude') where.push('test = 0');
+  else if (scope.test === 'only') where.push('test = 1');
   if (scope.groups) {
     where.push(scope.groups.length ? `group_id IN ${inList(scope.groups.length)}` : '0');
     args.push(...scope.groups);
@@ -170,10 +181,10 @@ function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
   }
 }
 
-export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; feedback?: string[] }) {
+export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; feedback?: string[]; test?: LogScope['test'] }) {
   const where: string[] = [];
   const args: unknown[] = [];
-  scopeWhere({ groups: opts.groups, until: opts.until }, where, args);
+  scopeWhere({ groups: opts.groups, until: opts.until, test: opts.test }, where, args);
   if (opts.feedback?.length) {
     where.push(`feedback IN ${inList(opts.feedback.length)}`);
     args.push(...opts.feedback);
@@ -201,10 +212,10 @@ export function queryLogs(opts: { filter?: string; q?: string; limit?: number; b
   return (getDb().prepare(sql).all(...args) as Row[]).map(parse);
 }
 
-export function countByFilter(since?: number, groups?: number[]) {
+export function countByFilter(since?: number, groups?: number[], test?: LogScope['test']) {
   const where: string[] = [];
   const args: unknown[] = [];
-  scopeWhere({ since, groups }, where, args);
+  scopeWhere({ since, groups, test }, where, args);
   const rows = getDb()
     .prepare(`SELECT outcome, COUNT(*) n FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
     .all(...args) as { outcome: Outcome; n: number }[];

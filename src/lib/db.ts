@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -170,6 +170,17 @@ export function setDb(db: Database.Database) {
 function migrate(db: Database.Database) {
   const have = new Set((db.prepare('PRAGMA table_info(request_logs)').all() as { name: string }[]).map((c) => c.name));
   if (!have.has('prompt_file')) db.exec('ALTER TABLE request_logs ADD COLUMN prompt_file TEXT');
+  // Per-layer guard results, what was injected, and whether it was test traffic (Studio, replay).
+  if (!have.has('decisions')) db.exec('ALTER TABLE request_logs ADD COLUMN decisions TEXT');
+  if (!have.has('injected')) db.exec('ALTER TABLE request_logs ADD COLUMN injected TEXT');
+  if (!have.has('test')) db.exec('ALTER TABLE request_logs ADD COLUMN test INTEGER NOT NULL DEFAULT 0');
+  // Servers no longer have a "guard only" role: every model is a normal model and guard layers pick any.
+  // Models of former guard servers start hidden from clients, so nothing becomes callable by surprise.
+  const guards = db.prepare("SELECT COUNT(*) n FROM servers WHERE role = 'guard'").get() as { n: number };
+  if (guards.n) {
+    db.exec("UPDATE models SET enabled = 0 WHERE server_id IN (SELECT id FROM servers WHERE role = 'guard')");
+    db.exec("UPDATE servers SET role = 'inference' WHERE role = 'guard'");
+  }
   const modelCols = new Set((db.prepare('PRAGMA table_info(models)').all() as { name: string }[]).map((c) => c.name));
   // USD per 1M tokens, when the server reports prices (OpenRouter does; vLLM does not).
   if (!modelCols.has('price_in')) db.exec('ALTER TABLE models ADD COLUMN price_in REAL');
@@ -177,6 +188,7 @@ function migrate(db: Database.Database) {
   // What a model is for (text, image, embedding, classifier…): detected, plus the admin's override.
   if (!modelCols.has('kind')) db.exec('ALTER TABLE models ADD COLUMN kind TEXT');
   if (!modelCols.has('kind_override')) db.exec('ALTER TABLE models ADD COLUMN kind_override TEXT');
+  if (!modelCols.has('manual')) db.exec('ALTER TABLE models ADD COLUMN manual INTEGER NOT NULL DEFAULT 0');
   const keyCols = new Set((db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]).map((c) => c.name));
   // Optional IP allow-list per key: JSON list of IPs and CIDR ranges; empty means any address.
   if (!keyCols.has('ip_allow')) db.exec("ALTER TABLE api_keys ADD COLUMN ip_allow TEXT NOT NULL DEFAULT '[]'");

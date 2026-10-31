@@ -9,12 +9,12 @@ import { getSettings } from './settings';
  * A setting a group doesn't store is inherited unchanged.
  */
 export type Mode = 'set' | 'add' | 'override';
-export type SettingKey = 'servers' | 'models' | 'context' | 'piguard_enabled' | 'piguard_threshold' | 'oss_enabled' | 'oss_prompt' | 'blocked_reply' | 'rate_limit';
+export type SettingKey = 'servers' | 'models' | 'context' | 'layers' | 'piguard_enabled' | 'piguard_threshold' | 'oss_enabled' | 'oss_prompt' | 'blocked_reply' | 'rate_limit';
 
 export interface SettingDef {
   key: SettingKey;
   label: string;
-  kind: 'list' | 'number' | 'text' | 'flag';
+  kind: 'list' | 'number' | 'text' | 'flag' | 'map';
   canAdd: boolean;
 }
 
@@ -22,6 +22,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'servers', label: 'Servers', kind: 'list', canAdd: true },
   { key: 'models', label: 'Models', kind: 'list', canAdd: true },
   { key: 'context', label: 'Context files', kind: 'list', canAdd: true },
+  { key: 'layers', label: 'Guard layers on/off', kind: 'map', canAdd: false },
   { key: 'piguard_enabled', label: 'PIGuard check (check 1)', kind: 'flag', canAdd: false },
   { key: 'piguard_threshold', label: 'PIGuard flags at', kind: 'number', canAdd: false },
   { key: 'oss_enabled', label: 'Second check (OSS)', kind: 'flag', canAdd: false },
@@ -30,7 +31,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'rate_limit', label: 'Rate limit', kind: 'number', canAdd: false },
 ];
 
-export type SettingValue = number[] | string[] | number | string | boolean | null;
+export type SettingValue = number[] | string[] | number | string | boolean | null | Record<string, boolean>;
 export interface StoredSetting {
   mode: Mode;
   value: SettingValue;
@@ -70,6 +71,8 @@ export interface Effective {
   /** '*' = every enabled model */
   models: string[];
   context: number[];
+  /** Per-layer on/off chosen by this group or a parent; a layer not listed follows its own default. */
+  layers: Record<string, boolean>;
   /** Is check 1 (PIGuard) on for this group? Starts from the Guard checks page; a group can turn it off or on. */
   piguard_enabled: boolean;
   piguard_threshold: number;
@@ -118,6 +121,7 @@ export function resolveLayers(layers: Layer[], defaults: Defaults): Resolution {
     servers: null,
     models: [],
     context: [],
+    layers: {},
     piguard_enabled: defaults.piguard_enabled,
     oss_enabled: defaults.oss_enabled,
     piguard_threshold: defaults.piguard_threshold,
@@ -163,6 +167,11 @@ function apply(eff: Effective, key: SettingKey, value: SettingValue, additive: b
     case 'context': {
       const v = Array.isArray(value) ? (value as number[]).map(Number) : [];
       eff.context = additive ? uniq([...eff.context, ...v]) : v;
+      break;
+    }
+    case 'layers': {
+      // A group's choices replace its parent's for the same layer and keep the rest.
+      if (value && typeof value === 'object' && !Array.isArray(value)) eff.layers = { ...eff.layers, ...(value as Record<string, boolean>) };
       break;
     }
     case 'piguard_enabled':
@@ -295,6 +304,10 @@ export function normalizeSetting(key: SettingKey, s: StoredSetting, isRoot: bool
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${def.label} must be a positive number.`);
     if (key === 'piguard_threshold' && n >= 1) throw new Error('The PIGuard score must be between 0 and 1.');
     value = key === 'rate_limit' ? Math.round(n) : n;
+  } else if (def.kind === 'map') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${def.label} must be a list of layers switched on or off.`);
+    value = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>;
+    mode = isRoot ? 'set' : 'override';
   } else if (def.kind === 'flag') {
     if (typeof value !== 'boolean') throw new Error(`${def.label} must be on or off.`);
     mode = isRoot ? 'set' : 'override'; // on/off flags replace, they never add

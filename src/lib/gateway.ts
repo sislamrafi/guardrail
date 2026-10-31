@@ -1,6 +1,8 @@
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
 import { clientIp as ipOf, ipAllowed } from './ip';
-import { contentText, newSegments, renderBlocked, runCheck1, runCheck2, Segment } from './guard';
+import { contentText, newSegments, renderBlocked, Segment } from './guard';
+import type { GuardLayer } from './layers';
+import { applyRedactions, runPipeline } from './pipeline';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
 import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
 import { groupAllowed, limitsFor, listLimits, takeToken } from './limits';
@@ -8,7 +10,7 @@ import { LogEntry, Outcome, Step, newRequestId, promptForLog, updateLog, writeLo
 import { countHit, matchRules, redactMessages } from './rules';
 import { detectSchema, schemaForPath } from './schemas';
 import { getDb } from './db';
-import { errMsg, listModelsForRouting, markDown, Server } from './servers';
+import { errMsg, getServer, listModelsForRouting, markDown, Server } from './servers';
 import { getSettings } from './settings';
 import { apiError, blockedResponse } from './sse';
 
@@ -32,6 +34,8 @@ export interface GatewayOptions {
   trace?: Trace;
   /** Shown as the client address in the log. */
   source?: string;
+  /** Run these guard layers instead of the saved ones (Studio, replay). */
+  layers?: GuardLayer[];
 }
 
 export function clientIp(req: Request): string | null {
@@ -108,7 +112,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const path = new URL(req.url).pathname;
   const steps: Step[] = [];
   const stages: Record<string, number> = {};
-  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ?? clientIp(req), path };
+  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ?? clientIp(req), path, test: !!opts.source };
 
   const finish = (outcome: Outcome, status: number, reason: string | null, extra: Partial<LogEntry> = {}) =>
     writeLog({ ...log, ...extra, outcome, status_code: status, reason, latency_ms: Math.round(at()), stages, steps });
@@ -196,7 +200,6 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // 4. Custom rules
   const hits = matchRules(segments, chainOf(key.groupId, groups).map((g) => g.id));
   stages.rules = lap();
-  let escalate = false;
   let redacted = false;
   for (const h of hits) countHit(h.rule.id);
   const blockHit = hits.find((h) => h.rule.action === 'block');
@@ -212,65 +215,51 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   }
   const escHit = hits.find((h) => h.rule.action === 'escalate');
   if (escHit) {
-    escalate = true;
-    steps.push({ tone: 'warn', head: `Rule "${escHit.rule.name}" sent it to check 2`, ms: at(), text: `Matched in a ${escHit.source}:`, quote: escHit.match });
+    steps.push({ tone: 'warn', head: `Rule "${escHit.rule.name}" flagged it for the guard layers`, ms: at(), text: `Matched in a ${escHit.source}:`, quote: escHit.match });
   }
 
-  // 5. The two guard checks. Each can be off on its own: with PIGuard off,
-  // check 2 judges every request; with both off, requests go straight on.
+  // 5. Guard layers, in order (see pipeline.ts). The first two are the classic PIGuard + judge pair.
   let outcome: Outcome = redacted ? 'redacted' : 'answered';
-  // The Guard checks page sets the default for everyone; a group (and so every key in it) can turn either
-  // check off, or on again under a group that turned it off. `eff` already holds the resolved answer.
-  const g = settings.guard;
-  const c1On = g.enabled && eff.piguard_enabled;
-  const c2On = g.enabled && eff.oss_enabled;
   const groupName = groups.find((x) => x.id === key.groupId)?.name ?? 'this group';
-  const c1Bypass = g.enabled && g.piguard.enabled && !eff.piguard_enabled; // on for the app, off for this group
-  const c2Bypass = g.enabled && g.oss.enabled && !eff.oss_enabled;
-  const gc2 = { ...g, oss: { ...g.oss, enabled: c2On } }; // what check 2 sees: on or off for THIS group
-  const judge = settings.guard.oss.model.split('/').pop();
-  let toCheck2 = false;
-  let c1Flagged = false;
-  let c1Quote: string | null = null;
-  if (c1On) {
-    const c1 = await runCheck1(segments, g);
-    stages.piguard = c1.ms;
-    log.c1_score = c1.score;
-    c1Flagged = c1.score >= eff.piguard_threshold;
-    c1Quote = c1.quote;
-    toCheck2 = c1Flagged || escalate;
-    log.c1_status = !segments.length ? 'skipped' : c1Flagged ? 'flagged' : 'clean';
-    if (c1.error) steps.push({ tone: 'warn', head: 'Check 1 fell back to built-in patterns', ms: at(), text: c1.error });
-    if (!segments.length) steps.push({ tone: 'ok', head: 'Check 1 · nothing new to scan', ms: at(), text: 'No new user message or tool result since the model last answered.' });
-    else if (c1Flagged)
-      steps.push({ tone: 'warn', head: `Check 1 · PIGuard flagged it (${c1.score.toFixed(2)})`, ms: at(), text: `Score is at or above the limit of ${eff.piguard_threshold.toFixed(2)} (${c1.engine}). Text that triggered it, from a ${c1.source}:`, quote: c1.quote ?? undefined });
-    else steps.push({ tone: 'ok', head: `Check 1 · PIGuard: clean (${c1.score.toFixed(2)})`, ms: at(), text: `Below the limit of ${eff.piguard_threshold.toFixed(2)}, so check 2 was skipped.` });
-  } else {
-    log.c1_status = 'off';
-    // Nothing new means nothing for the judge to read either.
-    toCheck2 = c2On && segments.length > 0;
-    steps.push({
-      tone: 'neutral',
-      head: c1Bypass ? `Check 1 · PIGuard is off for ${groupName}` : 'Check 1 · PIGuard is off',
-      ms: at(),
-      text: !c2On ? 'Check 2 is off too, so no guard check ran.' : toCheck2 ? `Sent straight to check 2 (${judge}).` : 'Nothing new to scan, so check 2 was skipped.',
-    });
+  const layers = opts.layers ?? settings.guard.layers;
+  const pipe = await runPipeline({
+    segments,
+    layers,
+    resolution: res,
+    escalate: escHit ? { quote: escHit.match } : null,
+    unresolvedFlag: settings.guard.unresolvedFlag,
+    serverOf: (sid) => getServer(sid),
+  });
+  log.decisions = pipe.results;
+  for (const r of pipe.results) {
+    const d = r.decision;
+    const label = `Check ${r.n} · ${r.name}`;
+    const key = r.id === 'piguard' ? 'piguard' : r.id === 'judge' ? 'oss' : `layer_${r.id}`;
+    if (d) stages[key] = d.latency_ms;
+    const score = d?.score != null ? ` (${d.score.toFixed(2)})` : '';
+    if (d?.error) steps.push({ tone: 'warn', head: `${label} failed`, ms: at(), text: `${d.error}. ${r.action === 'block' ? 'Blocked by its fallback setting.' : r.fellBack && d.raw === '' && d.reason.startsWith('Built-in') ? 'Used the built-in patterns instead.' : 'Its fallback setting decided.'}` });
+    if (r.action === 'off') steps.push({ tone: 'neutral', head: r.bypassed ? `${label} is off for ${groupName}` : `${label} is off`, ms: at(), text: r.bypassed ? `${groupName} skips this layer.` : 'This layer is switched off.' });
+    else if (r.action === 'nothing') steps.push({ tone: 'ok', head: `${label} · nothing new to scan`, ms: at(), text: 'No new user message or tool result since the model last answered.' });
+    else if (r.action === 'pass' || r.action === 'cleared') steps.push({ tone: 'ok', head: `${label}: ${r.type === 'judge' ? 'allow' : 'clean'}${score}`, ms: at(), text: r.action === 'cleared' ? 'It cleared what an earlier layer flagged.' : d?.reason ?? '', why: r.type === 'judge' ? d?.raw || d?.reason : undefined });
+    else if (r.action === 'flag') steps.push({ tone: 'warn', head: `${label} flagged it${score}`, ms: at(), text: `${d?.reason ?? ''}. Text that triggered it:`, quote: d?.quote ?? undefined });
+    else if (r.action === 'redact') steps.push({ tone: 'warn', head: `${label} redacted ${d?.categories.join(', ')}`, ms: at(), text: 'Matching text was replaced with [REDACTED] before the request went on.' });
+    else if (r.action === 'block') steps.push({ tone: 'bad', head: `${label}: block${score}`, ms: at(), text: d?.reason ?? '', why: d?.raw || undefined, quote: d?.quote ?? undefined });
   }
-
-  if (c2Bypass && c1On)
-    steps.push({ tone: 'neutral', head: `Check 2 · off for ${groupName}`, ms: at(), text: toCheck2 ? 'This group skips the second check, so the "if it fails or times out" setting decides what happens to a flagged request.' : 'This group skips the second check.' });
-  if (toCheck2) {
-    const c2 = await runCheck2(segments, c1Quote ?? escHit?.match ?? null, eff.oss_prompt, gc2);
-    stages.oss = c2.ms;
-    log.c2_status = c2.error ? (c2.verdict === 'block' ? 'error' : 'allow') : c2.verdict;
-    log.c2_reason = c2.reason;
-    if (c2.verdict === 'block') {
-      steps.push({ tone: 'bad', head: `Check 2 · ${judge}: block`, ms: at(), text: c2.error ? `It could not decide: ${c2.error}.` : 'Its reasoning:', why: c2.reasoning ? `${c2.reason}\n\n${c2.reasoning}` : c2.reason });
-      return block(c2.reason, {});
-    }
-    steps.push({ tone: 'ok', head: `Check 2 · ${judge}: allow`, ms: at(), text: c2.error ? `It could not decide (${c2.error}); allowed by setting.` : 'Its reasoning:', why: c2.reasoning ? `${c2.reason}\n\n${c2.reasoning}` : c2.reason });
-    if (c1Flagged) outcome = 'false_alarm';
-  } else log.c2_status = c2On ? 'skipped' : 'off';
+  // The Activity columns still show "check 1" (first scoring layer) and "check 2" (first judge).
+  const c1 = pipe.results.find((r) => r.id === 'piguard') ?? pipe.results.find((r) => r.type === 'classifier' || r.type === 'patterns');
+  const c2 = pipe.results.find((r) => r.id === 'judge') ?? pipe.results.find((r) => r.type === 'judge');
+  log.c1_score = c1?.decision?.score ?? null;
+  log.c1_status = !c1 ? 'off' : c1.action === 'off' ? 'off' : c1.action === 'nothing' ? 'skipped' : c1.action === 'flag' || c1.action === 'block' ? 'flagged' : 'clean';
+  log.c2_status = !c2 ? 'off' : c2.action === 'off' ? (pipe.unresolved ? 'error' : 'off') : c2.action === 'skipped' || c2.action === 'nothing' ? 'skipped' : c2.action === 'block' ? (c2.decision?.error ? 'error' : 'block') : 'allow';
+  log.c2_reason = c2?.decision?.reason ?? null;
+  if (pipe.unresolved) steps.push({ tone: pipe.block ? 'bad' : 'warn', head: pipe.block ? 'Flag not cleared: blocked' : 'Flag not cleared: allowed', ms: at(), text: `No later layer judged what was flagged, so the "unresolved flag" setting decided (${settings.guard.unresolvedFlag}).` });
+  if (pipe.block) return block(pipe.block.reason, {});
+  if (pipe.redact.length) {
+    messages = applyRedactions(messages, pipe.redact);
+    redacted = true;
+    outcome = 'redacted';
+  }
+  if (pipe.cleared && outcome === 'answered') outcome = 'false_alarm';
 
   // 6. Project context
   lap();
@@ -279,6 +268,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   trace.context = files.map((f) => ({ name: f.name, tokens: estimateTokens(f.body) }));
   trace.contextTokens = ctx ? estimateTokens(ctx) : 0;
   trace.placement = settings.contextPlacement;
+  log.injected = ctx ? { files: trace.context, policy: !!settings.policyPrompt.trim(), tokens: trace.contextTokens, placement: settings.contextPlacement } : null;
   if (ctx) {
     if (kind === 'chat') body.messages = injectContext(messages, ctx, settings.contextPlacement);
     else body.prompt = `${ctx}\n\n${contentText(messages[0].content)}`;

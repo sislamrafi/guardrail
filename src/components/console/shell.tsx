@@ -12,7 +12,7 @@ import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
 import { GroupEditor, GroupsHome } from './views/groups';
-import { GuardPage } from './views/guard';
+import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
 import { OverviewPage } from './views/overview';
 import { RuleEditor, RulesHome } from './views/rules';
@@ -341,6 +341,8 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
       return id === 'new' ? { title: 'New rule', icon: 'filter' } : { title: data?.rules.find((r) => r.id === n)?.name ?? 'Rule', icon: 'filter' };
     case 'activity':
       return { title: `Request ${id.slice(0, 8)}`, icon: 'activity' };
+    case 'guard':
+      return { title: data?.settings.guard.layers.find((l) => l.id === id)?.name ?? 'Layer', icon: 'guard' };
     default:
       return { title: VIEW_LABEL[view], icon: VIEW_ICON[view] };
   }
@@ -448,7 +450,7 @@ function Editor(): ReactNode {
     case 'activity':
       return id ? <LogDetail id={id} /> : <ActivityHome />;
     case 'guard':
-      return <GuardPage />;
+      return id ? <LayerEditor id={id} /> : <GuardPage />;
     case 'servers':
       return id === 'new' ? <ServerNew /> : id ? <ServerEditor id={n} /> : <ServersHome />;
     case 'groups':

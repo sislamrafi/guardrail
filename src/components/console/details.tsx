@@ -7,6 +7,7 @@ import { Stat, ago, fmtTokens } from './kit';
 import { pathFor, subtree, useNav } from './nav';
 import { useStore } from './store';
 import type { Data, FileC, GroupC } from './types';
+import { LayersPanel } from './views/guard';
 
 /** The secondary sidebar: stats for the open file, or for the selected group. */
 export function Details({ width }: { width: number }) {
@@ -21,9 +22,9 @@ export function Details({ width }: { width: number }) {
   return (
     <aside className="cx-side cx-right" style={{ width }} aria-label="Details">
       <div className="cx-side-head">
-        <span>{file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
+        <span>{nav.view === 'guard' ? 'GUARD LAYERS' : file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
       </div>
-      <div className="cx-side-body">{file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
+      <div className="cx-side-body">{nav.view === 'guard' ? <LayersPanel data={data} /> : file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
     </aside>
   );
 }

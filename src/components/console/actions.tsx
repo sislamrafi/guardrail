@@ -127,9 +127,9 @@ export function useActions() {
         }, enabled ? `Every model on ${s.name} is on` : `Every model on ${s.name} is off`),
       rediscover: (s: ServerC) =>
         ui.run(async () => {
-          const r = await api<{ ok: boolean; error?: string; found?: number; newModels?: number }>(`servers/${s.id}/rediscover`, { body: {} });
+          const r = await api<{ ok: boolean; error?: string; found?: number; newModels?: number; notes?: string[] }>(`servers/${s.id}/rediscover`, { body: {} });
           if (!r.ok) throw new Error(`Could not reach ${s.name}: ${r.error}`);
-          ui.toast(`${s.name}: ${r.found} models${r.newModels ? `, ${r.newModels} new (off until you turn them on)` : ''}`);
+          ui.toast(`${s.name}: ${r.found} models${r.newModels ? `, ${r.newModels} new (off until you turn them on)` : ''}${r.notes?.length ? `. ${r.notes.join(' ')}` : ''}`);
         }),
       renameServer: (s: ServerC, name: string) => ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { name } }), 'Renamed'),
       deleteServer: async (s: ServerC) => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Ico } from '../icons';
-import { Empty, Loading, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
+import { Empty, Loading, Page, Section, Seg, Stat, clock, fmt, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { LogEntry } from '../types';
@@ -133,7 +133,6 @@ export function OverviewPage() {
                     <span className={`cx-sdot ${s.status}`} />
                     <b>{s.name}</b>
                     <span className="mono cx-muted grow">{s.url}</span>
-                    {s.role === 'guard' && <Pill tone="info">guard</Pill>}
                     <span className="cx-muted">{s.status === 'online' ? ms(s.latency_ms) : s.status}</span>
                   </button>
                 ))}

@@ -25,6 +25,8 @@ export interface Model {
   kind: ModelKind | null;
   /** The admin's choice, when the detection was wrong. */
   kind_override: ModelKind | null;
+  /** Added by hand because discovery missed it. */
+  manual: number;
   enabled: number;
   present: number;
   discovered_at: number;
@@ -129,19 +131,60 @@ function authHeaders(apiKey: string | null | undefined): Record<string, string> 
 }
 
 /** Ask a vLLM server which models it serves. */
+// Extra listings some providers keep apart from /v1/models (OpenRouter hides some non-text and
+// moderation models from the default list). Each is optional: a 404 or error is noted, never fatal.
+const EXTRA_LISTINGS = ['/v1/models?output_modalities=all', '/v1/embeddings/models', '/v1/moderations/models'];
+
+async function fetchListing(base: string, path: string, apiKey: string | null | undefined, timeoutMs: number): Promise<RawModel[]> {
+  const res = await fetch(`${base}${path}`, { headers: authHeaders(apiKey), signal: AbortSignal.timeout(timeoutMs), cache: 'no-store' });
+  if (!res.ok) throw new Error(`Server answered ${res.status} ${res.statusText}`.trim());
+  const body = (await res.json()) as { data?: unknown };
+  return (Array.isArray(body.data) ? body.data : []).filter((m): m is RawModel => !!m && typeof (m as RawModel).id === 'string');
+}
+
+/**
+ * Ask a server which models it serves: /v1/models plus a few optional listings, merged by id.
+ * Fails only when no listing answers at all; `notes` says which optional ones were unavailable.
+ */
 export async function discover(url: string, apiKey?: string | null, timeoutMs = 5000) {
   const base = normalizeUrl(url);
   const t0 = performance.now();
-  const res = await fetch(`${base}/v1/models`, {
-    headers: authHeaders(apiKey),
-    signal: AbortSignal.timeout(timeoutMs),
-    cache: 'no-store',
-  });
+  const main = await fetchListing(base, '/v1/models', apiKey, timeoutMs).then(
+    (v) => ({ ok: true as const, v }),
+    (e: unknown) => ({ ok: false as const, e }),
+  );
   const latency = Math.round(performance.now() - t0);
-  if (!res.ok) throw new Error(`Server answered ${res.status} ${res.statusText}`.trim());
-  const body = (await res.json()) as { data?: RawModel[] };
-  const models: DiscoveredModel[] = (body.data ?? []).filter((m) => m && typeof m.id === 'string').map(parseModel);
-  return { base, latency, models };
+  const extras = await Promise.all(
+    EXTRA_LISTINGS.map((p) =>
+      fetchListing(base, p, apiKey, Math.min(timeoutMs, 4000)).then(
+        (v) => ({ p, v }),
+        () => ({ p, v: null }),
+      ),
+    ),
+  );
+  if (!main.ok && extras.every((x) => !x.v?.length)) throw main.e instanceof Error ? main.e : new Error(String(main.e));
+  const byId = new Map<string, RawModel>();
+  for (const m of [...(main.ok ? main.v : []), ...extras.flatMap((x) => x.v ?? [])]) if (!byId.has(m.id)) byId.set(m.id, m);
+  const models: DiscoveredModel[] = [...byId.values()].map(parseModel);
+  const notes = main.ok ? [] : ['The main /v1/models listing was unavailable; models come from other listings.'];
+  const missing = extras.filter((x) => !x.v).length;
+  if (missing && extras.some((x) => x.v)) notes.push('Some optional model listings were unavailable.');
+  return { base, latency, models, notes };
+}
+
+/** Add a model the listings missed, by its exact id. Starts off for clients. */
+export function addModelByHand(serverId: number, name: string): Model {
+  const id = name.trim();
+  if (!id) throw new Error('Type the model id, exactly as the server knows it.');
+  if (!getServer(serverId)) throw new Error('Server not found.');
+  const db = getDb();
+  try {
+    db.prepare('INSERT INTO models (server_id, name, context_len, kind, enabled, present, manual, discovered_at) VALUES (?, ?, NULL, ?, 0, 1, 1, ?)').run(serverId, id, detectKind({ id }), now());
+  } catch (e) {
+    if (String(e).includes('UNIQUE')) throw new Error(`${id} is already on this server.`);
+    throw e;
+  }
+  return db.prepare('SELECT * FROM models WHERE server_id = ? AND name = ?').get(serverId, id) as Model;
 }
 
 export function listServers(): Server[] {
@@ -167,7 +210,7 @@ export function listModels(serverId?: number): Model[] {
 
 /** Every client-usable model with its server: enabled, still served, on an inference server. */
 export function listModelsForRouting(): { name: string; server: Server }[] {
-  const servers = new Map(listServers().filter((s) => s.role === 'inference').map((s) => [s.id, s]));
+  const servers = new Map(listServers().map((s) => [s.id, s]));
   return listModels()
     .filter((m) => m.enabled && m.present && servers.has(m.server_id))
     .map((m) => ({ name: m.name, server: servers.get(m.server_id)! }));
@@ -192,7 +235,7 @@ export function createServer(input: {
         `INSERT INTO servers (name, url, api_key, role, status, latency_ms, last_checked, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(name, url, input.apiKey || null, input.role ?? 'inference', input.models.length ? 'online' : 'unknown', input.latency ?? null, now(), now());
+      .run(name, url, input.apiKey || null, 'inference', input.models.length ? 'online' : 'unknown', input.latency ?? null, now(), now());
     const id = Number(r.lastInsertRowid);
     const enabled = new Set(input.enabled ?? input.models.map((m) => m.name));
     const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, kind, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
@@ -216,7 +259,7 @@ export function updateServer(id: number, patch: { name?: string; url?: string; a
       patch.name?.trim() || s.name,
       patch.url ? normalizeUrl(patch.url) : s.url,
       patch.apiKey === undefined ? s.api_key : patch.apiKey || null,
-      patch.role ?? s.role,
+      'inference',
       id,
     );
   return getServer(id)!;
@@ -244,13 +287,14 @@ export async function rediscover(id: number) {
   if (!s) throw new Error('Server not found.');
   const db = getDb();
   try {
-    const { latency, models } = await discover(s.url, s.api_key);
+    const { latency, models, notes } = await discover(s.url, s.api_key);
     const names = new Set(models.map((m) => m.name));
     let added = 0;
     const tx = db.transaction(() => {
       const existing = listModels(id);
       const have = new Set(existing.map((m) => m.name));
-      for (const m of existing) db.prepare('UPDATE models SET present = ? WHERE id = ?').run(names.has(m.name) ? 1 : 0, m.id);
+      // Models added by hand stay: listings often leave them out.
+      for (const m of existing) if (!m.manual) db.prepare('UPDATE models SET present = ? WHERE id = ?').run(names.has(m.name) ? 1 : 0, m.id);
       for (const m of models) {
         if (have.has(m.name)) {
           db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ?, kind = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, kindOf(m), id, m.name);
@@ -262,7 +306,7 @@ export async function rediscover(id: number) {
       db.prepare("UPDATE servers SET status = 'online', latency_ms = ?, last_error = NULL, last_checked = ? WHERE id = ?").run(latency, now(), id);
     });
     tx();
-    return { ok: true as const, latency, found: models.length, newModels: added };
+    return { ok: true as const, latency, found: models.length, newModels: added, notes };
   } catch (e) {
     markDown(id, e);
     return { ok: false as const, error: errMsg(e) };

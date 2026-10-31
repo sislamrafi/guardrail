@@ -5,6 +5,7 @@ import { useActions } from '../actions';
 import { Ico } from '../icons';
 import { Dialog, Empty, Field, IconBtn, Loading, Note, Page, Pill, Section, Seg, Stat, Switch, ago, fmtTokens, ms, price, secretProps } from '../kit';
 import { pathFor, useNav } from '../nav';
+import { ADAPTERS, detectAdapter } from '@/lib/adapters';
 import { api, useStore, useUi } from '../store';
 import { KINDS, KIND_LABEL, type Data, type LimitView, type ModelKind, type ServerC, kindOf } from '../types';
 
@@ -49,7 +50,6 @@ export function ServersHome() {
               <tr>
                 <th>Server</th>
                 <th>Status</th>
-                <th>Used for</th>
                 <th>Models on</th>
                 <th>Prefix cache</th>
                 <th>Checked</th>
@@ -64,7 +64,6 @@ export function ServersHome() {
                     <div className="mono cx-muted">{s.url}</div>
                   </td>
                   <td>{statusPill(s)}</td>
-                  <td>{s.role === 'guard' ? <Pill tone="info">Guard checks</Pill> : 'Clients'}</td>
                   <td className="tnum">
                     {s.models.filter((m) => m.enabled).length} / {s.models.length}
                   </td>
@@ -133,7 +132,7 @@ function Limits({ data, onEdit }: { data: Data; onEdit: (l: Partial<LimitView>) 
 
 export function LimitDialog({ init, data, onClose }: { init: Partial<LimitView>; data: Data; onClose: () => void }) {
   const ui = useUi();
-  const inference = data.servers.filter((s) => s.role === 'inference');
+  const inference = data.servers;
   const [scope, setScope] = useState<LimitView['scope']>(init.scope ?? 'model');
   const [serverId, setServerId] = useState<number | null>(init.server_id ?? inference[0]?.id ?? null);
   const [model, setModel] = useState(init.model_name ?? '');
@@ -213,9 +212,10 @@ interface Found {
   url?: string;
   latency?: number;
   models?: { name: string; kind?: ModelKind; contextLen: number | null; priceIn?: number | null; priceOut?: number | null }[];
+  notes?: string[];
 }
 
-export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' | 'guard'; onSaved?: (s: { id: number; name: string }) => void }) {
+export function AddServer({ onSaved }: { onSaved?: (s: { id: number; name: string }) => void }) {
   const ui = useUi();
   const nav = useNav();
   const { reload } = useStore();
@@ -224,7 +224,6 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
   const [found, setFound] = useState<Found | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [name, setName] = useState('');
-  const [asRole, setAsRole] = useState<'inference' | 'guard'>(role);
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<ModelKind | 'all'>('all');
   const [busy, setBusy] = useState(false);
@@ -255,7 +254,7 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
     setBusy(true);
     let made: { id: number; name: string } | null = null;
     await ui.run(async () => {
-      made = await api<{ id: number; name: string }>('servers', { body: { name, url: found?.url ?? url, apiKey: key, role: asRole, models: found?.models ?? [], enabled: [...picked], latency: found?.latency } });
+      made = await api<{ id: number; name: string }>('servers', { body: { name, url: found?.url ?? url, apiKey: key, models: found?.models ?? [], enabled: [...picked], latency: found?.latency } });
     }, `${name} added`);
     setBusy(false);
     if (made) {
@@ -293,8 +292,13 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
         <>
           <div className="cx-form-row center">
             <Pill tone="ok">Connected · {ms(found.latency)}</Pill>
+            {found.notes?.map((n) => (
+              <Pill key={n} tone="warn" title={n}>
+                Some listings unavailable
+              </Pill>
+            ))}
             <span className="cx-muted">
-              Found {found.models!.length} models. {picked.size} picked for {asRole === 'guard' ? 'the guard checks' : 'clients'}.
+              Found {found.models!.length} models. {picked.size} turned on for clients. Any model can still back a guard layer.
             </span>
             <span className="grow" />
             <input className="cx-input sm" type="search" placeholder="Filter models" aria-label="Filter models" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -329,7 +333,6 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
             ))}
           </div>
           <div className="cx-form-row end">
-            <Seg value={asRole} onChange={setAsRole} label="Server use" options={[['inference', 'For clients'], ['guard', 'Guard models only']]} />
             <input className="cx-input" style={{ width: 220 }} aria-label="Server name" placeholder="Server name" value={name} onChange={(e) => setName(e.target.value)} />
             <button type="button" className="cx-btn pri" disabled={busy || !name.trim()} onClick={save}>
               Save server
@@ -358,15 +361,15 @@ export function ServerEditor({ id }: { id: number }) {
   const [limit, setLimit] = useState<Partial<LimitView> | null>(null);
   const [q, setQ] = useState('');
   const s = data?.servers.find((x) => x.id === id);
-  const [form, setForm] = useState<{ name: string; url: string; key: string; role: 'inference' | 'guard' } | null>(null);
-  const f = form ?? (s ? { name: s.name, url: s.url, key: '', role: s.role } : null);
-  const dirty = !!s && !!f && (f.name !== s.name || f.url !== s.url || f.key !== '' || f.role !== s.role);
+  const [form, setForm] = useState<{ name: string; url: string; key: string } | null>(null);
+  const f = form ?? (s ? { name: s.name, url: s.url, key: '' } : null);
+  const dirty = !!s && !!f && (f.name !== s.name || f.url !== s.url || f.key !== '');
   const models = useMemo(() => (s?.models ?? []).filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase())), [s, q]);
   if (!data) return <Loading error={error} />;
   if (!s || !f) return <Empty icon="servers" title="This server was removed" />;
   const serverRule = data.limits.find((l) => l.scope === 'server' && l.server_id === s.id);
   const save = async () => {
-    if (await ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { name: f.name, url: f.url, role: f.role, ...(f.key ? { apiKey: f.key } : {}) } }), `${f.name} saved`)) setForm(null);
+    if (await ui.run(() => api(`servers/${s.id}`, { method: 'PATCH', body: { name: f.name, url: f.url, ...(f.key ? { apiKey: f.key } : {}) } }), `${f.name} saved`)) setForm(null);
   };
   return (
     <Page
@@ -414,9 +417,6 @@ export function ServerEditor({ id }: { id: number }) {
             <Field label={s.hasKey ? 'New API key (empty keeps the current one)' : 'API key (optional)'} grow>
               <input className="cx-input mono" {...secretProps} name="gr-upstream-secret" value={f.key} onChange={(e) => setForm({ ...f, key: e.target.value })} />
             </Field>
-            <Field label="Used for">
-              <Seg value={f.role} onChange={(role) => setForm({ ...f, role })} label="Used for" options={[['inference', 'Client models'], ['guard', 'Guard models only']]} />
-            </Field>
           </div>
           <div className="cx-form-row end">
             {dirty && (
@@ -433,11 +433,11 @@ export function ServerEditor({ id }: { id: number }) {
 
       <Section
         title={`Models · ${s.models.length}`}
-        hint={s.role === 'guard' ? 'Guard servers are never offered to clients; the Guard checks page picks which model to use.' : 'Turn a model on to offer it to clients. Groups then decide who may use it.'}
+        hint="Turn a model on to offer it to clients; groups then decide who may use it. Any model, on or off, can back a guard layer."
         actions={
           <>
             <input className="cx-input sm" type="search" placeholder="Filter models" aria-label="Filter models" value={q} onChange={(e) => setQ(e.target.value)} />
-            {s.role === 'inference' && (
+            {(
               <>
                 <button type="button" className="cx-btn sm" onClick={() => void act.setAllModels(s, true)}>
                   All on
@@ -473,9 +473,9 @@ export function ServerEditor({ id }: { id: number }) {
                           <th>Type</th>
                           <th>Context</th>
                           <th>Price</th>
-                          <th>{s.role === 'guard' ? 'Used for' : 'Groups that can use it'}</th>
+                          <th>Groups that can use it</th>
                           <th>Limit</th>
-                          <th>{s.role === 'guard' ? '' : 'Clients'}</th>
+                          <th>Clients</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -485,7 +485,8 @@ export function ServerEditor({ id }: { id: number }) {
                           return (
                             <tr key={m.id} className={m.enabled ? '' : 'dim'}>
                               <td className="mono">
-                                {m.name} {!m.present && <Pill tone="bad">Gone from server</Pill>}
+                                {m.name} {!m.present && <Pill tone="bad">Gone from server</Pill>} {!!m.manual && <Pill>added by hand</Pill>}
+                                {k === 'classifier' && <div className="cx-muted small">Reads as: {ADAPTERS[detectAdapter(m.name)]}</div>}
                               </td>
                               <td>
                                 <select className="cx-input sm" aria-label={`Type of ${m.name}`} value={m.kind_override ?? ''} onChange={(e) => void act.setModelKind(m.id, (e.target.value || null) as ModelKind | null)}>
@@ -499,15 +500,15 @@ export function ServerEditor({ id }: { id: number }) {
                               </td>
                               <td className="tnum">{m.context_len ? fmtTokens(m.context_len) : '–'}</td>
                               <td className="cx-muted">{price(m.price_in, m.price_out) ?? '–'}</td>
-                              <td>{s.role === 'guard' ? <span className="cx-muted">Guard checks</span> : m.enabled ? groups.join(', ') || <span className="cx-muted">No group allows it yet</span> : <span className="cx-muted">Hidden from clients</span>}</td>
+                              <td>{m.enabled ? groups.join(', ') || <span className="cx-muted">No group allows it yet</span> : <span className="cx-muted">Hidden from clients</span>}</td>
                               <td>
-                                {s.role === 'inference' && (
+                                {(
                                   <button type="button" className={`cx-pill btn ${rule ? 'info' : ''}`} onClick={() => setLimit(rule ?? { scope: 'model', server_id: s.id, model_name: m.name })}>
                                     {rule ? describe(rule, data) : serverRule ? 'Server limit' : 'Add'}
                                   </button>
                                 )}
                               </td>
-                              <td>{s.role === 'inference' && <Switch on={!!m.enabled} label={`Let clients use ${m.name}`} onChange={(v) => void act.toggleModel(m.id, v)} />}</td>
+                              <td>{<Switch on={!!m.enabled} label={`Let clients use ${m.name}`} onChange={(v) => void act.toggleModel(m.id, v)} />}</td>
                             </tr>
                           );
                         })}
@@ -520,8 +521,30 @@ export function ServerEditor({ id }: { id: number }) {
           </div>
         )}
       </Section>
+      <AddModelById server={s} />
       {limit && <LimitDialog init={limit} data={data} onClose={() => setLimit(null)} />}
     </Page>
+  );
+}
+
+function AddModelById({ server }: { server: ServerC }) {
+  const ui = useUi();
+  const [name, setName] = useState('');
+  return (
+    <Section title="Add a model by id" hint="When discovery misses a model (some providers hide guard and moderation models), type its exact id. It starts off for clients and is kept on rediscovery.">
+      <form
+        className="cx-form-row"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (await ui.run(() => api(`servers/${server.id}/models`, { body: { name } }), `${name} added to ${server.name}`)) setName('');
+        }}
+      >
+        <input className="cx-input mono grow" value={name} onChange={(e) => setName(e.target.value)} placeholder="meta-llama/llama-guard-4-12b" aria-label="Model id" />
+        <button type="submit" className="cx-btn" disabled={!name.trim()}>
+          <Ico n="plus" size={14} /> Add model
+        </button>
+      </form>
+    </Section>
   );
 }
 
