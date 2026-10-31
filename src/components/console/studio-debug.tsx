@@ -1,5 +1,6 @@
 'use client';
 
+import { cacheOf } from '@/lib/adapters';
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import type { ScenarioSettings } from '@/lib/studio';
 import type { Plan } from '@/lib/studio-plan';
@@ -314,6 +315,8 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
                   ['Time', ms(r.decision.latency_ms)],
                   ['Fallback used', r.fellBack ? 'yes' : 'no'],
                   ['Read', r.read?.length ? r.read.join(', ') : '–'],
+                  ['Placement', r.decision.suffix ? `suffix, with ${r.decision.suffix.model}` : 'prefix'],
+                  ['Prompt cache', r.decision.cache ? `${r.decision.cache.cached.toLocaleString()} of ${r.decision.cache.prompt.toLocaleString()} tokens` : '–'],
                   ...(r.decision.error ? ([['Error', r.decision.error]] as [string, ReactNode][]) : []),
                 ]}
               />
@@ -337,7 +340,7 @@ function TurnView({ logId, raw }: { logId: string; raw?: string }) {
         ) : undefined}
       </Stage>
       <Stage mark={!reached('upstream') ? 'skip' : log.outcome === 'error' ? 'error' : 'pass'} title="Model call" answer={!reached('upstream') ? 'not called' : `${log.server ?? '–'} · ${ms(log.stages?.upstream ?? null)}`}>
-        <KV rows={[['Model', log.model ?? '–'], ['Server', log.server ?? '–'], ['Upstream time', ms(log.stages?.upstream ?? null)], ['Tokens out', fmt(log.tokens_out)], ['HTTP', log.status_code ?? '–']]} />
+        <KV rows={[['Model', log.model ?? '–'], ['Server', log.server ?? '–'], ['Upstream time', ms(log.stages?.upstream ?? null)], ['Tokens out', fmt(log.tokens_out)], ['Prompt cache', (() => { const c = cacheOf(log.response); return c ? `${c.cached.toLocaleString()} of ${c.prompt.toLocaleString()} tokens` : '–'; })()], ['HTTP', log.status_code ?? '–']]} />
         {upstream.length > 0 && <Timeline steps={upstream} />}
       </Stage>
       <Stage mark={log.outcome === 'blocked' || log.outcome === 'rejected' ? 'block' : log.outcome === 'error' ? 'error' : log.outcome === 'answered' ? 'pass' : 'flag'} title="Outcome" answer={label} />

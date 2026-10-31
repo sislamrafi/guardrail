@@ -3,7 +3,7 @@ import { buildContextBlock, estimateTokens, filesByIds } from './context';
 import { clientIp as ipOf, ipAllowed } from './ip';
 import { contentText, newSegments, renderBlocked, Segment } from './guard';
 import type { GuardLayer } from './layers';
-import { applyRedactions, runPipeline } from './pipeline';
+import { applyRedactions, layerOn, runPipeline } from './pipeline';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
 import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
 import { groupAllowed, limitsFor, listLimits, takeToken } from './limits';
@@ -52,6 +52,19 @@ export function bearer(req: Request): string | null {
 }
 
 /** Put the context block where vLLM can cache it: the very start of the prompt. */
+/** The OpenRouter provider that last answered each server and model, to keep prompt caches warm. */
+const lastProvider = new Map<string, string>();
+
+/** Put a cache breakpoint (Anthropic-style cache_control) on the last message's text. */
+export function withCacheBreakpoint(messages: Msg[]): Msg[] {
+  if (!messages.length) return messages;
+  const last = messages[messages.length - 1];
+  const parts = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : Array.isArray(last.content) ? [...(last.content as Record<string, unknown>[])] : null;
+  if (!parts?.length) return messages;
+  parts[parts.length - 1] = { ...parts[parts.length - 1], cache_control: { type: 'ephemeral' } };
+  return [...messages.slice(0, -1), { ...last, content: parts }];
+}
+
 export function injectContext(messages: Msg[], block: string, placement: 'top' | 'end'): Msg[] {
   if (!block) return messages;
   if (placement === 'end') {
@@ -225,7 +238,24 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   let outcome: Outcome = redacted ? 'redacted' : 'answered';
   const groupName = groups.find((x) => x.id === key.groupId)?.name ?? 'this group';
   const layers = opts.layers ?? settings.guard.layers;
+  // The context block and the message list the model gets, built once by one function, so a
+  // "suffix" guard layer sends exactly the same prefix as the real call (and shares its cache).
+  const files = filesByIds(eff.context);
+  const ctx = buildContextBlock(settings.policyPrompt, files);
+  const suffixOn = kind === 'chat' && layers.some((l) => l.placement === 'suffix' && layerOn(l, eff));
+  const forwardMessages = (msgs: Msg[]) => {
+    const m = ctx ? injectContext(msgs, ctx, settings.contextPlacement) : msgs;
+    // Anthropic and Gemini models only cache from explicit breakpoints: mark the end of the shared part.
+    return suffixOn && /anthropic\/|claude|gemini/i.test(model) ? withCacheBreakpoint(m) : m;
+  };
+  // OpenRouter spreads a model over several providers, each with its own cache. For suffix checks ask
+  // for the provider that served this model last, so the check and the call land on the same cache.
+  const onOpenRouter = /openrouter\.ai/i.test(routes[0].server.url);
+  const stickyKey = `${routes[0].server.id}::${model}`;
+  if (suffixOn && onOpenRouter && !body.provider && lastProvider.get(stickyKey)) body.provider = { order: [lastProvider.get(stickyKey)], allow_fallbacks: true };
+  const conversation = suffixOn ? { body: { ...body, model, messages: forwardMessages(messages) }, model, serverId: routes[0].server.id } : null;
   const pipe = await runPipeline({
+    conversation,
     segments,
     layers,
     resolution: res,
@@ -265,6 +295,12 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     outcome = 'redacted';
   }
   if (pipe.cleared && outcome === 'answered') outcome = 'false_alarm';
+  // The suffix check warmed one provider's cache: send the real call there too.
+  const warmed = pipe.results.find((x) => x.decision?.suffix && x.decision.provider)?.decision?.provider;
+  if (suffixOn && onOpenRouter && warmed) {
+    body.provider = { ...(body.provider as object), order: [warmed], allow_fallbacks: true };
+    lastProvider.set(stickyKey, warmed);
+  }
 
   // A router layer picked the model. Only a model this key may use; otherwise keep the client's.
   if (pipe.route && pipe.route.model !== model) {
@@ -281,22 +317,18 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
 
   // 6. Project context
   lap();
-  const files = filesByIds(eff.context);
-  const ctx = buildContextBlock(settings.policyPrompt, files);
   trace.context = files.map((f) => ({ name: f.name, tokens: estimateTokens(f.body) }));
   trace.contextTokens = ctx ? estimateTokens(ctx) : 0;
   trace.placement = settings.contextPlacement;
   log.injected = ctx ? { files: trace.context, policy: !!settings.policyPrompt.trim(), tokens: trace.contextTokens, placement: settings.contextPlacement } : null;
   if (ctx) {
-    if (kind === 'chat') body.messages = injectContext(messages, ctx, settings.contextPlacement);
+    if (kind === 'chat') body.messages = forwardMessages(messages);
     else body.prompt = `${ctx}\n\n${contentText(messages[0].content)}`;
     steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${files.map((f) => f.name).join(', ') || 'Policy prompt'} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
   } else {
     // Nothing selected: the request goes on exactly as the client sent it (after any redaction).
-    if (redacted) {
-      if (kind === 'chat') body.messages = messages;
-      else body.prompt = contentText(messages[0].content);
-    }
+    if (kind === 'chat') body.messages = forwardMessages(messages);
+    else if (redacted) body.prompt = contentText(messages[0].content);
     steps.push({ tone: 'neutral', head: 'No context added', ms: at(), text: `${groupName} has no context files and the policy prompt is empty, so nothing was added to the request.` });
   }
   stages.context = lap();
@@ -335,6 +367,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       const json = (await up.json()) as { usage?: { completion_tokens?: number } };
       stages.upstream = at() - tStart;
       steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, answered`, ms: at(), text: `${json.usage?.completion_tokens ?? '?'} tokens.` });
+      if (typeof (json as { provider?: unknown }).provider === 'string') lastProvider.set(`${r.server.id}::${model}`, (json as unknown as { provider: string }).provider);
       finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null, response: responseFromJson(json) });
       return Response.json(json, { headers: { 'x-guardrail-request-id': id } });
     }
@@ -353,6 +386,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       done = true;
       stages.upstream = at() - tStart;
       steps.push({ tone: interrupted ? 'warn' : 'ok', head: `${label} · ${r.server.name}, ${how}`, ms: at(), text: `Streamed ${usage ?? chunks} ${usage ? 'tokens' : 'chunks'}.` });
+      if (collect.provider) lastProvider.set(`${r.server.id}::${model}`, collect.provider);
       updateLog(id, { latency_ms: Math.round(at()), tokens_out: usage ?? chunks, stages, steps, response: collect.result({ interrupted }) });
     };
     const out = new ReadableStream<Uint8Array>({

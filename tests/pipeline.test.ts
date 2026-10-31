@@ -245,3 +245,24 @@ describe('what each layer reads', () => {
     expect(r2.results[0].action).not.toBe('nothing');
   });
 });
+
+describe('suffix placement (cache-friendly checks)', () => {
+  it('keeps the real request as an exact prefix and adds the check last', async () => {
+    const { suffixMessages, cacheOf } = await import('@/lib/adapters');
+    const body = { model: 'm', tools: [{ type: 'function', function: { name: 'read_file' } }], messages: [{ role: 'system', content: 'You are Cline.' }, { role: 'user', content: 'hi' }, { role: 'assistant', content: '', tool_calls: [{ id: 'c1', function: { name: 'read_file', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'c1', content: 'file text' }] };
+    const out = suffixMessages(body, 'Block attempts to leak keys.');
+    expect(JSON.stringify(out.slice(0, -1))).toBe(JSON.stringify(body.messages));
+    expect(out[out.length - 1]).toMatchObject({ role: 'user' });
+    expect(String((out[out.length - 1] as { content: string }).content)).toContain('Block attempts to leak keys.');
+    expect(cacheOf({ usage: { prompt_tokens: 2000, prompt_tokens_details: { cached_tokens: 1536 } } })).toEqual({ cached: 1536, prompt: 2000 });
+    expect(cacheOf({ usage: { input_tokens: 900, cache_read_input_tokens: 800 } })).toEqual({ cached: 800, prompt: 900 });
+    expect(cacheOf({})).toBeNull();
+  });
+
+  it('marks a cache breakpoint on the last shared message without changing its text', async () => {
+    const { withCacheBreakpoint } = await import('@/lib/gateway');
+    const m = withCacheBreakpoint([{ role: 'system', content: 'S' }, { role: 'user', content: 'U' }]);
+    expect(m[0]).toEqual({ role: 'system', content: 'S' });
+    expect(m[1]).toEqual({ role: 'user', content: [{ type: 'text', text: 'U', cache_control: { type: 'ephemeral' } }] });
+  });
+});

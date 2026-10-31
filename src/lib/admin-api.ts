@@ -12,6 +12,7 @@ import { type DiscoveredModel, addModelByHand, createServer, deleteServer, disco
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
+import { getDb } from './db';
 import { probeFormat } from './adapters';
 import { planFor } from './studio-plan';
 import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
@@ -294,6 +295,25 @@ const routes: Record<string, Handler> = {
     const meta = modelMeta(server.id, model);
     if (meta?.api === 'decisions') return { adapter: 'decisions', why: 'The server lists this model as Decisions-API only (no probe needed).', raw: '' };
     return probeFormat({ url: server.url, apiKey: server.api_key, model });
+  },
+  // How often a layer's suffix checks (and the model calls after them) hit the prompt cache lately.
+  'GET guard/cache/:id': ({ params }) => {
+    const id = params[0];
+    const rows = getDb().prepare("SELECT decisions FROM request_logs WHERE decisions LIKE ? ORDER BY ts DESC LIMIT 200").all(`%"id":"${id.replace(/[%_"]/g, '')}"%`) as { decisions: string }[];
+    let n = 0, cached = 0, prompt = 0;
+    for (const r of rows) {
+      try {
+        const d = (JSON.parse(r.decisions) as { id: string; decision?: { cache?: { cached: number; prompt: number } | null } }[]).find((x) => x.id === id)?.decision?.cache;
+        if (d && d.prompt > 0) {
+          n++;
+          cached += d.cached;
+          prompt += d.prompt;
+        }
+      } catch {
+        // skip a broken row
+      }
+    }
+    return { calls: n, cached, prompt, rate: prompt ? cached / prompt : null };
   },
   'POST guard/test': async ({ body }) => {
     const s = getSettings();

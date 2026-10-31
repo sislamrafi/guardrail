@@ -15,6 +15,8 @@ export class StreamCollector {
   private usage: ModelResponse['usage'] = null;
   private truncated = false;
   private tail = '';
+  /** The backend that answered (OpenRouter puts "provider" on each chunk). */
+  provider: string | null = null;
 
   /** Feed raw text from the stream; it may split lines anywhere. */
   push(chunk: string) {
@@ -45,6 +47,7 @@ export class StreamCollector {
       return;
     }
     if (j.usage) this.usage = j.usage;
+    if (typeof (j as { provider?: unknown }).provider === 'string') this.provider = (j as { provider: string }).provider;
     const c = j.choices?.[0];
     if (!c) return;
     if (c.finish_reason) this.finish = c.finish_reason;

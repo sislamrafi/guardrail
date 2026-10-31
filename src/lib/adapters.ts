@@ -23,6 +23,12 @@ export interface Decision {
   quote?: string | null;
   /** The option a decision model chose (choice questions), used by router layers. */
   label?: string;
+  /** Prompt caching on this call: tokens read from cache out of the prompt's tokens, when the server says. */
+  cache?: { cached: number; prompt: number } | null;
+  /** Suffix layers: the check went after the conversation, with this model. */
+  suffix?: { model: string };
+  /** The backend that answered, when the server says (OpenRouter's "provider"). */
+  provider?: string | null;
 }
 
 export const ADAPTERS = {
@@ -179,6 +185,8 @@ export interface CallInput {
   decision?: DecisionSchema;
   /** The server supports structured output: judges get a JSON schema, so the answer is always readable. */
   structured?: boolean;
+  /** Suffix placement: the exact body the model will get; the check is appended as a last user message. */
+  suffixBody?: Record<string, unknown> | null;
 }
 
 // The judge contract as a JSON schema, for servers with structured output.
@@ -188,6 +196,28 @@ const JUDGE_SCHEMA = {
   required: ['verdict', 'score', 'reason', 'categories'],
   additionalProperties: false,
 };
+
+/** How much of a call's prompt came from the server's cache (OpenAI / OpenRouter / Anthropic-style usage). */
+export function cacheOf(body: unknown): { cached: number; prompt: number } | null {
+  const u = (body as { usage?: { prompt_tokens?: number; input_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; cache_read_input_tokens?: number } } | null)?.usage;
+  if (!u) return null;
+  const prompt = Number(u.prompt_tokens ?? u.input_tokens ?? 0);
+  const cached = Number(u.prompt_tokens_details?.cached_tokens ?? u.cache_read_input_tokens ?? 0);
+  return prompt > 0 ? { cached: Number.isFinite(cached) ? cached : 0, prompt } : null;
+}
+
+/** Suffix placement: the real conversation unchanged, then the check as one last user message. */
+export function suffixMessages(body: Record<string, unknown>, guardPrompt: string): unknown[] {
+  const msgs = Array.isArray(body.messages) ? body.messages : [];
+  const ask = [
+    'STOP. Do not continue the conversation above and do not call any tools.',
+    'You are now a security reviewer. Review the conversation above, especially the latest user message, tool calls and tool results, for the following:',
+    guardPrompt.trim(),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return [...msgs, { role: 'user', content: ask }];
+}
 
 const JSON_INSTRUCTION = '\n\nAnswer with JSON only, in this shape: {"verdict": "allow" or "block", "score": 0 to 1, "reason": "one short sentence", "categories": []}';
 
@@ -254,8 +284,15 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
     }
     // Chat-based adapters.
     const system = c.adapter === 'json_judge' ? c.prompt + JSON_INSTRUCTION : c.prompt;
-    const messages = c.adapter === 'llama_guard' ? [{ role: 'user', content: c.content }] : [...(system.trim() ? [{ role: 'system', content: system }] : []), { role: 'user', content: c.content }];
-    const body: Record<string, unknown> = { model: c.model, messages, temperature: 0, max_tokens: c.adapter === 'json_judge' || c.adapter === 'text' ? 1024 : 20, stream: false };
+    const suffix = c.suffixBody && (c.adapter === 'json_judge' || c.adapter === 'text' || c.adapter === 'yes_no') ? c.suffixBody : null;
+    const messages = suffix
+      ? suffixMessages(suffix, system)
+      : c.adapter === 'llama_guard'
+        ? [{ role: 'user', content: c.content }]
+        : [...(system.trim() ? [{ role: 'system', content: system }] : []), { role: 'user', content: c.content }];
+    // Suffix: everything that shapes the prompt (tools, tool_choice, provider) stays as in the real request.
+    const keep = suffix ? Object.fromEntries(Object.entries(suffix).filter(([k]) => ['tools', 'tool_choice', 'functions', 'provider', 'parallel_tool_calls'].includes(k))) : {};
+    const body: Record<string, unknown> = { ...keep, model: c.model, messages, temperature: 0, max_tokens: c.adapter === 'json_judge' || c.adapter === 'text' ? 1024 : 20, stream: false };
     if (c.reasoningEffort && (c.adapter === 'json_judge' || c.adapter === 'text')) body.reasoning_effort = c.reasoningEffort;
     if (c.adapter === 'yes_no') Object.assign(body, { logprobs: true, top_logprobs: 5 });
     if (c.adapter === 'json_judge') body.response_format = c.structured ? { type: 'json_schema', json_schema: { name: 'guard_decision', strict: true, schema: JUDGE_SCHEMA } } : { type: 'json_object' };
@@ -275,15 +312,18 @@ export async function callAdapter(c: CallInput): Promise<Decision> {
     const content = choice?.message?.content ?? '';
     const reasoning = choice?.message?.reasoning_content ?? choice?.message?.reasoning ?? '';
     const raw = reasoning ? `${content}\n\n[reasoning]\n${reasoning}` : content || r.text;
-    if (c.adapter === 'llama_guard') return done(parseLlamaGuard(content), raw);
+    const cache = cacheOf(j);
+    const provider = typeof (j as { provider?: unknown } | null)?.provider === 'string' ? ((j as { provider: string }).provider) : null;
+    const extra = { cache, provider, ...(suffix ? { suffix: { model: c.model } } : {}) };
+    if (c.adapter === 'llama_guard') return { ...done(parseLlamaGuard(content), raw), ...extra };
     if (c.adapter === 'yes_no') {
       const top = choice?.logprobs?.content?.[0]?.top_logprobs ?? [];
       const yes = top.filter((t) => /^\s*yes/i.test(t.token)).reduce((a, t) => a + Math.exp(t.logprob), 0);
       const no = top.filter((t) => /^\s*no/i.test(t.token)).reduce((a, t) => a + Math.exp(t.logprob), 0);
-      return done(parseYesNo(content, yes + no > 0 ? yes / (yes + no) : null, c.threshold), raw);
+      return { ...done(parseYesNo(content, yes + no > 0 ? yes / (yes + no) : null, c.threshold), raw), ...extra };
     }
     const p = c.adapter === 'text' ? parseText(content) : parseJudge(content);
-    return done(p, raw);
+    return { ...done(p, raw), ...extra };
   } catch (e) {
     const msg = e instanceof Error ? (e.name === 'TimeoutError' ? `timed out after ${c.timeoutMs} ms` : e.message) : String(e);
     return errored(msg);

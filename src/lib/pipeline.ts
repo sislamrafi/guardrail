@@ -3,7 +3,7 @@
 import { type Decision, callAdapter } from './adapters';
 import type { Effective, Resolution } from './groups';
 import { type Scan, type Segment, builtinScore, judgeInput, windows } from './guard';
-import { type GuardLayer, type ModelMeta, adapterFor, decisionFor, mappingFor } from './layers';
+import { type GuardLayer, type ModelMeta, adapterFor, canSuffix, decisionFor, mappingFor } from './layers';
 import type { Server } from './servers';
 
 export type LayerAction = 'off' | 'skipped' | 'nothing' | 'pass' | 'flag' | 'block' | 'redact' | 'cleared' | 'route';
@@ -92,6 +92,8 @@ export interface PipelineInput {
   serverOf: (id: number) => Server | undefined;
   /** The request's text for a layer with its own "reads" setting; without it every layer gets `segments`. */
   segmentsFor?: (scan: Scan) => Segment[];
+  /** The exact body the model will get, its model and server: "suffix" layers append their check to it. */
+  conversation?: { body: Record<string, unknown>; model: string; serverId: number } | null;
   /** What the server said about a model (Decisions API, structured output), for Auto. */
   metaOf?: (serverId: number | null, model: string) => ModelMeta | null;
 }
@@ -120,8 +122,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       results.push({ ...base, action: 'skipped' });
       continue;
     }
-    // A layer with its own "reads" setting gets only those parts of the request.
-    const segs = layer.reads && input.segmentsFor ? input.segmentsFor(layer.reads) : segments;
+    // A suffix layer reads the whole request as the model gets it; others what they are set to read.
+    const suffix = layer.placement === 'suffix' && input.conversation && canSuffix(adapterFor(layer, input.metaOf?.(layer.serverId, layer.model) ?? null)) ? input.conversation : null;
+    const everything = { user: true, tool: true, system: true, toolCalls: true, history: true };
+    const segs = suffix && input.segmentsFor ? input.segmentsFor(everything) : layer.reads && input.segmentsFor ? input.segmentsFor(layer.reads) : segments;
     const read = [...new Set(segs.map((x) => x.source))];
     if (!segs.length && !flagged) {
       results.push({ ...base, action: 'nothing', read });
@@ -135,7 +139,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     if (layer.type === 'patterns') d = patternsDecision(segs, threshold);
     else if (layer.type === 'redactor') d = redactorDecision(segs);
     else {
-      const server = layer.serverId ? serverOf(layer.serverId) : undefined;
+      // "Same model as the request": check with the request's own model and server, so the cache is shared.
+      const useReq = !!suffix && layer.sameModel;
+      const server = useReq ? serverOf(suffix!.serverId) : layer.serverId ? serverOf(layer.serverId) : undefined;
+      const model = useReq ? suffix!.model : layer.model;
       const prompt = [
         layer.prompt.trim(),
         layer.failHint.trim() && `Block when: ${layer.failHint.trim()}`,
@@ -144,7 +151,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       ]
         .filter(Boolean)
         .join('\n\n');
-      const meta = input.metaOf?.(layer.serverId, layer.model) ?? null;
+      const meta = input.metaOf?.(useReq ? suffix!.serverId : layer.serverId, model) ?? null;
       d = server
         ? await callAdapter({
             adapter: adapterFor(layer, meta),
@@ -153,7 +160,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
             decision: decisionFor(layer),
             url: server.url,
             apiKey: server.api_key,
-            model: layer.model,
+            model,
+            suffixBody: suffix?.body ?? null,
             prompt,
             content: judgeInput(segs, flagged ? flagQuote : null),
             windows: windows(segs).map((w) => w.text),

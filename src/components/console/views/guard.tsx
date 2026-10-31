@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ADAPTERS, type AdapterId, type Decision } from '@/lib/adapters';
 import type { Scan } from '@/lib/guard';
-import { type GuardLayer, LAYER_TYPES, adapterFor, autoAdapter, decisionFor, mappingFor, normalizeLayer } from '@/lib/layers';
+import { type GuardLayer, LAYER_TYPES, adapterFor, autoAdapter, canSuffix, decisionFor, mappingFor, normalizeLayer } from '@/lib/layers';
 import { type CustomMapping, PRESETS, parseMapped, presetFor, withPreset } from '@/lib/mapping';
 import { ModelPicker } from '../model-picker';
 import { DECISION_PRESETS, type DecisionSchema, ROUTING_PRESET, schemaProblem } from '@/lib/decisions';
@@ -326,6 +326,8 @@ export function DecisionRow({ r }: { r: LayerResult }) {
         ))}
         <span className="cx-muted small grow">{d?.error ?? d?.reason ?? ''}</span>
         {r.read && r.read.length > 0 && <span className="cx-muted small" title="What this layer read">read: {r.read.join(', ')}</span>}
+        {d?.suffix && <Pill tone="info">suffix · {d.suffix.model}</Pill>}
+        {d?.cache && <span className="mono cx-muted small" title="Prompt tokens served from the cache">cache {d.cache.cached.toLocaleString()}/{d.cache.prompt.toLocaleString()}</span>}
       </summary>
       {d && (
         <div className="cx-cols">
@@ -516,6 +518,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               {probe.raw && <pre className="cx-pre small">{probe.raw}</pre>}
             </Note>
           )}
+          {canSuffix(fmt) && <PlacementField l={l} set={set} data={data} index={index} />}
           {fmt === 'custom' && <MappingEditor l={l} set={set} />}
           {fmt === 'decisions' && <DecisionEditor l={l} set={set} data={data} />}
           {router && <RoutesEditor l={l} set={set} data={data} />}
@@ -573,7 +576,13 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
           </Field>
           )}
         </div>
-        <ReadsField l={l} set={set} global={data.settings.guard.scan} />
+        {l.placement === 'suffix' && canSuffix(fmt) ? (
+          <Field label="What this layer reads" hint="Suffix checks read the whole request as the model gets it (system prompt, context, tools, every message), so its prefix matches the real call.">
+            <span className="cx-muted small">Everything (set by the suffix placement)</span>
+          </Field>
+        ) : (
+          <ReadsField l={l} set={set} global={data.settings.guard.scan} />
+        )}
         {usesThreshold && (
           <div className="cx-form-row center">
             <Field label={<>Counts as a hit at score <b className="mono">{l.threshold.toFixed(2)}</b> or more</>} grow>
@@ -925,5 +934,62 @@ function ReadsField({ l, set, global }: { l: GuardLayer; set: (p: Partial<GuardL
         </div>
       )}
     </Field>
+  );
+}
+
+const isLocal = (url: string) => /\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\]|[^/.]+(:\d+)?(\/|$))/.test(url);
+
+/**
+ * Prefix or suffix. Suffix sends the request exactly as the model will get it, with the check as the
+ * last message, so a server with prompt caching reuses the conversation for the check and the call.
+ */
+function PlacementField({ l, set, data, index }: { l: GuardLayer; set: (p: Partial<GuardLayer>) => void; data: Data; index: number }) {
+  const suffix = l.placement === 'suffix';
+  const [stats, setStats] = useState<{ calls: number; cached: number; prompt: number; rate: number | null } | null>(null);
+  useEffect(() => {
+    if (!suffix) return;
+    api<typeof stats>(`guard/cache/${l.id}`).then(setStats, () => setStats(null));
+  }, [suffix, l.id]);
+  const layers = data.settings.guard.layers;
+  const server = data.servers.find((x) => x.id === l.serverId);
+  const warnings: string[] = [];
+  if (suffix) {
+    if (!l.sameModel) warnings.push(`It checks with ${l.model || 'its own model'}. The cache is only shared when the check and the request use the same model on the same server; turn on "Use the request's model" for that.`);
+    const hosted = l.sameModel ? data.servers.some((x) => !isLocal(x.url)) : !!server && !isLocal(server.url);
+    if (hosted) warnings.push('On hosted APIs caching is up to the provider: OpenAI, DeepSeek and similar cache long prompts automatically, and GuardRail adds a cache breakpoint for Anthropic and Gemini models. OpenRouter may send the check and the request to different providers, which misses the cache.');
+    if (layers.slice(0, index).some((x) => x.type === 'redactor' || x.onFail === 'redact')) warnings.push('A layer before this one can redact text. When it does, the request the model gets differs from what this layer checked, so the cache misses.');
+    if (layers.some((x) => x.type === 'router')) warnings.push('A router layer may switch the request to another model; the check and the call then use different models.');
+    warnings.push('Providers only cache prompts above a minimum size (often 1,024 tokens), so short conversations will not hit.');
+  }
+  return (
+    <div className="cx-form">
+      <div className="cx-form-row center">
+        <Field label="Where the check goes" hint={suffix ? 'The request exactly as the model gets it (system prompt, context, tools, every message), then the check as the last message.' : 'The layer prompt first, then the new content to check.'}>
+          <Seg value={suffix ? 'suffix' : 'prefix'} label="Where the check goes" onChange={(v) => set({ placement: v })} options={[['prefix', 'Prefix'], ['suffix', 'Suffix (cache-friendly)']]} />
+        </Field>
+        {suffix && (
+          <Field label="Use the request's model" hint="Check with the same model and server the request goes to, so they share the cache.">
+            <Switch on={!!l.sameModel} label="Use the request's model" onChange={(v) => set({ sameModel: v })} />
+          </Field>
+        )}
+      </div>
+      {suffix && (
+        <Note tone="warn">
+          <b>The cache may not be hit when:</b>
+          <ul className="cx-warnlist">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+          {stats && stats.calls > 0 ? (
+            <span>
+              Measured: {Math.round((stats.rate ?? 0) * 100)}% of prompt tokens came from the cache over the last {stats.calls} checks ({stats.cached.toLocaleString()} of {stats.prompt.toLocaleString()}).
+            </span>
+          ) : (
+            <span className="cx-muted">No measured checks yet. Hit rates show here once requests go through.</span>
+          )}
+        </Note>
+      )}
+    </div>
   );
 }

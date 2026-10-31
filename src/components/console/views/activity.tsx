@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { diffMarks } from '@/components/prompt-view';
 import type { LayerResult } from '@/lib/pipeline';
 import type { ModelResponse, Step } from '@/lib/logs';
+import { cacheOf } from '@/lib/adapters';
 import { ChatView, MSG_KINDS, type MsgKind, ResponseTail, countKinds } from '../chat';
 import { Ico } from '../icons';
 import { Empty, Field, Loading, Note, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
@@ -417,6 +418,13 @@ function Summary({ d }: { d: LogEntry }) {
     ['Reason', d.reason ?? '–'],
     ['Total time', ms(d.latency_ms)],
     ['Tokens out', fmt(d.tokens_out)],
+    ...((): [string, React.ReactNode][] => {
+      const c = cacheOf(d.response);
+      return c ? [['Prompt cache (model call)', `${c.cached.toLocaleString()} of ${c.prompt.toLocaleString()} prompt tokens from cache (${Math.round((c.cached / c.prompt) * 100)}%)`]] : [];
+    })(),
+    ...(d.decisions ?? [])
+      .filter((x) => x.decision?.cache)
+      .map((x): [string, React.ReactNode] => [`Prompt cache (${x.name})`, `${x.decision!.cache!.cached.toLocaleString()} of ${x.decision!.cache!.prompt.toLocaleString()} prompt tokens from cache${x.decision!.suffix ? ' · suffix check' : ''}`]),
   ];
   const stages = Object.entries(d.stages ?? {});
   return (

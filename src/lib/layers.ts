@@ -44,6 +44,14 @@ export interface GuardLayer {
   mapping?: CustomMapping | null;
   /** For decision models: the question asked and what each answer means (null: the default injection question). */
   decision?: DecisionSchema | null;
+  /**
+   * Where the check goes. "prefix": the layer prompt first, then the content to check (default).
+   * "suffix": the request exactly as it will reach the model (system prompt, context, tools, every
+   * message), then the check question last, so a server with prefix caching reuses the cache.
+   */
+  placement?: 'prefix' | 'suffix';
+  /** Suffix layers: check with the request's own model and server instead of `model`, so the cache is shared. */
+  sameModel?: boolean;
   /** What this layer reads; null uses the global "What the layers read" setting. */
   reads?: Scan | null;
   /** Router layers: the model each answer sends the request to. */
@@ -101,6 +109,8 @@ export function normalizeLayer(raw: Partial<GuardLayer>, i = 0): GuardLayer {
     decision: raw.decision ? normalizeDecision(raw.decision) : null,
     routes: raw.routes && typeof raw.routes === 'object' ? Object.fromEntries(Object.entries(raw.routes as Record<string, unknown>).filter(([k, v]) => k.trim() && typeof v === 'string' && v.trim()).map(([k, v]) => [k.trim().slice(0, 80), String(v).trim()])) : null,
     fallbackModel: String(raw.fallbackModel ?? '').trim(),
+    placement: raw.placement === 'suffix' ? 'suffix' : 'prefix',
+    sameModel: raw.sameModel === true,
     reads: raw.reads && typeof raw.reads === 'object' ? { user: !!raw.reads.user, tool: !!raw.reads.tool, system: !!raw.reads.system, toolCalls: !!raw.reads.toolCalls, history: !!raw.reads.history } : null,
   };
 }
@@ -199,3 +209,6 @@ export function mappingFor(l: GuardLayer): CustomMapping {
 
 /** The question a decision-model layer asks: its own, else the default prompt-injection question. */
 export const decisionFor = (l: GuardLayer): DecisionSchema => l.decision ?? (l.type === 'router' ? ROUTING_PRESET : DECISION_DEFAULT);
+
+/** Formats that send a chat request with a system prompt, so the check can go after the conversation. */
+export const canSuffix = (a: AdapterId) => a === 'json_judge' || a === 'text' || a === 'yes_no';
