@@ -2,22 +2,25 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { type Mark, diffMarks, messageText } from '@/components/prompt-view';
-import type { PromptMessage, Step } from '@/lib/logs';
+import { diffMarks } from '@/components/prompt-view';
+import type { LayerResult } from '@/lib/pipeline';
+import type { Step } from '@/lib/logs';
+import { ChatView } from '../chat';
 import { Ico } from '../icons';
-import { Empty, Loading, Note, Page, Pill, clock, fmt, ms } from '../kit';
-import { pathFor, subtree, useNav } from '../nav';
+import { Empty, Field, Loading, Note, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
+import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { LogEntry } from '../types';
+import { DecisionRow } from './guard';
 
 type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number };
 
 const FILTERS: [string, string, keyof Counts][] = [
   ['', 'All', 'all'],
-  ['blocked', 'Blocked', 'blocked'],
-  ['false_alarm', 'False alarms', 'false_alarm'],
   ['clean', 'Clean', 'clean'],
-  ['error', 'Errors', 'error'],
+  ['false_alarm', 'False alarm', 'false_alarm'],
+  ['error', 'Error', 'error'],
+  ['blocked', 'Blocked', 'blocked'],
 ];
 
 export const OUTCOME: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
@@ -29,28 +32,39 @@ export const OUTCOME: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
   error: ['Error', 'bad'],
 };
 
+export const LABELS: Record<string, [string, 'ok' | 'bad' | 'info']> = {
+  mistake: ['Marked safe (mistake)', 'ok'],
+  missed_attack: ['Marked unsafe', 'bad'],
+  confirmed_safe: ['Confirmed safe', 'ok'],
+};
+
 export function Outcome({ r }: { r: Pick<LogEntry, 'outcome' | 'status_code'> }) {
   const [label, tone] = OUTCOME[r.outcome] ?? [r.outcome, 'warn'];
   return <Pill tone={tone}>{r.outcome === 'rejected' || r.outcome === 'error' ? `${label} ${r.status_code ?? ''}` : label}</Pill>;
 }
 
-function C1({ r }: { r: LogEntry }) {
-  if (r.c1_status === 'flagged') return <Pill tone="warn">{r.c1_score?.toFixed(2)} flagged</Pill>;
-  if (r.c1_status === 'clean') return <Pill tone="ok">{r.c1_score?.toFixed(2)} clean</Pill>;
-  return <Pill>{r.c1_status === 'skipped' ? 'Nothing new' : r.c1_status === 'off' ? 'Off' : 'Not run'}</Pill>;
+/** One pill for what the guard layers did. */
+function GuardPill({ r }: { r: LogEntry }) {
+  if (r.outcome === 'rejected') return <Pill>Not checked</Pill>;
+  if (r.outcome === 'blocked') return <Pill tone="bad">Blocked</Pill>;
+  if (r.outcome === 'false_alarm') return <Pill tone="warn">Flag cleared</Pill>;
+  if (r.outcome === 'redacted') return <Pill tone="warn">Redacted</Pill>;
+  if (r.c1_status === 'off' && (r.c2_status === 'off' || r.c2_status === 'skipped')) return <Pill>Bypassed</Pill>;
+  return <Pill tone="ok">Clean</Pill>;
 }
 
-function C2({ r }: { r: LogEntry }) {
-  if (r.c2_status === 'block') return <Pill tone="bad">Block</Pill>;
-  if (r.c2_status === 'error') return <Pill tone="bad">Failed, blocked</Pill>;
-  if (r.c2_status === 'allow') return <Pill tone="ok">Allow</Pill>;
-  return <Pill>{r.c2_status === 'skipped' ? 'Skipped' : r.c2_status === 'off' ? 'Off' : 'Not run'}</Pill>;
+function ModelPill({ r }: { r: LogEntry }) {
+  if (r.outcome === 'blocked' || r.outcome === 'rejected') return <Pill>Not called</Pill>;
+  if (r.outcome === 'error') return <Pill tone="bad">{r.status_code ?? 'Error'}</Pill>;
+  return <Pill tone="ok">{r.status_code ?? 200}</Pill>;
 }
 
-// ---------------------------------------------------------------- /activity
+const leaf = (g: string | null) => (g ? g.split(/ [›/] /).pop() : '–');
+const day = (ts: number) => new Date(ts).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 
-export function ActivityHome() {
-  const { data } = useStore();
+// ---------------------------------------------------------------- right sidebar: the list
+
+export function ActivityList() {
   const nav = useNav();
   const params = useSearchParams();
   const [filter, setFilter] = useState(params.get('filter') ?? '');
@@ -60,21 +74,21 @@ export function ActivityHome() {
   const [counts, setCounts] = useState<Counts | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(true);
-
+  const [test, setTest] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setQuery(q), 250);
     return () => clearTimeout(t);
   }, [q]);
   const load = useCallback(async () => {
     try {
-      const r = await api<{ rows: LogEntry[]; counts: Counts }>(`logs?filter=${filter}&q=${encodeURIComponent(query)}&limit=300`);
+      const r = await api<{ rows: LogEntry[]; counts: Counts }>(`logs?filter=${filter}&q=${encodeURIComponent(query)}&limit=300${nav.group ? `&group=${nav.group}` : ''}${test ? '&test=only' : ''}`);
       setRows(r.rows);
       setCounts(r.counts);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [filter, query]);
+  }, [filter, query, nav.group, test]);
   useEffect(() => {
     void load();
     if (!live) return;
@@ -82,96 +96,143 @@ export function ActivityHome() {
     return () => clearInterval(t);
   }, [load, live]);
 
-  const groups = data?.groups ?? [];
-  const g = groups.find((x) => x.id === nav.group);
-  const scope = g && g.parentId !== null ? subtree(g.id, groups) : null;
-  const shown = useMemo(() => (rows ?? []).filter((r) => !scope || (r.group_id !== null && scope.has(r.group_id))), [rows, scope]);
-
-  const exportCsv = () => {
-    const cols: (keyof LogEntry)[] = ['id', 'ts', 'owner', 'key_name', 'group_name', 'ip', 'model', 'server', 'schema', 'c1_score', 'c1_status', 'c2_status', 'c2_reason', 'outcome', 'status_code', 'reason', 'latency_ms', 'tokens_out', 'feedback'];
-    const cell = (v: unknown) => {
-      const s = v === null || v === undefined ? '' : typeof v === 'number' && v > 1e12 ? new Date(v).toISOString() : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const csv = [cols.join(','), ...shown.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = 'guardrail-activity.csv';
-    a.click();
-  };
-
   return (
-    <Page
-      icon="activity"
-      title={scope ? `Activity · ${g!.name}` : 'Activity'}
-      sub={scope ? 'Requests from keys in this group and its sub-groups. Pick the root group in the sidebar to see all.' : 'Every request, who sent it, and what each check decided.'}
-      wide
-      actions={
-        <>
-          <input className="cx-input sm" type="search" placeholder="Search person, key, group or ID" aria-label="Search activity" value={q} onChange={(e) => setQ(e.target.value)} />
-          <button type="button" className={`cx-btn ${live ? 'on' : ''}`} aria-pressed={live} onClick={() => setLive(!live)} title="Refresh every 10 seconds">
+    <div className="cx-alist">
+      <div className="cx-alist-tools">
+        <div className="cx-filters" role="tablist" aria-label="Outcome">
+          {FILTERS.map(([v, l, c]) => (
+            <button key={v} type="button" role="tab" aria-selected={filter === v} className={`cx-chip ${filter === v ? 'on' : ''}`} onClick={() => setFilter(v)}>
+              {l} <span>{fmt(counts?.[c] ?? 0)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="cx-form-row center nowrap">
+          <input className="cx-input sm grow" type="search" placeholder="Search key, person, model, IP or ID" aria-label="Search activity" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button type="button" className={`cx-btn sm ${live ? 'on' : ''}`} aria-pressed={live} title="Refresh every 10 seconds" onClick={() => setLive(!live)}>
             <span className={`cx-live ${live ? 'on' : ''}`} /> Live
           </button>
-          <button type="button" className="cx-btn" onClick={exportCsv} disabled={!shown.length}>
-            <Ico n="download" size={14} /> Export CSV
+          <button type="button" className={`cx-btn sm ${test ? 'on' : ''}`} aria-pressed={test} title="Show only Studio and replay traffic" onClick={() => setTest(!test)}>
+            Test
           </button>
-        </>
-      }
-    >
-      <div className="cx-filters" role="tablist" aria-label="Outcome">
-        {FILTERS.map(([v, l, c]) => (
-          <button key={v} type="button" role="tab" aria-selected={filter === v} className={`cx-chip ${filter === v ? 'on' : ''}`} onClick={() => setFilter(v)}>
-            {l} <span>{fmt(counts?.[c] ?? 0)}</span>
-          </button>
-        ))}
+        </div>
       </div>
-      {!rows ? (
-        <Loading error={err} />
-      ) : shown.length === 0 ? (
-        <Empty icon="activity" title="No requests yet">
-          Point a client at <span className="mono">/v1</span> with a key, or send one from Studio.
-        </Empty>
-      ) : (
-        <div className="cx-table-wrap">
-          <table className="cx-table">
+      <div className="cx-alist-body">
+        {!rows ? (
+          <Loading error={err} />
+        ) : rows.length === 0 ? (
+          <div className="cx-details-empty">No requests here yet.</div>
+        ) : (
+          <table className="cx-atable">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Person · key</th>
-                <th>Group</th>
-                <th>Model</th>
-                <th>Check 1 · PIGuard</th>
-                <th>Check 2 · OSS</th>
-                <th>Outcome</th>
-                <th>Latency</th>
+                <th>Key</th>
+                <th>When</th>
+                <th className="wide">Group</th>
+                <th>Guard</th>
+                <th className="wide">Model</th>
               </tr>
             </thead>
             <tbody>
-              {shown.map((r) => (
-                <tr key={r.id} className="click" tabIndex={0} onClick={() => nav.go(pathFor('activity', r.id))} onKeyDown={(e) => e.key === 'Enter' && nav.go(pathFor('activity', r.id))}>
-                  <td className="mono">{clock(r.ts)}</td>
+              {rows.map((r) => (
+                <tr key={r.id} className={nav.id === r.id ? 'sel' : ''} tabIndex={0} onClick={() => nav.go(pathFor('activity', r.id))} onKeyDown={(e) => e.key === 'Enter' && nav.go(pathFor('activity', r.id))}>
                   <td>
-                    <b>{r.owner ?? 'unknown'}</b>
-                    <div className="mono cx-muted">{r.key_name ?? 'no key'}</div>
+                    <b>{r.key_name ?? 'no key'}</b>
+                    <div className="cx-muted small narrow-only">
+                      {leaf(r.group_name)} · {r.model ?? '–'}
+                    </div>
                   </td>
-                  <td>{r.group_name ? <Pill tone="info">{r.group_name}</Pill> : <span className="cx-muted">–</span>}</td>
-                  <td className="mono">{r.model ?? '–'}</td>
+                  <td className="mono cx-muted">
+                    <div>{clock(r.ts)}</div>
+                    <div className="small">{day(r.ts)}</div>
+                  </td>
+                  <td className="wide">{leaf(r.group_name)}</td>
                   <td>
-                    <C1 r={r} />
+                    <GuardPill r={r} />
+                    {r.feedback && LABELS[r.feedback] && <div className="small" title={LABELS[r.feedback][0]}>{r.feedback === 'missed_attack' ? '⚑ unsafe' : '✓ safe'}</div>}
                   </td>
-                  <td>
-                    <C2 r={r} />
+                  <td className="wide">
+                    <ModelPill r={r} />
                   </td>
-                  <td>
-                    <Outcome r={r} />
-                  </td>
-                  <td className="tnum">{ms(r.latency_ms)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- /activity: summary and export
+
+export function ActivityHome() {
+  const { data } = useStore();
+  const nav = useNav();
+  const g = data?.groups.find((x) => x.id === nav.group);
+  const scoped = g && g.parentId !== null ? g : null;
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(weekAgo);
+  const [to, setTo] = useState(today);
+  const [labels, setLabels] = useState<'all' | 'mistake' | 'missed_attack' | 'both'>('all');
+  const [format, setFormat] = useState<'jsonl' | 'json'>('jsonl');
+  const [busy, setBusy] = useState(false);
+  const ui = useUi();
+  const [counts, setCounts] = useState<Counts | null>(null);
+  useEffect(() => {
+    api<{ counts: Counts }>(`logs?limit=1${scoped ? `&group=${scoped.id}` : ''}`).then((r) => setCounts(r.counts), () => setCounts(null));
+  }, [scoped]);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const lab = labels === 'all' ? '' : labels === 'both' ? 'mistake,missed_attack' : labels;
+      const res = await fetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Export failed (${res.status})`);
+      const n = res.headers.get('x-row-count');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(await res.blob());
+      a.download = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? `guardrail-activity.${format}`;
+      a.click();
+      ui.toast(`Exported ${n} request${n === '1' ? '' : 's'}`);
+    } catch (e) {
+      ui.toast((e as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Page icon="activity" title={scoped ? `Activity · ${scoped.name}` : 'Activity'} sub={`Pick a request in the list on the right to open its session. ${scoped ? `Showing ${scoped.path} and its sub-groups.` : 'Pick a group on the left to narrow the list.'}`}>
+      <div className="cx-stats wide">
+        <Stat label="All requests" value={fmt(counts?.all)} />
+        <Stat label="Clean" value={fmt(counts?.clean)} tone="ok" />
+        <Stat label="False alarms" value={fmt(counts?.false_alarm)} tone="warn" />
+        <Stat label="Blocked" value={fmt(counts?.blocked)} tone="bad" />
+        <Stat label="Errors" value={fmt(counts?.error)} tone="bad" />
+      </div>
+      <Section title="Export sessions" hint="Every request in the range with its full chat, what was sent to the model, each guard layer's verdict and your labels. Pick the labelled ones to build fine-tuning data.">
+        <div className="cx-form-row">
+          <Field label="From">
+            <input className="cx-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </Field>
+          <Field label="To">
+            <input className="cx-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </Field>
+          <Field label="Only">
+            <select className="cx-input" value={labels} onChange={(e) => setLabels(e.target.value as typeof labels)}>
+              <option value="all">Every request</option>
+              <option value="mistake">Blocked by mistake (marked safe)</option>
+              <option value="missed_attack">Marked unsafe</option>
+              <option value="both">Both labels</option>
+            </select>
+          </Field>
+          <Field label="Format">
+            <Seg value={format} onChange={setFormat} label="Format" options={[['jsonl', 'JSONL'], ['json', 'JSON']]} />
+          </Field>
+          <button type="button" className="cx-btn pri tall" disabled={busy || !from || !to} onClick={() => void download()}>
+            <Ico n="download" size={14} /> {busy ? 'Exporting…' : 'Export'}
+          </button>
         </div>
-      )}
+      </Section>
     </Page>
   );
 }
@@ -181,89 +242,93 @@ export function ActivityHome() {
 const TITLES: Record<string, string> = {
   answered: 'Clean request',
   redacted: 'Answered after redaction',
-  false_alarm: 'False alarm, corrected by check 2',
+  false_alarm: 'False alarm, cleared by a later layer',
   blocked: 'Blocked before the model',
   rejected: 'Rejected before the checks',
   error: 'Failed at the backend',
 };
-const FEEDBACK: Record<string, [string, string]> = {
-  blocked: ['mistake', 'This was a mistake'],
-  false_alarm: ['confirmed_safe', 'Confirm it was safe'],
-  answered: ['missed_attack', 'Report a missed attack'],
-  redacted: ['missed_attack', 'Report a missed attack'],
-};
 const EXPIRED = 'This prompt was deleted. Prompt files are kept for 20 days by default (GUARDRAIL_PROMPT_RETENTION_DAYS).';
+
+interface Replay {
+  original: { id: string; outcome: string; reason: string | null; decisions: LayerResult[] | null };
+  replay: { status: number; ms: number; text: string; error: string | null; log: LogEntry | null };
+}
 
 export function LogDetail({ id }: { id: string }) {
   const ui = useUi();
   const nav = useNav();
   const [d, setD] = useState<LogEntry | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<'steps' | 'prompt' | 'sent'>('steps');
+  const [tab, setTab] = useState<'summary' | 'session' | 'sent'>('session');
+  const [replay, setReplay] = useState<Replay | null>(null);
+  const [replaying, setReplaying] = useState(false);
   const load = useCallback(() => api<LogEntry>(`logs/${encodeURIComponent(id)}`).then(setD, (e) => setErr((e as Error).message)), [id]);
   useEffect(() => {
     void load();
   }, [load]);
   const marks = useMemo(() => (d?.forwarded ? diffMarks(d.forwarded, d.prompt) : []), [d]);
   if (!d) return <Loading error={err} />;
-  const fb = FEEDBACK[d.outcome];
+  const passed = d.outcome === 'answered' || d.outcome === 'redacted' || d.outcome === 'false_alarm';
+  const verdict = d.outcome === 'blocked' ? (['mistake', 'Mark safe (mistake)'] as const) : passed ? (['missed_attack', 'Mark unsafe'] as const) : null;
+  const label = async (v: string | null) => {
+    await ui.run(() => api(`logs/${d.id}`, { method: 'PATCH', body: { feedback: v } }), v ? `Labelled: ${LABELS[v]?.[0].toLowerCase()}` : 'Label removed', { reload: false });
+    void load();
+  };
+  const exportOne = () => {
+    const blob = new Blob([JSON.stringify({ summary: { ...d, prompt: undefined, forwarded: undefined }, chat: d.prompt, sent_to_model: d.forwarded }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${d.id}.json`;
+    a.click();
+  };
+  const runReplay = async () => {
+    setReplaying(true);
+    await ui.run(async () => setReplay(await api<Replay>(`logs/${d.id}/replay`, { body: {} })), undefined, { reload: false });
+    setReplaying(false);
+  };
   return (
     <Page
       icon="activity"
+      wide
       title={TITLES[d.outcome] ?? 'Request'}
       sub={
         <>
-          {new Date(d.ts).toLocaleString('en-GB')} · <span className="mono">{d.id}</span>
+          {new Date(d.ts).toLocaleString('en-GB')} · <span className="mono">{d.id}</span> · {d.key_name ?? 'no key'} ({d.owner ?? 'unknown'}) · {d.group_name ?? '–'}
         </>
       }
       actions={
         <>
           <Outcome r={d} />
-          {fb && (
-            <button
-              type="button"
-              className={`cx-btn ${d.feedback === fb[0] ? 'on' : ''}`}
-              onClick={async () => {
-                await ui.run(() => api(`logs/${d.id}`, { method: 'PATCH', body: { feedback: d.feedback === fb[0] ? null : fb[0] } }), d.feedback === fb[0] ? 'Feedback removed' : 'Thanks, noted for tuning', { reload: false });
-                void load();
-              }}
-            >
-              {d.feedback === fb[0] ? `Marked: ${fb[1].toLowerCase()}` : fb[1]}
+          {d.test && <Pill tone="info">Test traffic</Pill>}
+          {d.feedback && LABELS[d.feedback] ? (
+            <button type="button" className="cx-btn on" title="Remove the label" onClick={() => void label(null)}>
+              {LABELS[d.feedback][0]} ✕
             </button>
+          ) : (
+            verdict && (
+              <button type="button" className="cx-btn" onClick={() => void label(verdict[0])}>
+                {verdict[1]}
+              </button>
+            )
           )}
-          <button type="button" className="cx-btn" onClick={() => nav.go('/guard')}>
-            Tune checks
+          <button type="button" className="cx-btn" disabled={replaying || !d.prompt?.length} title="Send the same request through today's context and guard layers" onClick={() => void runReplay()}>
+            <Ico n="refresh" size={14} /> {replaying ? 'Replaying…' : 'Replay'}
+          </button>
+          <button type="button" className="cx-btn" disabled={!d.prompt?.length} title="Open this request as a new Studio scenario" onClick={() => nav.go(`/studio?from=${encodeURIComponent(d.id)}`)}>
+            <Ico n="studio" size={14} /> Open in Studio
+          </button>
+          <button type="button" className="cx-btn" onClick={exportOne}>
+            <Ico n="download" size={14} /> JSON
           </button>
         </>
       }
     >
-      <div className="cx-stats wide">
-        <div className="cx-stat">
-          <span>Person · key</span>
-          <b className="small">{d.owner ?? 'unknown'} · {d.key_name ?? 'no key'}</b>
-        </div>
-        <div className="cx-stat">
-          <span>Group</span>
-          <b className="small">{d.group_name ?? '–'}</b>
-        </div>
-        <div className="cx-stat">
-          <span>Model · server</span>
-          <b className="small mono">{d.model ?? '–'}{d.server ? ` · ${d.server}` : ''}</b>
-        </div>
-        <div className="cx-stat">
-          <span>Total time</span>
-          <b className="small">{ms(d.latency_ms)}</b>
-        </div>
-        <div className="cx-stat">
-          <span>Schema · tokens out</span>
-          <b className="small">{d.schema ?? '–'} · {fmt(d.tokens_out)}</b>
-        </div>
-      </div>
+      {replay && <ReplayView r={replay} onClose={() => setReplay(null)} />}
       <div className="cx-subtabs" role="tablist" aria-label="Request view">
         {(
           [
-            ['steps', 'What happened'],
-            ['prompt', `Prompt${d.prompt ? ` (${d.prompt.length})` : ''}`],
+            ['session', `Session${d.prompt ? ` (${d.prompt.length})` : ''}`],
+            ['summary', 'Summary'],
             ['sent', 'Sent to the model'],
           ] as const
         ).map(([t, l]) => (
@@ -272,20 +337,133 @@ export function LogDetail({ id }: { id: string }) {
           </button>
         ))}
       </div>
-      {tab === 'steps' && <Timeline steps={d.steps} />}
-      {tab === 'prompt' && <Messages messages={d.prompt} empty={d.prompt_expired ? EXPIRED : 'No prompt was recorded. The request was rejected before its body was read.'} />}
+      {tab === 'session' && <ChatView messages={d.prompt} empty={d.prompt_expired ? EXPIRED : 'No prompt was recorded. The request was rejected before its body was read.'} tail={d.outcome === 'blocked' ? <BlockedTail d={d} /> : null} />}
+      {tab === 'summary' && <Summary d={d} />}
       {tab === 'sent' && (
         <>
           {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by GuardRail (context or redaction).</Note>}
-          <Messages messages={d.forwarded} marks={marks} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
+          <ChatView messages={d.forwarded} marks={marks} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
         </>
       )}
-      {d.prompt_file && !d.prompt_expired && (
-        <p className="cx-hint">
-          Prompt file <span className="mono">{d.prompt_file}</span> in the gateway&apos;s prompts folder.
-        </p>
-      )}
     </Page>
+  );
+}
+
+function BlockedTail({ d }: { d: LogEntry }) {
+  return (
+    <div className="cx-turn blocked">
+      <div className="cx-turn-head">
+        <span>blocked reply</span>
+      </div>
+      <div className="cx-turn-body">{d.reason ?? 'Blocked.'}</div>
+    </div>
+  );
+}
+
+function Summary({ d }: { d: LogEntry }) {
+  const rows: [string, React.ReactNode][] = [
+    ['When', new Date(d.ts).toLocaleString('en-GB')],
+    ['Key · person', `${d.key_name ?? 'no key'} · ${d.owner ?? 'unknown'}`],
+    ['Group', d.group_name ?? '–'],
+    ['Client address', <span key="ip" className="mono">{d.ip ?? '–'}</span>],
+    ['Model · server', <span key="m" className="mono">{`${d.model ?? '–'}${d.server ? ` · ${d.server}` : ''}`}</span>],
+    ['Schema', d.schema ?? '–'],
+    ['Outcome', <Outcome key="o" r={d} />],
+    ['Reason', d.reason ?? '–'],
+    ['Total time', ms(d.latency_ms)],
+    ['Tokens out', fmt(d.tokens_out)],
+  ];
+  const stages = Object.entries(d.stages ?? {});
+  return (
+    <div className="cx-cols">
+      <Section title="What happened">
+        <table className="cx-table kv">
+          <tbody>
+            {rows.map(([k, v]) => (
+              <tr key={k}>
+                <td>{k}</td>
+                <td>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+      <div className="cx-form">
+        <Section title="Guard layers">{d.decisions?.length ? d.decisions.map((r) => <DecisionRow key={r.id} r={r} />) : <Note>This request was logged before guard layers, or never reached them. The timeline below shows what ran.</Note>}</Section>
+        <Section title="Context added">
+          {d.injected ? (
+            <div className="cx-list">
+              {d.injected.policy && (
+                <div className="cx-list-row">
+                  <b className="grow">Gateway policy prompt</b>
+                </div>
+              )}
+              {d.injected.files.map((f) => (
+                <div key={f.name} className="cx-list-row">
+                  <span className="mono grow">{f.name}</span>
+                  <span className="cx-muted tnum">{fmt(f.tokens)} tokens</span>
+                </div>
+              ))}
+              <div className="cx-list-row cx-muted small">
+                {fmt(d.injected.tokens)} tokens added {d.injected.placement === 'end' ? 'before the last user message' : 'at the top of the system prompt'}
+              </div>
+            </div>
+          ) : (
+            <Note>Nothing was added: no context files and no policy prompt for this group.</Note>
+          )}
+        </Section>
+        {stages.length > 0 && (
+          <Section title="Stage timings">
+            {stages.map(([k, v]) => (
+              <div key={k} className="cx-bar-row">
+                <span>{k.replace(/^layer_/, 'layer ')}</span>
+                <span className="cx-bar">
+                  <i style={{ width: `${Math.min(100, (v / Math.max(...stages.map((s) => s[1]), 1)) * 100)}%` }} />
+                </span>
+                <span className="mono cx-muted">{ms(v)}</span>
+              </div>
+            ))}
+          </Section>
+        )}
+      </div>
+      <Section title="Timeline">
+        <Timeline steps={d.steps} />
+      </Section>
+    </div>
+  );
+}
+
+function ReplayView({ r, onClose }: { r: Replay; onClose: () => void }) {
+  const rl = r.replay.log;
+  return (
+    <Section title="Replay through today's setup" hint="Same prompt, key and model, sent again with the current context and guard layers. The original log is unchanged; the replay is logged as test traffic." actions={<button type="button" className="cx-btn sm" onClick={onClose}>Close</button>}>
+      <div className="cx-cols">
+        <div className="cx-replay">
+          <h3>Then</h3>
+          <Outcome r={{ outcome: r.original.outcome as LogEntry['outcome'], status_code: null }} />
+          {r.original.reason && <p className="cx-muted small">{r.original.reason}</p>}
+          {(r.original.decisions ?? []).map((x) => (
+            <DecisionRow key={x.id} r={x} />
+          ))}
+          <p className="cx-muted small">The original model reply is not stored.</p>
+        </div>
+        <div className="cx-replay">
+          <h3>Now</h3>
+          {rl ? <Outcome r={rl} /> : <Pill tone={r.replay.status < 400 ? 'ok' : 'bad'}>HTTP {r.replay.status}</Pill>}
+          {rl?.reason && <p className="cx-muted small">{rl.reason}</p>}
+          {(rl?.decisions ?? []).map((x) => (
+            <DecisionRow key={x.id} r={x} />
+          ))}
+          <div className="cx-turn">
+            <div className="cx-turn-head">
+              <span>{r.replay.error ? `error ${r.replay.status}` : 'reply'}</span>
+              <span className="cx-muted small">{ms(r.replay.ms)}</span>
+            </div>
+            <div className="cx-turn-body">{r.replay.error ?? (r.replay.text || '(empty reply)')}</div>
+          </div>
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -311,52 +489,6 @@ export function Timeline({ steps }: { steps: Step[] }) {
   );
 }
 
-const ROLE_TONE: Record<string, 'info' | 'ok' | 'warn' | ''> = { system: 'info', developer: 'info', user: 'ok', assistant: '', tool: 'warn', function: 'warn' };
-
-export function Messages({ messages, marks, empty }: { messages: PromptMessage[] | null | undefined; marks?: (Mark | null)[]; empty: string }) {
-  const ui = useUi();
-  if (!messages?.length) return <Note>{empty}</Note>;
-  const chars = messages.reduce((a, m) => a + messageText(m).length, 0);
-  return (
-    <div className="cx-msgs">
-      <div className="cx-form-row center">
-        <span className="cx-muted small">
-          {messages.length} {messages.length === 1 ? 'message' : 'messages'} · {fmt(chars)} characters
-        </span>
-        <span className="grow" />
-        <button type="button" className="cx-btn sm" onClick={() => navigator.clipboard.writeText(JSON.stringify(messages, null, 2)).then(() => ui.toast('Copied as JSON'), () => ui.toast('Could not copy', true))}>
-          <Ico n="copy" size={14} /> Copy JSON
-        </button>
-      </div>
-      {messages.map((m, i) => (
-        <Message key={i} m={m} n={i + 1} mark={marks?.[i] ?? null} />
-      ))}
-    </div>
-  );
-}
-
-function Message({ m, n, mark }: { m: PromptMessage; n: number; mark: Mark | null }) {
-  const text = messageText(m);
-  const [open, setOpen] = useState(text.length <= 1200);
-  const extra = Object.fromEntries(Object.entries(m).filter(([k, v]) => k !== 'role' && k !== 'content' && v != null));
-  const role = m.role ?? 'unknown';
-  return (
-    <div className={`cx-msg ${mark ? 'mark' : ''}`}>
-      <div className="cx-form-row center">
-        <span className="mono cx-muted">{n}.</span>
-        <Pill tone={ROLE_TONE[role] ?? ''}>{role}</Pill>
-        {typeof m.name === 'string' && <span className="mono cx-muted">{m.name}</span>}
-        {mark && <Pill tone="info">{mark === 'added' ? 'Added by GuardRail' : 'Changed by GuardRail'}</Pill>}
-        <span className="grow" />
-        <span className="mono cx-muted small">{fmt(text.length)} chars</span>
-      </div>
-      {text && <pre className={`cx-msg-text ${open ? '' : 'folded'}`}>{text}</pre>}
-      {text.length > 1200 && (
-        <button type="button" className="cx-link" onClick={() => setOpen(!open)}>
-          {open ? 'Show less' : 'Show all'}
-        </button>
-      )}
-      {Object.keys(extra).length > 0 && <pre className="cx-pre small">{JSON.stringify(extra, null, 2)}</pre>}
-    </div>
-  );
+export function NoActivity() {
+  return <Empty icon="activity" title="Nothing selected" />;
 }

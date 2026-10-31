@@ -10,7 +10,8 @@ import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
 import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
-import { allowedRoutes, handleCompletion, Trace } from './gateway';
+import { allowedRoutes } from './gateway';
+import { replayLog, runAsClient } from './client-run';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -59,6 +60,38 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
   };
   walk(null);
   return out;
+}
+
+/** Logs with their full prompts for a date range, as JSONL (one session per line) or a JSON list. */
+function exportLogs(url: URL): Response {
+  const p = url.searchParams;
+  const day = (s: string | null, end = false) => (s ? new Date(`${s}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : undefined);
+  const labels = (p.get('labels') ?? '').split(',').filter(Boolean);
+  const rows = queryLogs({ since: day(p.get('from')), until: day(p.get('to'), true), groups: groupScope(url), feedback: labels.length ? labels : undefined, filter: p.get('filter') || undefined, test: testScope(url), limit: 5000 });
+  const items = rows.map((r) => {
+    const full = getLog(r.id) ?? r;
+    return {
+      id: r.id,
+      time: new Date(r.ts).toISOString(),
+      key: r.key_name,
+      owner: r.owner,
+      group: r.group_name,
+      ip: r.ip,
+      model: r.model,
+      server: r.server,
+      outcome: r.outcome,
+      reason: r.reason,
+      label: r.feedback,
+      layers: full.decisions ?? null,
+      injected: full.injected ?? null,
+      prompt: full.prompt ?? null,
+      sent_to_model: full.forwarded ?? null,
+    };
+  });
+  const json = p.get('format') === 'json';
+  const body = json ? JSON.stringify(items, null, 2) : items.map((i) => JSON.stringify(i)).join('\n') + (items.length ? '\n' : '');
+  const name = `guardrail-activity-${p.get('from') ?? 'all'}-${p.get('to') ?? 'now'}.${json ? 'json' : 'jsonl'}`;
+  return new Response(body, { headers: { 'content-type': json ? 'application/json' : 'application/x-ndjson', 'content-disposition': `attachment; filename="${name}"`, 'x-row-count': String(items.length) } });
 }
 
 /** ?test=include|only shows Studio and replay traffic too; by default it is left out. */
@@ -279,6 +312,8 @@ const routes: Record<string, Handler> = {
     return l;
   },
   'PATCH logs/:id': ({ params, body }) => setFeedback(params[0], (body.feedback as string) || null),
+  'POST logs/:id/replay': ({ params }) => replayLog(params[0]),
+  'GET logs-export': ({ url }) => exportLogs(url),
 
   // ---- rules ----
   'GET rules': () => ({ rules: listRules(), groups: treeOrder(groupsView()) }),
@@ -302,57 +337,17 @@ const routes: Record<string, Handler> = {
       schemas: SCHEMAS,
     };
   },
-  'POST studio/send': async ({ body }) => {
-    const path = body.path === '/v1/completions' ? '/v1/completions' : '/v1/chat/completions';
-    const headers = new Headers({ 'content-type': 'application/json' });
-    for (const [k, v] of Object.entries((body.headers as Record<string, string>) ?? {})) {
-      try {
-        headers.set(k, String(v));
-      } catch {
-        // ignore bad header names
-      }
-    }
-    let key;
-    if (body.keyId) {
-      key = getKey(num(body.keyId, 'key'));
-      if (!key) throw new HttpError(404, 'Key not found.');
-    } else if (typeof body.secret === 'string' && body.secret.trim()) headers.set('authorization', `Bearer ${body.secret.trim()}`);
-    const payload = typeof body.body === 'string' ? body.body : JSON.stringify(body.body ?? {});
-    const trace: Trace = {};
-    const t0 = Date.now();
-    const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: 'Studio' });
-    const raw = await res.text();
-    const ms = Date.now() - t0;
-    const sse = (res.headers.get('content-type') ?? '').includes('event-stream');
-    let text = '';
-    let error: string | null = null;
-    try {
-      if (sse) {
-        for (const line of raw.split('\n')) {
-          if (!line.startsWith('data:') || line.includes('[DONE]')) continue;
-          const c = JSON.parse(line.slice(5)).choices?.[0];
-          text += c?.delta?.content ?? c?.text ?? '';
-        }
-      } else {
-        const j = JSON.parse(raw);
-        if (j.error) error = j.error.message ?? String(j.error);
-        else text = j.choices?.[0]?.message?.content ?? j.choices?.[0]?.text ?? '';
-      }
-    } catch {
-      text = raw;
-    }
-    return {
-      status: res.status,
-      ms,
-      streamed: sse,
-      blocked: res.headers.get('x-guardrail-blocked') === '1',
-      text,
-      error,
-      raw: raw.length > 20000 ? raw.slice(0, 20000) + '\n…' : raw,
-      trace,
-      log: trace.requestId ? getLog(trace.requestId) ?? null : null,
-    };
-  },
+  'POST studio/send': ({ body }) =>
+    runAsClient({
+      keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+      groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+      secret: typeof body.secret === 'string' ? body.secret : undefined,
+      path: String(body.path ?? ''),
+      body: body.body,
+      headers: (body.headers as Record<string, string>) ?? {},
+      source: 'Studio',
+      layers: Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : undefined,
+    }),
 
   // ---- schemas ----
   'GET schemas': () => ({ schemas: SCHEMAS, policy: getSettings().schemaPolicy }),
@@ -418,6 +413,7 @@ export async function dispatch(req: Request, parts: string[]): Promise<Response>
   }
   try {
     const out = await found.h({ params: found.params, body, url: new URL(req.url), req });
+    if (out instanceof Response) return out;
     return Response.json(out ?? { ok: true });
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 400;
