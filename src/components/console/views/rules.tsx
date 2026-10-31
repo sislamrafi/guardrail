@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useActions } from '../actions';
+import { SaveState, useAutoSave, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
 import { Empty, Field, GroupSelect, Loading, Page, Pill, Section, Seg, Switch, fmt } from '../kit';
 import { pathFor, useNav } from '../nav';
@@ -93,6 +94,24 @@ function RuleForm({ r }: { r: Partial<Rule> }) {
     }, 'Rule saved');
     if (ok && made) nav.go(pathFor('rules', (made as Rule).id), { replace: true });
   };
+  // A saved rule saves its edits by itself; a new one is created with the button.
+  const quiet = useQuietSave();
+  const FIELDS = ['name', 'target', 'match_type', 'pattern', 'group_id', 'action', 'message'] as const;
+  const dirty = !!r.id && FIELDS.some((k) => (v[k] ?? null) !== (r[k] ?? null));
+  let badRegex = false;
+  if (v.match_type === 'regex' && v.pattern) {
+    try {
+      new RegExp(v.pattern, 'i');
+    } catch {
+      badRegex = true;
+    }
+  }
+  const auto = useAutoSave({
+    value: v,
+    dirty,
+    invalid: !v.name?.trim() ? 'Give the rule a name.' : !v.pattern?.trim() ? 'Say what text the rule looks for.' : badRegex ? 'That pattern is not a valid regular expression.' : null,
+    save: () => quiet(() => api(`rules/${r.id}`, { method: 'PATCH', body: v })),
+  });
   return (
     <Page
       icon="filter"
@@ -147,9 +166,10 @@ function RuleForm({ r }: { r: Partial<Rule> }) {
         <Field label="Try it on sample text" hint={test ?? undefined}>
           <input className="cx-input mono" value={sample} onChange={(e) => setSample(e.target.value)} />
         </Field>
-        <div className="cx-form-row end">
-          <button type="submit" className="cx-btn pri" disabled={!v.name?.trim() || !v.pattern?.trim()}>
-            Save rule
+        <div className="cx-form-row end center">
+          {r.id && <SaveState s={auto} />}
+          <button type="submit" className={`cx-btn ${r.id && auto.auto ? '' : 'pri'}`} disabled={!v.name?.trim() || !v.pattern?.trim() || (!!r.id && !dirty)}>
+            {r.id ? 'Save rule' : 'Create rule'}
           </button>
         </div>
       </form>

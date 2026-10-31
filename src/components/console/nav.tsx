@@ -20,7 +20,8 @@ interface Nav {
   closeOthers: (path: string) => void;
   /** Unsaved editor text, keyed by tab path. */
   drafts: Record<string, string>;
-  setDraft: (path: string, text: string | null) => void;
+  /** Set or clear unsaved text. With `onlyIf`, clear only while the draft still equals that text. */
+  setDraft: (path: string, text: string | null, onlyIf?: string) => void;
 }
 
 const NavCtx = createContext<Nav | null>(null);
@@ -90,8 +91,9 @@ export function NavProvider({ children }: { children: ReactNode }) {
     [pathname, router, group, withGroup],
   );
   const setDraft = useCallback(
-    (p: string, text: string | null) =>
+    (p: string, text: string | null, onlyIf?: string) =>
       setDrafts((d) => {
+        if (text === null && onlyIf !== undefined && d[p] !== onlyIf) return d;
         const n = { ...d };
         if (text === null) delete n[p];
         else n[p] = text;

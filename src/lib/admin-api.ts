@@ -266,7 +266,7 @@ const routes: Record<string, Handler> = {
     if (!f) throw new HttpError(404, 'File not found.');
     return { file: f, history: fileHistory(f.id) };
   },
-  'PATCH context/:id': ({ params, body }) => updateFile(num(params[0]), { name: body.name as string | undefined, body: body.body as string | undefined }),
+  'PATCH context/:id': ({ params, body }) => updateFile(num(params[0]), { name: body.name as string | undefined, body: body.body as string | undefined, autosave: body.autosave === true }),
   'DELETE context/:id': ({ params }) => {
     const id = num(params[0]);
     for (const g of listGroups()) {

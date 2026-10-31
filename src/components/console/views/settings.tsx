@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { SaveState, useAutoSave, useAutoSavePrefs, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
 import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
 import { useNav } from '../nav';
@@ -28,6 +29,7 @@ export function SettingsPage() {
             <Seg value={theme} label="Theme" onChange={setTheme} options={THEMES.map(([v, l]) => [v, l] as [typeof v, string])} />
           </Field>
           <SplashSettings />
+          <AutoSaveSettings />
           <Field label="Layout and views" hint="Panel sizes, open tabs, expanded groups, tree or list views, filters and the tab each group was on are remembered in this browser.">
             <div className="cx-form-row">
               <button
@@ -51,9 +53,7 @@ export function SettingsPage() {
             <Field label="Default rate limit (requests per minute, per key)" hint="Used when no group sets its own.">
               <input className="cx-input" type="number" min={1} value={rate ?? String(s.defaultRateLimit)} onChange={(e) => setRate(e.target.value)} />
             </Field>
-            <button type="button" className="cx-btn pri tall" disabled={rate === null || Number(rate) === s.defaultRateLimit || !Number(rate)} onClick={async () => (await patch({ defaultRateLimit: Number(rate) }, 'Default rate limit saved')) && setRate(null)}>
-              Save
-            </button>
+            <RateAutoSave rate={rate} current={s.defaultRateLimit} onSaved={() => setRate(null)} />
           </div>
           <Field label="Client address" hint={s.trustProxy ? 'The first X-Forwarded-For entry is used. Only safe when every request comes through your own reverse proxy.' : 'The address that actually connected is used; a client cannot fake it with headers. Turn on only behind your own reverse proxy.'}>
             <div className="cx-form-row center">
@@ -182,6 +182,47 @@ function SplashSettings() {
         <button type="button" className="cx-btn" onClick={previewSplash}>
           <Ico n="studio" size={13} /> Preview
         </button>
+      </div>
+    </Field>
+  );
+}
+
+/** The default rate limit field saves itself like every other edit. */
+function RateAutoSave({ rate, current, onSaved }: { rate: string | null; current: number; onSaved: () => void }) {
+  const quiet = useQuietSave();
+  const auto = useAutoSave({
+    value: rate,
+    dirty: rate !== null && Number(rate) !== current,
+    invalid: rate !== null && !(Number(rate) >= 1) ? 'Use a whole number of 1 or more.' : null,
+    save: async () => {
+      await quiet(() => api('settings', { method: 'PATCH', body: { defaultRateLimit: Number(rate) } }));
+      onSaved();
+    },
+  });
+  return (
+    <div className="cx-form-row center">
+      <SaveState s={auto} />
+      <button type="button" className="cx-btn tall" disabled={rate === null || Number(rate) === current || !Number(rate)} onClick={() => void auto.flush()}>
+        Save
+      </button>
+    </div>
+  );
+}
+
+/** Autosave on/off and its delay, remembered in this browser. */
+function AutoSaveSettings() {
+  const [p, setP] = useAutoSavePrefs();
+  return (
+    <Field label="Auto save" hint={p.on ? `Edits save themselves ${p.ms / 1000} seconds after you stop typing, and when you leave the page. ⌘S saves at once. Deleting, revoking and server connections always ask first.` : 'Off: use Save or ⌘S.'}>
+      <div className="cx-form-row center">
+        <Switch on={p.on} label="Auto save" onChange={(on) => setP({ ...p, on })} />
+        <select className="cx-input" aria-label="Auto save delay" disabled={!p.on} value={p.ms} onChange={(e) => setP({ ...p, ms: Number(e.target.value) })}>
+          {[1000, 2000, 5000, 10000, 30000].map((ms) => (
+            <option key={ms} value={ms}>
+              after {ms / 1000} s
+            </option>
+          ))}
+        </select>
       </div>
     </Field>
   );

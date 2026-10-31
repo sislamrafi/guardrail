@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -175,6 +175,9 @@ function migrate(db: Database.Database) {
   if (!have.has('injected')) db.exec('ALTER TABLE request_logs ADD COLUMN injected TEXT');
   if (!have.has('test')) db.exec('ALTER TABLE request_logs ADD COLUMN test INTEGER NOT NULL DEFAULT 0');
   migrateGroupGuardSettings(db);
+  // Autosaved file versions are updated in place while someone keeps typing (see updateFile).
+  const verCols = new Set((db.prepare('PRAGMA table_info(context_file_versions)').all() as { name: string }[]).map((c) => c.name));
+  if (!verCols.has('auto')) db.exec('ALTER TABLE context_file_versions ADD COLUMN auto INTEGER NOT NULL DEFAULT 0');
   // Test traffic used to log "Studio"/"Replay" as its address and "Studio" as its person.
   db.exec("UPDATE request_logs SET ip = NULL WHERE test = 1 AND ip IN ('Studio', 'Replay')");
   db.exec("UPDATE request_logs SET owner = 'Admin' WHERE test = 1 AND owner = 'Studio'");

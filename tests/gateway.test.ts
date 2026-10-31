@@ -9,7 +9,7 @@ import { openDb, setDb, getDb } from '@/lib/db';
 import { createServer } from '@/lib/servers';
 import { createKey, listKeys } from '@/lib/keys';
 import { createGroup, listGroups, setGroupSetting, updateGroup } from '@/lib/groups';
-import { createFile } from '@/lib/context';
+import { createFile, fileHistory, updateFile } from '@/lib/context';
 import { getSettings, updateSettings } from '@/lib/settings';
 import { resetRateLimits } from '@/lib/limits';
 import { handleCompletion, handleModels, type Trace } from '@/lib/gateway';
@@ -350,6 +350,18 @@ describe('gateway', () => {
     // Logged as test traffic from the admin's own address.
     expect(lastLog().ip).toBe('192.168.1.7');
     expect(lastLog().test).toBeTruthy();
+  });
+
+  it('coalesces autosaves of a context file into one version until an explicit save', () => {
+    const f = createFile('autosave-test', 'v1 text');
+    const v0 = f.version;
+    expect(updateFile(f.id, { body: 'typing 1', autosave: true }).version).toBe(v0 + 1);
+    expect(updateFile(f.id, { body: 'typing 2', autosave: true }).version).toBe(v0 + 1);
+    expect(fileHistory(f.id)[0]).toMatchObject({ version: v0 + 1, body: 'typing 2' });
+    expect(updateFile(f.id, { body: 'saved on purpose' }).version).toBe(v0 + 2);
+    // An autosave after an explicit save starts a new version instead of rewriting it.
+    expect(updateFile(f.id, { body: 'more typing', autosave: true }).version).toBe(v0 + 3);
+    expect(fileHistory(f.id).find((h) => h.version === v0 + 2)?.body).toBe('saved on purpose');
   });
 
   it('keeps sibling group names unique, case-insensitively', () => {

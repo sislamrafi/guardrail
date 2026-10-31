@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { display } from '@/components/format-setting';
 import { useActions } from '../actions';
+import { SaveState, useAutoSave, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
 import { Empty, Field, GroupSelect, Loading, Note, Page, Pill, Section, Stat, Switch, ago, fmt } from '../kit';
 import { pathFor, subtree, useNav } from '../nav';
@@ -393,6 +394,15 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
   const ex = useExceptions(k.exceptions);
   const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
   const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: ex.value, expiresAt: fromDate(expires), ipAllow: ips } }), `${name} saved`);
+  // Name and owner save themselves. Group, expiry, IPs and exceptions change what the key can do: Save.
+  const quiet = useQuietSave();
+  const auto = useAutoSave({
+    value: [name, owner],
+    dirty: name !== k.name || owner !== k.owner,
+    invalid: !name.trim() ? 'Give the key a name.' : !owner.trim() ? 'Say who uses this key.' : null,
+    save: () => quiet(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner } })),
+  });
+  const accessDirty = groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
   return (
     <Page
       icon="key"
@@ -460,9 +470,10 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
           <Section title="Exceptions for this key only">
             <Exceptions ex={ex} data={data} />
           </Section>
-          <div className="cx-form-row end">
-            <button type="submit" className="cx-btn pri" disabled={!dirty || !name.trim() || !owner.trim()}>
-              Save key
+          <div className="cx-form-row end center">
+            <SaveState s={auto} />
+            <button type="submit" className={`cx-btn ${accessDirty || !auto.auto ? 'pri' : ''}`} disabled={!dirty || !name.trim() || !owner.trim()}>
+              {accessDirty ? 'Save access changes' : 'Save key'}
             </button>
           </div>
         </form>

@@ -5,6 +5,7 @@ import { ADAPTERS, type AdapterId, type Decision, detectAdapter } from '@/lib/ad
 import { type GuardLayer, LAYER_TYPES, adapterFor, normalizeLayer } from '@/lib/layers';
 import type { LayerResult } from '@/lib/pipeline';
 import type { GuardSettings } from '@/lib/settings';
+import { SaveState, useAutoSave, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
 import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Section, Seg, Switch, ms } from '../kit';
 import { renderMarkdown } from '../markdown';
@@ -145,6 +146,13 @@ export function GuardPage() {
     if (data) setG(structuredClone(data.settings.guard));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved]);
+  const quiet = useQuietSave();
+  const pick = (x: GuardSettings | undefined | null) => (x ? { scan: x.scan, reply: x.reply, unresolvedFlag: x.unresolvedFlag } : null);
+  const auto = useAutoSave({
+    value: pick(g),
+    dirty: !!g && !!data && JSON.stringify(pick(g)) !== JSON.stringify(pick(data.settings.guard)),
+    save: () => quiet(() => api('settings', { method: 'PATCH', body: { guard: pick(g) } })),
+  });
   if (!data || !g) return <Loading error={error} />;
   const group = data.groups.find((x) => x.id === nav.group) ?? data.groups.find((x) => x.parentId === null)!;
   const dirty = JSON.stringify({ scan: g.scan, reply: g.reply, unresolvedFlag: g.unresolvedFlag }) !== JSON.stringify({ scan: data.settings.guard.scan, reply: data.settings.guard.reply, unresolvedFlag: data.settings.guard.unresolvedFlag });
@@ -161,7 +169,8 @@ export function GuardPage() {
               Discard
             </button>
           )}
-          <button type="button" className="cx-btn pri" disabled={!dirty} onClick={() => void save()}>
+          <SaveState s={auto} />
+          <button type="button" className={`cx-btn ${auto.auto ? '' : 'pri'}`} disabled={!dirty} onClick={() => void save()}>
             Save
           </button>
         </>
@@ -336,7 +345,7 @@ export function LayerEditor({ id }: { id: string }) {
   if (!data) return <Loading error={error} />;
   const i = data.settings.guard.layers.findIndex((l) => l.id === id);
   if (i < 0) return <Empty icon="guard" title="This layer was removed" />;
-  return <LayerForm key={JSON.stringify(data.settings.guard.layers[i])} data={data} index={i} />;
+  return <LayerForm key={id} data={data} index={i} />;
 }
 
 function LayerForm({ data, index }: { data: Data; index: number }) {
@@ -364,6 +373,13 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
     const list = layers.map((x, i) => (i === index ? next : x));
     if (await ui.run(() => saveLayers(list), `${next.name} saved`)) if (next.id !== orig.id) nav.go(pathFor('guard', next.id), { replace: true });
   };
+  const quiet = useQuietSave();
+  const auto = useAutoSave({
+    value: l,
+    dirty,
+    invalid: !l.name.trim() ? 'Give the layer a name.' : null,
+    save: () => quiet(() => saveLayers(layers.map((x, i) => (i === index ? l : x)))),
+  });
   const move = (d: -1 | 1) => {
     const j = index + d;
     if (j < 0 || j >= layers.length) return;
@@ -399,7 +415,8 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
               Discard
             </button>
           )}
-          <button type="button" className="cx-btn pri" disabled={!dirty || !l.name.trim()} onClick={() => void save()}>
+          <SaveState s={auto} />
+          <button type="button" className={`cx-btn ${auto.auto ? '' : 'pri'}`} disabled={!dirty || !l.name.trim()} onClick={() => void save()}>
             Save layer
           </button>
         </>

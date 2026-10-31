@@ -9,6 +9,7 @@ import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore } from '../store';
 import type { Data, GroupC, Resolution, SettingKey } from '../types';
 import { useItemTab } from '../prefs';
+import { SaveState, useAutoSave, useQuietSave } from '../autosave';
 import { layerState, useLayerToggle } from './guard';
 import type { GuardLayer } from '@/lib/layers';
 import type { LayerOpt } from '@/lib/groups';
@@ -171,7 +172,7 @@ export function GroupEditor({ id }: { id: number }) {
           {tab === 'eff' && <Effective g={g} res={res} data={data} />}
           {tab === 'access' && <Access g={g} res={res} data={data} save={save} />}
           {tab === 'ctx' && <Context g={g} res={res} data={data} save={save} />}
-          {tab === 'guard' && <Guard g={g} res={res} data={data} save={save} />}
+          {tab === 'guard' && <Guard g={g} res={res} data={data} />}
           {tab === 'keys' && <Keys g={g} data={data} />}
         </>
       )}
@@ -191,6 +192,16 @@ function GroupDetails({ g, data }: { g: GroupC; data: Data }) {
   }, [g.name, g.description, g.parentId]);
   const dirty = name !== g.name || desc !== g.description || parent !== g.parentId;
   const blocked = subtree(g.id, data.groups);
+  const quiet = useQuietSave();
+  // Name and description save themselves; moving the group under another stays a click on Save.
+  const textDirty = name !== g.name || desc !== g.description;
+  const sibling = data.groups.some((x) => x.parentId === g.parentId && x.id !== g.id && x.name.toLowerCase() === name.trim().toLowerCase());
+  const auto = useAutoSave({
+    value: [name, desc],
+    dirty: textDirty,
+    invalid: !name.trim() ? 'Give the group a name.' : sibling ? `A group named "${name.trim()}" is already here.` : null,
+    save: () => quiet(() => api(`groups/${g.id}`, { method: 'PATCH', body: { name, description: desc } })),
+  });
   return (
     <form
       className="cx-form-row"
@@ -210,9 +221,10 @@ function GroupDetails({ g, data }: { g: GroupC; data: Data }) {
           <GroupSelect groups={data.groups} value={parent} onChange={(v) => v && setParent(v)} exclude={blocked} />
         </Field>
       )}
-      <button type="submit" className="cx-btn pri tall" disabled={!dirty || !name.trim()}>
-        Save
+      <button type="submit" className={`cx-btn tall ${parent !== g.parentId || !auto.auto ? 'pri' : ''}`} disabled={!dirty || !name.trim()}>
+        {parent !== g.parentId ? 'Move' : 'Save'}
       </button>
+      <SaveState s={auto} />
     </form>
   );
 }
@@ -463,7 +475,7 @@ function Context({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save
   );
 }
 
-function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: Save }) {
+function Guard({ g, res, data }: { g: GroupC; res: Res; data: Data }) {
   const nav = useNav();
   const eff = res.resolution.effective;
   const src = res.resolution.sources;
@@ -478,14 +490,27 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.id, JSON.stringify(g.settings)]);
   const onCount = layers.filter((l) => layerState(l, g, data.groups).on).length;
+  const quiet = useQuietSave();
+  const putSetting = (key: string, setting: unknown) => quiet(() => api(`groups/${g.id}/settings`, { method: 'PUT', body: { key, setting } }));
+  const replyAuto = useAutoSave({
+    value: reply,
+    dirty: reply !== String(st.blocked_reply?.value ?? ''),
+    save: () => putSetting('blocked_reply', reply.trim() ? { mode: 'override', value: reply } : null),
+  });
+  const rateAuto = useAutoSave({
+    value: rate,
+    dirty: rate !== String(st.rate_limit?.value ?? ''),
+    invalid: rate !== '' && !(Number(rate) >= 1) ? 'Use a whole number of 1 or more, or leave it empty.' : null,
+    save: () => putSetting('rate_limit', rate ? { mode: 'override', value: Number(rate) } : null),
+  });
   // Save this group's own settings for one layer, keeping its settings for the others.
-  const saveOpt = (layer: GuardLayer, patch: LayerOpt, ok: string) => {
+  const saveOpt = (layer: GuardLayer, patch: LayerOpt) => {
     const next = { ...own, [layer.id]: { ...own[layer.id], ...patch } };
     const o = next[layer.id];
     if (o.threshold == null) delete o.threshold;
     if (!o.prompt?.trim()) delete o.prompt;
     if (!Object.keys(o).length) delete next[layer.id];
-    return save('layer_opts', Object.keys(next).length || g.parentId === null ? { mode: g.parentId === null ? 'set' : 'override', value: next as never } : null, ok);
+    return putSetting('layer_opts', Object.keys(next).length || g.parentId === null ? { mode: g.parentId === null ? 'set' : 'override', value: next } : null);
   };
   return (
     <>
@@ -516,7 +541,8 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
         <Section title="Blocked reply">
           <textarea className="cx-input" rows={4} value={reply} onChange={(e) => setReply(e.target.value)} placeholder={`Empty uses the inherited reply. Use {reason} and {request_id}.`} />
           <div className="cx-form-row end">
-            <button type="button" className="cx-btn" disabled={reply === String(st.blocked_reply?.value ?? '')} onClick={() => void save('blocked_reply', reply.trim() ? { mode: 'override', value: reply } : null, 'Blocked reply saved')}>
+            <SaveState s={replyAuto} />
+            <button type="button" className="cx-btn" disabled={reply === String(st.blocked_reply?.value ?? '')} onClick={() => void replyAuto.flush()}>
               Save reply
             </button>
           </div>
@@ -526,7 +552,8 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
             <input className="cx-input" type="number" min={1} value={rate} onChange={(e) => setRate(e.target.value)} />
           </Field>
           <div className="cx-form-row end">
-            <button type="button" className="cx-btn" disabled={rate === String(st.rate_limit?.value ?? '')} onClick={() => void save('rate_limit', rate ? { mode: 'override', value: Number(rate) } : null, 'Rate limit saved')}>
+            <SaveState s={rateAuto} />
+            <button type="button" className="cx-btn" disabled={rate === String(st.rate_limit?.value ?? '')} onClick={() => void rateAuto.flush()}>
               Save limit
             </button>
           </div>
@@ -537,7 +564,7 @@ function Guard({ g, res, data, save }: { g: GroupC; res: Res; data: Data; save: 
 }
 
 /** One guard layer on a group's page: on/off for the group, plus the settings its type takes. */
-function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; layer: GuardLayer; g: GroupC; data: Data; eff: Resolution['effective']; own?: LayerOpt; saveOpt: (l: GuardLayer, p: LayerOpt, ok: string) => Promise<unknown> }) {
+function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; layer: GuardLayer; g: GroupC; data: Data; eff: Resolution['effective']; own?: LayerOpt; saveOpt: (l: GuardLayer, p: LayerOpt) => Promise<unknown> }) {
   const nav = useNav();
   const toggle = useLayerToggle();
   const ls = layerState(layer, g, data.groups);
@@ -554,6 +581,13 @@ function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; la
   const parentT = opt?.thresholdFrom && opt.thresholdFrom !== g.name ? opt.threshold : null;
   const inheritedT = parentT ?? layer.threshold;
   const inheritedLines = (opt?.prompt_parts ?? []).filter((p) => p.from !== g.name);
+  const tAuto = useAutoSave({
+    value: t,
+    dirty: t !== (own?.threshold != null ? String(own.threshold) : ''),
+    invalid: t !== '' && !(Number(t) > 0 && Number(t) < 1) ? 'Use a number between 0 and 1, or leave it empty.' : null,
+    save: () => saveOpt(layer, { threshold: t === '' ? null : Number(t) }),
+  });
+  const linesAuto = useAutoSave({ value: lines, dirty: lines !== (own?.prompt ?? ''), save: () => saveOpt(layer, { prompt: lines }) });
   return (
     <div className="cx-list-row tall cx-glayer">
       <span className="cx-layer-n">{n}</span>
@@ -584,7 +618,8 @@ function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; la
             <Field label={`${layer.name} flags at`} hint={`Empty uses ${inheritedT.toFixed(2)}${parentT != null ? ` from ${opt!.thresholdFrom}` : ' (the layer’s own)'}. Lower catches more.`}>
               <input className="cx-input" type="number" min={0.05} max={0.99} step={0.05} value={t} placeholder={inheritedT.toFixed(2)} onChange={(e) => setT(e.target.value)} />
             </Field>
-            <button type="button" className="cx-btn" disabled={t === (own?.threshold != null ? String(own.threshold) : '')} onClick={() => void saveOpt(layer, { threshold: t === '' ? null : Number(t) }, t === '' ? `${layer.name} uses the inherited threshold` : `${layer.name} flags at ${Number(t).toFixed(2)} for ${g.name}`)}>
+            <SaveState s={tAuto} />
+            <button type="button" className="cx-btn" disabled={t === (own?.threshold != null ? String(own.threshold) : '')} onClick={() => void tAuto.flush()}>
               Save
             </button>
           </div>
@@ -596,7 +631,8 @@ function GroupLayerRow({ n, layer, g, data, eff, own, saveOpt }: { n: number; la
               <textarea className="cx-input mono" rows={3} value={lines} onChange={(e) => setLines(e.target.value)} placeholder="For example: Files in tests/fixtures contain fake secrets on purpose." />
             </Field>
             <div className="cx-form-row end">
-              <button type="button" className="cx-btn" disabled={lines === (own?.prompt ?? '')} onClick={() => void saveOpt(layer, { prompt: lines }, 'Prompt lines saved')}>
+              <SaveState s={linesAuto} />
+              <button type="button" className="cx-btn" disabled={lines === (own?.prompt ?? '')} onClick={() => void linesAuto.flush()}>
                 Save prompt lines
               </button>
             </div>

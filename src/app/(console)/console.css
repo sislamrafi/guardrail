@@ -644,3 +644,9 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
   .cx *, .cx-toast { transition: none !important; animation: none !important; }
 }
 
+
+/* autosave state next to a form */
+.cx-savestate { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.cx-savestate.pending i { color: var(--warn); font-style: normal; font-size: 9px; }
+.cx-savestate.saved { color: var(--ok); }
+.cx-savestate.error, .cx-savestate.invalid { color: var(--bad); white-space: normal; }

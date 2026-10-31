@@ -9,6 +9,7 @@ import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { FileC } from '../types';
 import { readPref, usePref, writePref } from '../prefs';
+import { SaveState, useAutoSave } from '../autosave';
 
 // ---------------------------------------------------------------- /context
 
@@ -143,10 +144,23 @@ function FileEditor({ f }: { f: FileC }) {
   const gutter = useRef<HTMLDivElement>(null);
   const lines = text.split('\n').length;
 
+  const { reload } = useStore();
+  // ⌘S and the Save button make a new version; autosaves update the version being typed.
   const save = async () => {
     if (!dirty) return;
     if (await act.saveFile(f, text)) nav.setDraft(path, null);
   };
+  const auto = useAutoSave({
+    value: text,
+    dirty,
+    save: async () => {
+      const body = text;
+      await api(`context/${f.id}`, { method: 'PATCH', body: { body, autosave: true } });
+      await reload();
+      // Keep anything typed while it was saving.
+      nav.setDraft(path, null, body);
+    },
+  });
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -174,7 +188,7 @@ function FileEditor({ f }: { f: FileC }) {
     <div className="cx-file">
       <div className="cx-file-bar">
         <span className="cx-muted small">
-          {fmtTokens(f.tokens)} tokens · v{f.version} · edited {ago(f.updated_at)} {dirty && <Pill tone="warn">Unsaved</Pill>}
+          {fmtTokens(f.tokens)} tokens · v{f.version} · edited {ago(f.updated_at)} <SaveState s={auto} />
         </span>
         <span className="grow" />
         {dirty && (
