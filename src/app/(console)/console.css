@@ -732,3 +732,8 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-live-chip.block, .cx-live-chip.error { color: var(--bad); }
 .cx-live-chip.flag { color: var(--warn); }
 .cx-turn-body.cx-draft { opacity: .75; border-style: dashed; }
+
+/* "↓ New output" while scrolled up in a growing chat */
+.cx-newout-wrap { position: relative; height: 0; display: flex; justify-content: center; z-index: 4; }
+.cx .cx-newout { position: absolute; bottom: 10px; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 12px !important; border-radius: 13px; background: var(--accent) !important; color: #fff !important; font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.cx-newout svg { transform: rotate(90deg); }

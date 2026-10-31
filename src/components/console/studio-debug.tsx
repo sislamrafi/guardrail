@@ -1,7 +1,7 @@
 'use client';
 
 import { cacheOf } from '@/lib/adapters';
-import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ScenarioSettings } from '@/lib/studio';
 import type { Plan } from '@/lib/studio-plan';
 import { Loading, Note, Pill, Seg, fmt, fmtTokens, ms } from './kit';
@@ -123,6 +123,11 @@ export async function sendLive<T>(body: unknown, onEvent: (e: LiveEvent) => void
 
 /** The live step list while a message is on its way. */
 function LiveView({ live }: { live: LiveState }) {
+  // Keep the newest step in view as they arrive.
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: 'nearest' });
+  }, [live.items.length]);
   return (
     <div className="cx-dbg-list">
       <div className="cx-dbg-outcome">
@@ -135,6 +140,7 @@ function LiveView({ live }: { live: LiveState }) {
           {it.detail ? <p className="cx-muted small">{it.detail}</p> : undefined}
         </Stage>
       ))}
+      <div ref={end} />
     </div>
   );
 }

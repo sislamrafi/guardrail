@@ -15,6 +15,7 @@ import { api, useStore, useUi } from '../store';
 import type { Data, LogEntry, Scenario } from '../types';
 import { OUTCOME } from './activity';
 import { MdText } from '../md-text';
+import { NewOutput, useStickToBottom } from '../stick';
 import { ModelPicker } from '../model-picker';
 
 interface RunResult {
@@ -128,9 +129,13 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
   const [gear, setGear] = useState(false);
   const [meta, setMeta] = useState(false);
   const end = useRef<HTMLDivElement>(null);
+  // Follow the conversation as it grows (sent messages, streamed text, live status), unless the
+  // viewer scrolled up to read; sending always jumps back down.
+  const follow = useStickToBottom<HTMLDivElement>();
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end' });
-  }, [messages, busy]);
+    if (busy) follow.jump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
   // The right sidebar's debug panel follows this scenario: the plan on open, then each turn.
   useEffect(() => {
     // Reopen on what was shown last time: the plan, or the latest turn.
@@ -236,7 +241,7 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
         <IconBtn icon="trash" label="Clear chat" disabled={!messages.length} onClick={() => void clear()} />
         <IconBtn icon="settings" label="Settings" active={gear} onClick={() => setGear(true)} />
       </div>
-      <div className="cx-studio-chat">
+      <div className="cx-studio-chat" ref={follow.ref}>
         <div className="cx-thread">
           {sc.notes && <Note>Expected: {sc.notes}</Note>}
           {messages.length === 0 && <div className="cx-studio-empty">Send a message to start. Every turn goes through the gateway exactly like a client request.</div>}
@@ -246,6 +251,9 @@ function Chat({ sc, data }: { sc: Scenario; data: Data }) {
           {busy && <LiveBubble />}
           <div ref={end} />
         </div>
+      </div>
+      <div className="cx-newout-wrap">
+        <NewOutput show={follow.unseen} onClick={follow.jump} />
       </div>
       <div className="cx-composer">
         {pending.length > 0 && (
