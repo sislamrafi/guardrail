@@ -9,3 +9,7 @@ next-env.d.ts
 .env.local
 coverage/
 data/prompts/
+
+# local dev server and mock model logs
+.dev.log
+.mock-vllm.log
