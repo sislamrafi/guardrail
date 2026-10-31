@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { parsePath } from './paths';
+import { parsePath, pathFor } from './paths';
 import type { View } from './types';
 
 export { parsePath, pathFor, subtree } from './paths';
@@ -27,14 +27,16 @@ const TABS_KEY = 'cx-tabs';
 
 export function NavProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname() || '/';
+  const raw = usePathname() || '/';
+  // One canonical path per editor (so "/overview" and "/" are the same tab).
+  const pathname = pathFor(parsePath(raw).view, parsePath(raw).id);
   const params = useSearchParams();
   const group = params.get('group') ? Number(params.get('group')) : null;
   const { view, id } = parsePath(pathname);
   const [tabs, setTabs] = useState<string[]>(() => {
     try {
       const t = JSON.parse(sessionStorage.getItem(TABS_KEY) ?? '[]') as string[];
-      return Array.isArray(t) ? t : [];
+      return Array.isArray(t) ? [...new Set(t.filter((x) => typeof x === 'string').map((x) => pathFor(parsePath(x).view, parsePath(x).id)))] : [];
     } catch {
       return [];
     }
