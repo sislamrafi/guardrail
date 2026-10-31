@@ -197,7 +197,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
         nav.setGroup(g.id);
         if (mode === 'groups') nav.go(pathFor('groups', g.id));
       },
-      onRename: isRoot ? undefined : (name) => void act.renameGroup(g, name),
+      onRename: (name) => void act.renameGroup(g, name),
       validate: groupName(g.parentId, g.id),
       onDelete: isRoot ? undefined : () => void act.deleteGroup(g),
       drag: isRoot ? undefined : `group:${g.id}`,
