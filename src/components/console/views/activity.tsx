@@ -314,6 +314,27 @@ export function LogDetail({ id }: { id: string }) {
     <Page
       icon="activity"
       wide
+      scrollKey={tab}
+      pinned={
+      <div className="cx-subtabs" role="tablist" aria-label="Request view">
+          {(
+            [
+              ['session', `Session${d.prompt ? ` (${d.prompt.length})` : ''}`],
+              ['summary', 'Summary'],
+              ['sent', 'Sent to the model'],
+            ] as const
+          ).map(([t, l]) => (
+            <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
+              {l}
+            </button>
+          ))}
+          {tab !== 'summary' && (
+            <>
+              <KindFilter show={show} setShow={setShow} counts={countKinds(tab === 'session' ? d.prompt : d.forwarded, tab === 'session' ? d.response : null)} />
+            </>
+          )}
+        </div>
+      }
       title={TITLES[d.outcome] ?? 'Request'}
       sub={
         <>
@@ -348,24 +369,6 @@ export function LogDetail({ id }: { id: string }) {
       }
     >
       {replay && <ReplayView r={replay} onClose={() => setReplay(null)} />}
-      <div className="cx-subtabs" role="tablist" aria-label="Request view">
-        {(
-          [
-            ['session', `Session${d.prompt ? ` (${d.prompt.length})` : ''}`],
-            ['summary', 'Summary'],
-            ['sent', 'Sent to the model'],
-          ] as const
-        ).map(([t, l]) => (
-          <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {l}
-          </button>
-        ))}
-        {tab !== 'summary' && (
-          <>
-            <KindFilter show={show} setShow={setShow} counts={countKinds(tab === 'session' ? d.prompt : d.forwarded, tab === 'session' ? d.response : null)} />
-          </>
-        )}
-      </div>
       {tab === 'session' && (
         <ChatView
           messages={d.prompt}

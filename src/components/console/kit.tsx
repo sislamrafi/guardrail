@@ -1,6 +1,6 @@
 'use client';
 
-import { type CSSProperties, type ReactNode, useEffect, useId } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Ico, type IconName } from './icons';
 
 // ---------------------------------------------------------------- formatting
@@ -41,20 +41,62 @@ export const secretProps = {
 // ---------------------------------------------------------------- layout pieces
 
 /** One editor page: header with title and actions, then scrolling content. */
-export function Page({ icon, title, sub, actions, children, wide }: { icon?: IconName; title: ReactNode; sub?: ReactNode; actions?: ReactNode; children: ReactNode; wide?: boolean }) {
+export function Page({
+  icon,
+  title,
+  sub,
+  actions,
+  children,
+  wide,
+  pinned,
+  scrollKey,
+}: {
+  icon?: IconName;
+  title: ReactNode;
+  sub?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+  /** Stays at the top with the header while the content scrolls (e.g. a page's tab row). */
+  pinned?: ReactNode;
+  /** With pinned tabs: each key keeps its own scroll position (pass the current tab). */
+  scrollKey?: string;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const spots = useRef<Record<string, number>>({});
+  const last = useRef(scrollKey);
+  const [compact, setCompact] = useState(false);
+  // Remember where each tab was scrolled to, and go back there when it is shown again.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || scrollKey === undefined || last.current === scrollKey) return;
+    if (last.current !== undefined) spots.current[last.current] = el.scrollTop;
+    last.current = scrollKey;
+    el.scrollTop = spots.current[scrollKey] ?? 0;
+  }, [scrollKey]);
+  const head = (
+    <header className="cx-page-head">
+      <div className="cx-page-title">
+        <h1>
+          {icon && <Ico n={icon} size={20} />}
+          {title}
+        </h1>
+        {sub && <p>{sub}</p>}
+      </div>
+      {actions && <div className="cx-page-acts">{actions}</div>}
+    </header>
+  );
   return (
-    <div className="cx-page">
+    <div className="cx-page" ref={box} onScroll={pinned ? (e) => setCompact(e.currentTarget.scrollTop > 24) : undefined}>
       <div className={`cx-page-in ${wide ? 'wide' : ''}`}>
-        <header className="cx-page-head">
-          <div className="cx-page-title">
-            <h1>
-              {icon && <Ico n={icon} size={20} />}
-              {title}
-            </h1>
-            {sub && <p>{sub}</p>}
+        {pinned ? (
+          <div className={`cx-page-pin ${compact ? 'compact' : ''}`}>
+            {head}
+            {pinned}
           </div>
-          {actions && <div className="cx-page-acts">{actions}</div>}
-        </header>
+        ) : (
+          head
+        )}
         {children}
       </div>
     </div>

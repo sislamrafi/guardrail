@@ -117,6 +117,24 @@ export function GroupEditor({ id }: { id: number }) {
 
   return (
     <Page
+      scrollKey={tab}
+      pinned={
+      <div className="cx-subtabs" role="tablist" aria-label="Group settings">
+          {(
+            [
+              ['eff', 'Effective rules'],
+              ['access', 'Servers and models'],
+              ['ctx', `Context (${g.context.length})`],
+              ['guard', 'Guard layers and limits'],
+              ['keys', `Keys (${g.keyCount})`],
+            ] as [Tab, string][]
+          ).map(([t, l]) => (
+            <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      }
       icon="folder"
       title={g.name}
       sub={g.path}
@@ -150,21 +168,6 @@ export function GroupEditor({ id }: { id: number }) {
           ))}
         </div>
       )}
-      <div className="cx-subtabs" role="tablist" aria-label="Group settings">
-        {(
-          [
-            ['eff', 'Effective rules'],
-            ['access', 'Servers and models'],
-            ['ctx', `Context (${g.context.length})`],
-            ['guard', 'Guard layers and limits'],
-            ['keys', `Keys (${g.keyCount})`],
-          ] as [Tab, string][]
-        ).map(([t, l]) => (
-          <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {l}
-          </button>
-        ))}
-      </div>
       {!res ? (
         <Loading />
       ) : (

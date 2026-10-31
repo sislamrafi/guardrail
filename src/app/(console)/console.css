@@ -714,3 +714,11 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-mpick-table tr.active td { background: var(--hover); }
 .cx-mpick-table tr.sel td { background: var(--sel); }
 .cx-route-label { min-width: 90px; font-size: 12px; }
+
+/* a page header (and its tab row) that stays put while the content scrolls */
+.cx-page-pin { position: sticky; top: 0; z-index: 5; display: flex; flex-direction: column; gap: 12px; margin: -20px -32px 0; padding: 16px 32px 0; background: var(--editor); box-shadow: 0 1px 0 var(--edge); }
+.cx-page-pin .cx-subtabs { box-shadow: none; margin-bottom: 0; }
+.cx-page-pin.compact { gap: 6px; padding-top: 8px; }
+.cx-page-pin.compact .cx-page-title h1 { font-size: 15px; }
+.cx-page-pin.compact .cx-page-title p { display: none; }
+.cx-page-pin.compact .cx-page-acts .cx-btn { height: 24px; }
