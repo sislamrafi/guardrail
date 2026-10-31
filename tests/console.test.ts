@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { renderMarkdown } from '@/components/console/markdown';
-import { parsePath, pathFor, subtree } from '@/components/console/paths';
+import { parsePath, pathFor, selectedGroupId, subtree } from '@/components/console/paths';
 
 describe('console routes', () => {
+  it('creates new groups inside the selected group, not next to it', () => {
+    const groups = [
+      { id: 1, parentId: null },
+      { id: 2, parentId: 1 },
+      { id: 3, parentId: 1 },
+    ];
+    // Groups view: the group open in the editor is the parent, even with no ?group= filter.
+    expect(selectedGroupId({ view: 'groups', id: '3', group: null }, groups)).toBe(3);
+    expect(selectedGroupId({ view: 'groups', id: '3', group: 2 }, groups)).toBe(3);
+    // Keys view: the open key's group.
+    expect(selectedGroupId({ view: 'keys', id: '9', group: null }, groups, [{ id: 9, groupId: 2 }])).toBe(2);
+    // Elsewhere: the picked group, else the root.
+    expect(selectedGroupId({ view: 'context', id: null, group: 2 }, groups)).toBe(2);
+    expect(selectedGroupId({ view: 'groups', id: null, group: null }, groups)).toBe(1);
+    expect(selectedGroupId({ view: 'groups', id: '99', group: null }, groups)).toBe(1);
+  });
+
   it('maps paths to views and ids', () => {
     expect(parsePath('/')).toEqual({ view: 'overview', id: null });
     expect(parsePath('/keys')).toEqual({ view: 'keys', id: null });

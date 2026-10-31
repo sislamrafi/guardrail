@@ -5,6 +5,7 @@ import { useActions } from './actions';
 import { Ico, type IconName } from './icons';
 import { fmtTokens } from './kit';
 import { pathFor, subtree, useNav } from './nav';
+import { selectedGroupId } from './paths';
 import { api, type MenuItem, useStore, useUi } from './store';
 import { Tree, type TreeNode, useExpanded } from './tree';
 import type { Data, GroupC, View } from './types';
@@ -69,7 +70,9 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const [creating, setCreating] = useState<Creating>(null);
   const [allFiles, setAllFiles] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
-  const sel = data.groups.find((g) => g.id === nav.group) ?? root ?? null;
+  // New groups, files and keys go inside the selected group (the one open in Groups, or the open key's).
+  const selId = selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
+  const sel = data.groups.find((g) => g.id === selId) ?? null;
 
   const startCreate = (kind: 'group' | 'file', parent: number | null) => {
     setCreating({ kind, parent });
