@@ -6,6 +6,7 @@ import { Details } from './details';
 import { Ico, type IconName } from './icons';
 import { NavProvider, parsePath, pathFor, useNav } from './nav';
 import { Sidebar } from './sidebars';
+import { THEMES, applyTheme, useTheme } from './theme';
 import { DataProvider, UiProvider, useStore, useUi } from './store';
 import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
@@ -24,13 +25,14 @@ const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'overview', label: 'Overview', icon: 'overview' },
   { view: 'activity', label: 'Activity', icon: 'activity' },
   { view: 'guard', label: 'Guard checks', icon: 'guard' },
-  { view: 'servers', label: 'Servers and models', icon: 'servers' },
   { view: 'groups', label: 'Groups', icon: 'groups' },
   { view: 'keys', label: 'API keys', icon: 'keys' },
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
   { view: 'schemas', label: 'Schemas', icon: 'braces' },
 ];
+// Views that start on the root group when you open them from the activity bar.
+const GROUP_VIEWS: View[] = ['overview', 'activity', 'guard'];
 const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', schemas: 'braces', studio: 'studio', settings: 'settings' };
 const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
 
@@ -87,6 +89,7 @@ function Workbench() {
   const [quick, setQuick] = useState<string | null>(null);
   const [cursor, setCursor] = useState<{ ln: number; col: number } | null>(null);
   const [account, setAccount] = useState(false);
+  const [theme, setTheme] = useTheme();
 
   useEffect(() => {
     const on = (e: Event) => setCursor((e as CustomEvent).detail);
@@ -137,11 +140,10 @@ function Workbench() {
   }, [nav.drafts]);
 
   const pickView = (v: View) => {
-    if (v === nav.view && showLeft && nav.path === pathFor(v)) setShowLeft(false);
-    else {
-      setShowLeft(true);
-      nav.go(pathFor(v));
-    }
+    if (v === nav.view && showLeft && nav.path === pathFor(v)) return setShowLeft(false);
+    setShowLeft(true);
+    const root = data?.groups.find((g) => g.parentId === null);
+    nav.go(GROUP_VIEWS.includes(v) && root ? `${pathFor(v)}?group=${root.id}` : pathFor(v));
   };
 
   const sum = data?.summary;
@@ -193,6 +195,9 @@ function Workbench() {
           <button type="button" className={`cx-act ${nav.view === 'studio' && showLeft ? 'on' : ''}`} title="Studio: send test requests" aria-label="Studio" onClick={() => pickView('studio')}>
             <Ico n="studio" size={24} stroke={1.5} />
           </button>
+          <button type="button" className={`cx-act ${nav.view === 'servers' && showLeft ? 'on' : ''}`} title="Servers and models" aria-label="Servers and models" aria-current={nav.view === 'servers' ? 'page' : undefined} onClick={() => pickView('servers')}>
+            <Ico n="servers" size={24} stroke={1.5} />
+          </button>
           <div className="cx-acc">
             <button type="button" className={`cx-act ${account ? 'on' : ''}`} title={`Signed in as ${sum?.name ?? 'Admin'}`} aria-label="Account" aria-expanded={account} onClick={() => setAccount(!account)}>
               <span className="cx-avatar">{(sum?.name ?? 'Admin').slice(0, 2).toUpperCase()}</span>
@@ -200,6 +205,13 @@ function Workbench() {
             {account && (
               <div className="cx-menu up" role="menu" onMouseLeave={() => setAccount(false)}>
                 <div className="cx-menu-head">{sum?.name ?? 'Admin'}</div>
+                {THEMES.map(([t, label]) => (
+                  <button key={t} type="button" role="menuitemradio" aria-checked={theme === t} className="cx-menu-item" onClick={() => setTheme(t)}>
+                    <span>Theme: {label}</span>
+                    {theme === t && <Ico n="check" size={14} />}
+                  </button>
+                ))}
+                <div className="cx-menu-sep" role="separator" />
                 <button type="button" role="menuitem" className="cx-menu-item" onClick={() => (setAccount(false), nav.go('/settings'))}>
                   Settings
                 </button>
@@ -242,7 +254,7 @@ function Workbench() {
           </div>
         </main>
 
-        {showRight && (
+        {showRight && nav.view !== 'overview' && (
           <>
             <Sash onDrag={(d) => setRight((w) => Math.min(560, Math.max(220, w - d)))} />
             <Details width={right} />
@@ -462,7 +474,8 @@ function QuickOpen({ q, setQ, data }: { q: string; setQ: (v: string | null) => v
   const nav = useNav();
   const [sel, setSel] = useState(0);
   const items = useMemo(() => {
-    const out: { label: string; hint: string; icon: IconName; path: string }[] = [
+    const out: { label: string; hint: string; icon: IconName; path: string; run?: () => void }[] = [
+      ...THEMES.map(([t, label]) => ({ label: `Theme: ${label}`, hint: 'command', icon: 'settings' as IconName, path: '', run: () => applyTheme(t) })),
       ...TOP.map((t) => ({ label: t.label, hint: 'view', icon: t.icon, path: pathFor(t.view) })),
       { label: 'Studio', hint: 'view', icon: 'studio', path: '/studio' },
       { label: 'Settings', hint: 'view', icon: 'settings', path: '/settings' },
@@ -484,7 +497,8 @@ function QuickOpen({ q, setQ, data }: { q: string; setQ: (v: string | null) => v
     const it = items[i];
     if (!it) return;
     setQ(null);
-    nav.go(it.path);
+    if (it.run) it.run();
+    else nav.go(it.path);
   };
   return (
     <div className="cx-overlay at-top" onMouseDown={() => setQ(null)}>

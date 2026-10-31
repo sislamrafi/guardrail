@@ -234,8 +234,8 @@ export function AddServer({ role = 'inference', onSaved }: { role?: 'inference' 
       const r = await api<Found>('servers/discover', { body: { url, apiKey: key } });
       setFound(r);
       if (r.ok) {
-        // Large catalogues (OpenRouter has hundreds) start with nothing picked.
-        setPicked(new Set((r.models?.length ?? 0) <= 20 ? r.models?.map((m) => m.name) : []));
+        // Nothing starts picked: only the models you tick are offered to clients.
+        setPicked(new Set());
         if (!name) {
           try {
             setName(new URL(r.url!).hostname.replace(/\./g, '-'));

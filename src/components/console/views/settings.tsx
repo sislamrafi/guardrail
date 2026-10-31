@@ -6,17 +6,26 @@ import { Ico } from '../icons';
 import { Field, Loading, Page, Section, Seg } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
+import { THEMES, useTheme } from '../theme';
 
 export function SettingsPage() {
   const { data, error } = useStore();
   const ui = useUi();
   const nav = useNav();
   const [rate, setRate] = useState<string | null>(null);
+  const [theme, setTheme] = useTheme();
   if (!data) return <Loading error={error} />;
   const s = data.settings;
   const patch = (body: Record<string, unknown>, ok: string) => ui.run(() => api('settings', { method: 'PATCH', body }), ok);
   return (
     <Page icon="settings" title="Settings" sub="Gateway-wide defaults. Groups can change most of them for their own keys.">
+      <section id="sec-appearance">
+        <Section title="Appearance" hint="Remembered in this browser.">
+          <Field label="Theme">
+            <Seg value={theme} label="Theme" onChange={setTheme} options={THEMES.map(([v, l]) => [v, l] as [typeof v, string])} />
+          </Field>
+        </Section>
+      </section>
       <section id="sec-general">
         <Section title="General">
           <div className="cx-form-row">

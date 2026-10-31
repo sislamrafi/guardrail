@@ -146,9 +146,38 @@ export const OUTCOME_FILTERS: Record<string, Outcome[]> = {
   error: ['error'],
 };
 
-export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number }) {
+const inList = (n: number) => `(${Array.from({ length: n }, () => '?').join(',')})`;
+
+/** Log filters shared by lists, counts, the overview and exports. `groups` limits to those group ids. */
+export interface LogScope {
+  groups?: number[];
+  since?: number;
+  until?: number;
+}
+
+function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
+  if (scope.groups) {
+    where.push(scope.groups.length ? `group_id IN ${inList(scope.groups.length)}` : '0');
+    args.push(...scope.groups);
+  }
+  if (scope.since) {
+    where.push('ts >= ?');
+    args.push(scope.since);
+  }
+  if (scope.until) {
+    where.push('ts < ?');
+    args.push(scope.until);
+  }
+}
+
+export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; feedback?: string[] }) {
   const where: string[] = [];
   const args: unknown[] = [];
+  scopeWhere({ groups: opts.groups, until: opts.until }, where, args);
+  if (opts.feedback?.length) {
+    where.push(`feedback IN ${inList(opts.feedback.length)}`);
+    args.push(...opts.feedback);
+  }
   const outs = opts.filter ? OUTCOME_FILTERS[opts.filter] : undefined;
   if (outs) {
     where.push(`outcome IN (${outs.map(() => '?').join(',')})`);
@@ -172,10 +201,13 @@ export function queryLogs(opts: { filter?: string; q?: string; limit?: number; b
   return (getDb().prepare(sql).all(...args) as Row[]).map(parse);
 }
 
-export function countByFilter(since?: number) {
+export function countByFilter(since?: number, groups?: number[]) {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  scopeWhere({ since, groups }, where, args);
   const rows = getDb()
-    .prepare(`SELECT outcome, COUNT(*) n FROM request_logs ${since ? 'WHERE ts >= ?' : ''} GROUP BY outcome`)
-    .all(...(since ? [since] : [])) as { outcome: Outcome; n: number }[];
+    .prepare(`SELECT outcome, COUNT(*) n FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
+    .all(...args) as { outcome: Outcome; n: number }[];
   const by = Object.fromEntries(rows.map((r) => [r.outcome, r.n])) as Record<string, number>;
   const sum = (xs: Outcome[]) => xs.reduce((a, o) => a + (by[o] ?? 0), 0);
   return {
@@ -218,15 +250,18 @@ export const STAGE_LABELS: Record<string, string> = {
   context: 'Context injection',
 };
 
-export function overview(range = '24h', at = Date.now()) {
+export function overview(range = '24h', at = Date.now(), groups?: number[]) {
   const R = RANGES[range] ?? RANGES['24h'];
   const since = at - R.ms;
-  const prevCounts = countByFilter(since - R.ms);
-  const counts = countByFilter(since);
+  const prevCounts = countByFilter(since - R.ms, groups);
+  const counts = countByFilter(since, groups);
   const prevAll = prevCounts.all - counts.all;
+  const where: string[] = [];
+  const args: unknown[] = [];
+  scopeWhere({ since, groups }, where, args);
   const rows = getDb()
-    .prepare('SELECT ts, outcome, stages FROM request_logs WHERE ts >= ? ORDER BY ts DESC LIMIT 20000')
-    .all(since) as { ts: number; outcome: Outcome; stages: string }[];
+    .prepare(`SELECT ts, outcome, stages FROM request_logs WHERE ${where.join(' AND ')} ORDER BY ts DESC LIMIT 20000`)
+    .all(...args) as { ts: number; outcome: Outcome; stages: string }[];
 
   const first = Math.floor(since / R.bucket) * R.bucket;
   const n = Math.max(1, Math.ceil((at - first) / R.bucket));
@@ -249,7 +284,7 @@ export function overview(range = '24h', at = Date.now()) {
   const stages = Object.keys(STAGE_LABELS)
     .filter((k) => stageVals[k]?.length)
     .map((k) => ({ key: k, name: STAGE_LABELS[k], p50: median(stageVals[k])! }));
-  const recentBlocks = queryLogs({ filter: 'blocked', limit: 6 });
+  const recentBlocks = queryLogs({ filter: 'blocked', limit: 6, groups });
   return {
     range,
     counts,

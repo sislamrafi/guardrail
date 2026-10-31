@@ -59,6 +59,25 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
   return out;
 }
 
+/** ?group=<id> as that group and its sub-groups; the root group (or none) means every log. */
+function groupScope(url: URL): number[] | undefined {
+  const id = Number(url.searchParams.get('group'));
+  if (!id) return undefined;
+  const groups = listGroups();
+  const g = groups.find((x) => x.id === id);
+  if (!g || g.parentId === null) return undefined;
+  const ids = new Set([id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const x of groups)
+      if (x.parentId !== null && ids.has(x.parentId) && !ids.has(x.id)) {
+        ids.add(x.id);
+        grew = true;
+      }
+  }
+  return [...ids];
+}
+
 const routes: Record<string, Handler> = {
   // ---- servers and models ----
   'GET servers': () => {
@@ -230,13 +249,13 @@ const routes: Record<string, Handler> = {
   // ---- activity ----
   'GET overview': ({ url }) => {
     const servers = listServers();
-    return { ...overview(url.searchParams.get('range') ?? '24h'), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
+    return { ...overview(url.searchParams.get('range') ?? '24h', Date.now(), groupScope(url)), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
   },
   'GET logs': ({ url }) => {
     const p = url.searchParams;
     return {
-      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined }),
-      counts: countByFilter(),
+      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url) }),
+      counts: countByFilter(undefined, groupScope(url)),
     };
   },
   'GET logs/:id': ({ params }) => {

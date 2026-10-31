@@ -430,6 +430,7 @@ const OUTLINES: Record<string, [string, string][]> = {
     ['tester', 'Detection tester'],
   ],
   settings: [
+    ['appearance', 'Appearance'],
     ['general', 'General'],
     ['context', 'Context and policy prompt'],
     ['limits', 'Server and model limits'],

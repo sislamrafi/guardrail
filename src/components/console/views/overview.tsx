@@ -29,12 +29,15 @@ export function OverviewPage() {
   const { data } = useStore();
   const nav = useNav();
   const [range, setRange] = useState('24h');
+  const group = data?.groups.find((g) => g.id === nav.group);
+  const scoped = group && group.parentId !== null ? group : null;
+  const scopedId = scoped?.id ?? null;
   const [d, setD] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     const load = () =>
-      api<Overview>(`overview?range=${range}`).then(
+      api<Overview>(`overview?range=${range}${scopedId ? `&group=${scopedId}` : ''}`).then(
         (r) => live && (setD(r), setErr(null)),
         (e) => live && setErr((e as Error).message),
       );
@@ -44,15 +47,15 @@ export function OverviewPage() {
       live = false;
       clearInterval(t);
     };
-  }, [range]);
+  }, [range, scopedId]);
   const max = Math.max(1, ...(d?.buckets.map((b) => b.total) ?? [1]));
   const maxStage = Math.max(1, ...(d?.stages.map((s) => s.p50) ?? [1]));
   const sum = data?.summary;
   return (
     <Page
       icon="overview"
-      title="Overview"
-      sub="How the gateway is doing: traffic, what the checks caught, and where the time goes."
+      title={scoped ? `Overview · ${scoped.name}` : 'Overview'}
+      sub={scoped ? `Traffic from keys in ${scoped.path} and its sub-groups. Pick the root group to see everything.` : 'How the gateway is doing: traffic, what the checks caught, and where the time goes.'}
       wide
       actions={<Seg value={range} onChange={setRange} label="Time range" options={RANGES} />}
     >
@@ -85,7 +88,7 @@ export function OverviewPage() {
             )}
           </Section>
           <div className="cx-cols">
-            <Section title="Recent blocks" actions={<button type="button" className="cx-btn sm" onClick={() => nav.go('/activity?filter=blocked')}>Open in Activity</button>}>
+            <Section title="Recent blocks" actions={<button type="button" className="cx-btn sm" onClick={() => nav.go(`/activity?filter=blocked${scoped ? `&group=${scoped.id}` : ''}`)}>Open in Activity</button>}>
               {d.recentBlocks.length === 0 ? (
                 <p className="cx-muted">Nothing blocked.</p>
               ) : (
