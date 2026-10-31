@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ReactNode, useEffect, useRef, useState } from 'react';
+import { Logo } from './logo';
 import { Icon, ToastProvider, api, initials } from './ui';
 
 interface Summary {
@@ -52,7 +53,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="app">
           <header className="topbar">
             <Link href="/old" className="brand">
-              <Icon name="shieldCheck" size={24} stroke={2.2} color="#3A1FD1" />
+              <Logo size={26} />
               <b>GuardRail AI</b>
               <span className="chip">gateway</span>
             </Link>

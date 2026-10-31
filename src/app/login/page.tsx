@@ -1,6 +1,7 @@
 'use client';
 
 import '../globals.css';
+import { Logo } from '@/components/logo';
 import { FormEvent, useState } from 'react';
 
 export default function Login() {
@@ -16,7 +17,10 @@ export default function Login() {
   return (
     <div className="gr">
       <form className="card login stack" onSubmit={submit} style={{ gap: 14 }}>
-        <h1 style={{ fontSize: 20 }}>GuardRail AI</h1>
+        <h1 style={{ fontSize: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Logo size={28} />
+          GuardRail AI
+        </h1>
         <p className="muted" style={{ margin: 0 }}>Sign in to the admin panel.</p>
         <label>
           <span className="lbl">Admin password</span>

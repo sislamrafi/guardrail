@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Logo } from '@/components/logo';
 import { Details } from './details';
 import { Ico, type IconName } from './icons';
 import { NavProvider, parsePath, pathFor, useNav } from './nav';
@@ -153,7 +154,7 @@ function Workbench() {
     <div className="cx">
       <header className="cx-title">
         <div className="cx-brand">
-          <Ico n="guard" size={16} stroke={2} />
+          <Logo size={18} />
           <span>GuardRail</span>
         </div>
         <div className="cx-title-center">
@@ -264,7 +265,7 @@ function Workbench() {
 
       <footer className="cx-status">
         <span className="cx-status-brand">
-          <Ico n="guard" size={13} stroke={2} /> GuardRail
+          <Logo size={13} /> GuardRail
         </span>
         <button type="button" onClick={() => nav.go('/servers')} title="Inference servers online">
           <span className={`cx-status-dot ${sum && sum.servers && sum.online === sum.servers ? 'ok' : sum?.servers ? 'warn' : ''}`} />
