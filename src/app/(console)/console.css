@@ -304,7 +304,7 @@ select.cx-input { padding-right: 4px; }
 .cx-error { display: flex; align-items: center; gap: 8px; padding: 12px 16px; color: var(--bad); }
 
 /* tables and lists */
-.cx-table-wrap { overflow-x: auto; border: 1px solid var(--edge); border-radius: 4px; }
+.cx-table-wrap { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--edge); border-radius: 4px; }
 .cx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cx-table th { text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 600; color: var(--dim); background: var(--side); border-bottom: 1px solid var(--edge); white-space: nowrap; position: sticky; top: 0; }
 .cx-table td { padding: 6px 10px; border-bottom: 1px solid var(--edge); vertical-align: middle; }
@@ -340,10 +340,15 @@ select.cx-input { padding-right: 4px; }
 .cx-chip span { color: var(--faint); margin-left: 4px; font-family: var(--mono); font-size: 11px; }
 .cx-chip.on { background: var(--sel) !important; border-color: var(--accent) !important; color: var(--fg-hi) !important; }
 .cx-filters { display: flex; flex-wrap: wrap; gap: 6px; }
-.cx-subtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--edge); overflow-x: auto; }
-.cx-subtabs button { height: 30px; padding: 0 12px !important; color: var(--dim) !important; border-bottom: 1px solid transparent !important; margin-bottom: -1px !important; white-space: nowrap; }
+.cx-subtabs { display: flex; gap: 2px; box-shadow: inset 0 -1px 0 var(--edge); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+/* Scrolls sideways only when the tabs don't fit; the scrollbar shows on hover, like VS Code. */
+.cx-subtabs:hover { scrollbar-color: var(--edge-2) transparent; }
+.cx-subtabs::-webkit-scrollbar { height: 3px; }
+.cx-subtabs::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.cx-subtabs:hover::-webkit-scrollbar-thumb { background: var(--edge-2); }
+.cx-subtabs button { flex: none; height: 30px; padding: 0 12px !important; color: var(--dim) !important; border: 0 !important; white-space: nowrap; }
 .cx-subtabs button:hover { color: var(--fg) !important; }
-.cx-subtabs button.on { color: var(--fg-hi) !important; border-bottom-color: var(--accent) !important; }
+.cx-subtabs button.on { color: var(--fg-hi) !important; box-shadow: inset 0 -2px 0 var(--accent); }
 .cx-live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .cx-live.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
 
@@ -675,7 +680,7 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .md-code .md-lang + .md-copy + pre { padding-top: 20px; }
 .cx .md-copy { position: absolute; top: 4px; right: 6px; height: 18px; padding: 0 6px !important; border-radius: 4px; font-size: 10.5px; color: var(--dim); background: var(--raised) !important; border: 1px solid var(--edge) !important; opacity: 0; }
 .md-code:hover .md-copy, .cx .md-copy:focus-visible { opacity: 1; }
-.md-table { overflow-x: auto; }
+.md-table { overflow-x: auto; overflow-y: hidden; }
 .md-table table { border-collapse: collapse; font-size: 12.5px; }
 .md-table th, .md-table td { border: 1px solid var(--edge); padding: 4px 8px; text-align: left; vertical-align: top; }
 .md-table th { background: var(--side); font-weight: 600; }
