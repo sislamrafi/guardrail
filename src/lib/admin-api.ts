@@ -9,6 +9,7 @@ import { SCHEMAS, detectSchema } from './schemas';
 import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { readBoardNotes, writeBoardNotes } from './board-notes';
+import { readNotes, writeNotes } from './design-notes';
 import { allowedRoutes, handleCompletion, Trace } from './gateway';
 
 export class HttpError extends Error {
@@ -61,6 +62,8 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
 }
 
 const routes: Record<string, Handler> = {
+  'GET design-notes': () => ({ notes: readNotes() }),
+  'PUT design-notes': ({ body }) => ({ notes: writeNotes(body.notes) }),
   // ---- servers and models ----
   'GET servers': () => {
     void refreshStale().catch(() => undefined);
