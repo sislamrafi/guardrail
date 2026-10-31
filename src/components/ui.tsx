@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, type CSSProperties, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(`/api/admin/${path}`, {
@@ -266,3 +266,28 @@ export async function copy(text: string) {
     return false;
   }
 }
+
+/** "$0.30 / $1.20 per 1M" from USD per 1M tokens in and out; null when the server reports no prices. */
+export function price(inp: number | null | undefined, out: number | null | undefined): string | null {
+  if (inp == null && out == null) return null;
+  const f = (n: number | null | undefined) => (n == null ? '?' : n === 0 ? 'free' : `$${n < 0.01 ? n.toPrecision(2) : n.toFixed(2)}`);
+  if (inp === 0 && out === 0) return 'Free';
+  return `${f(inp)} in · ${f(out)} out per 1M`;
+}
+
+/**
+ * Props for a secret field that browsers and password managers should not fill or offer to save.
+ * A text input masked with CSS is not treated as a password field, so Chrome and Safari skip it.
+ */
+export const secretInputProps = {
+  type: 'text',
+  autoComplete: 'off',
+  autoCorrect: 'off',
+  autoCapitalize: 'off',
+  spellCheck: false,
+  'data-lpignore': 'true',
+  'data-1p-ignore': 'true',
+  'data-bwignore': 'true',
+  'data-form-type': 'other',
+  style: { WebkitTextSecurity: 'disc' } as CSSProperties,
+} as const;

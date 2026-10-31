@@ -6,7 +6,7 @@ import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './l
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
-import { createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
+import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, handleCompletion, Trace } from './gateway';
 
@@ -93,7 +93,7 @@ const routes: Record<string, Handler> = {
       url: String(body.url ?? ''),
       apiKey: (body.apiKey as string) || null,
       role: body.role === 'guard' ? 'guard' : 'inference',
-      models: Array.isArray(body.models) ? (body.models as { name: string; contextLen: number | null }[]) : [],
+      models: Array.isArray(body.models) ? (body.models as DiscoveredModel[]) : [],
       enabled: Array.isArray(body.enabled) ? (body.enabled as string[]) : undefined,
       latency: typeof body.latency === 'number' ? body.latency : null,
     }),

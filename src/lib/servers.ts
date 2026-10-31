@@ -19,6 +19,8 @@ export interface Model {
   server_id: number;
   name: string;
   context_len: number | null;
+  price_in: number | null;
+  price_out: number | null;
   enabled: number;
   present: number;
   discovered_at: number;
@@ -27,6 +29,39 @@ export interface Model {
 export interface DiscoveredModel {
   name: string;
   contextLen: number | null;
+  /** USD per 1M input tokens, when the server reports it. */
+  priceIn?: number | null;
+  /** USD per 1M output tokens, when the server reports it. */
+  priceOut?: number | null;
+}
+
+interface RawModel {
+  id: string;
+  max_model_len?: number; // vLLM
+  context_length?: number; // OpenRouter and others
+  context_window?: number;
+  max_context_length?: number;
+  top_provider?: { context_length?: number | null };
+  pricing?: { prompt?: string | number; completion?: string | number }; // OpenRouter: USD per token
+}
+
+const numOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+const posInt = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null);
+
+/** Per-token price (string or number) to USD per 1M tokens. Negative means "varies" on OpenRouter. */
+function perMillion(v: unknown): number | null {
+  const n = typeof v === 'string' ? Number(v) : v;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 1e6 * 1e6) / 1e6;
+}
+
+export function parseModel(m: RawModel): DiscoveredModel {
+  return {
+    name: m.id,
+    contextLen: posInt(m.max_model_len) ?? posInt(m.context_length) ?? posInt(m.top_provider?.context_length) ?? posInt(m.context_window) ?? posInt(m.max_context_length),
+    priceIn: perMillion(m.pricing?.prompt),
+    priceOut: perMillion(m.pricing?.completion),
+  };
 }
 
 export function normalizeUrl(url: string): string {
@@ -53,11 +88,8 @@ export async function discover(url: string, apiKey?: string | null, timeoutMs = 
   });
   const latency = Math.round(performance.now() - t0);
   if (!res.ok) throw new Error(`Server answered ${res.status} ${res.statusText}`.trim());
-  const body = (await res.json()) as { data?: { id: string; max_model_len?: number }[] };
-  const models: DiscoveredModel[] = (body.data ?? []).map((m) => ({
-    name: m.id,
-    contextLen: typeof m.max_model_len === 'number' ? m.max_model_len : null,
-  }));
+  const body = (await res.json()) as { data?: RawModel[] };
+  const models: DiscoveredModel[] = (body.data ?? []).filter((m) => m && typeof m.id === 'string').map(parseModel);
   return { base, latency, models };
 }
 
@@ -106,8 +138,8 @@ export function createServer(input: {
       .run(name, url, input.apiKey || null, input.role ?? 'inference', input.models.length ? 'online' : 'unknown', input.latency ?? null, now(), now());
     const id = Number(r.lastInsertRowid);
     const enabled = new Set(input.enabled ?? input.models.map((m) => m.name));
-    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, enabled, discovered_at) VALUES (?, ?, ?, ?, ?)');
-    for (const m of input.models) ins.run(id, m.name, m.contextLen, enabled.has(m.name) ? 1 : 0, now());
+    const ins = db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    for (const m of input.models) ins.run(id, m.name, posInt(m.contextLen), numOrNull(m.priceIn), numOrNull(m.priceOut), enabled.has(m.name) ? 1 : 0, now());
     return id;
   });
   try {
@@ -156,9 +188,9 @@ export async function rediscover(id: number) {
       for (const m of existing) db.prepare('UPDATE models SET present = ? WHERE id = ?').run(names.has(m.name) ? 1 : 0, m.id);
       for (const m of models) {
         if (have.has(m.name)) {
-          db.prepare('UPDATE models SET context_len = ? WHERE server_id = ? AND name = ?').run(m.contextLen, id, m.name);
+          db.prepare('UPDATE models SET context_len = ?, price_in = ?, price_out = ? WHERE server_id = ? AND name = ?').run(m.contextLen, m.priceIn ?? null, m.priceOut ?? null, id, m.name);
         } else {
-          db.prepare('INSERT INTO models (server_id, name, context_len, enabled, discovered_at) VALUES (?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, now());
+          db.prepare('INSERT INTO models (server_id, name, context_len, price_in, price_out, enabled, discovered_at) VALUES (?, ?, ?, ?, ?, 0, ?)').run(id, m.name, m.contextLen, m.priceIn ?? null, m.priceOut ?? null, now());
           added++;
         }
       }

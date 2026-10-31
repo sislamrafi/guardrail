@@ -161,6 +161,10 @@ export function setDb(db: Database.Database) {
 function migrate(db: Database.Database) {
   const have = new Set((db.prepare('PRAGMA table_info(request_logs)').all() as { name: string }[]).map((c) => c.name));
   if (!have.has('prompt_file')) db.exec('ALTER TABLE request_logs ADD COLUMN prompt_file TEXT');
+  const modelCols = new Set((db.prepare('PRAGMA table_info(models)').all() as { name: string }[]).map((c) => c.name));
+  // USD per 1M tokens, when the server reports prices (OpenRouter does; vLLM does not).
+  if (!modelCols.has('price_in')) db.exec('ALTER TABLE models ADD COLUMN price_in REAL');
+  if (!modelCols.has('price_out')) db.exec('ALTER TABLE models ADD COLUMN price_out REAL');
 }
 
 // A fresh install gets one root group so keys can be created right away.

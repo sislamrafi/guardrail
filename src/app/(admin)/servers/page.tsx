@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { AddServer } from '@/components/add-server';
-import { Icon, Loading, Modal, PageHead, Switch, api, ago, ms, useAction, useApi } from '@/components/ui';
+import { Icon, Loading, Modal, PageHead, Switch, api, ago, ms, price, secretInputProps, useAction, useApi } from '@/components/ui';
 import type { LimitView } from '@/lib/limits';
 import type { Model, Server } from '@/lib/servers';
 
@@ -106,7 +106,7 @@ function ServerCard({ s, data, reload, onRule, onEdit }: { s: ServerV; data: Dat
         <div style={{ minWidth: 640 }}>
           <div className="mrow head">
             <span>Model (found automatically)</span>
-            <span>Context</span>
+            <span>Context / price</span>
             <span>{s.role === 'guard' ? 'Used for' : 'Groups that can use it'}</span>
             <span>Rule</span>
             <span>{s.role === 'guard' ? 'On' : 'Clients'}</span>
@@ -120,7 +120,10 @@ function ServerCard({ s, data, reload, onRule, onEdit }: { s: ServerV; data: Dat
                 <span className="mono" style={{ fontWeight: 500, fontSize: 12.5 }}>
                   {m.name} {!m.present && <span className="pill bad">Gone from server</span>}
                 </span>
-                <span className="muted">{ctx(m.context_len)}</span>
+                <span className="muted">
+                  {ctx(m.context_len)}
+                  {price(m.price_in, m.price_out) && <span className="small" style={{ display: 'block' }}>{price(m.price_in, m.price_out)}</span>}
+                </span>
                 <span className="small">{s.role === 'guard' ? 'Guard checks (set in Guard checks)' : m.enabled ? groups.join(', ') || <span className="muted">No group yet</span> : <span className="muted">Hidden from clients</span>}</span>
                 <span>
                   {s.role === 'guard' ? (
@@ -298,7 +301,7 @@ function EditServer({ s, onClose, onSaved }: { s: ServerV; onClose: () => void; 
     <Modal title={`Edit ${s.name}`} onClose={onClose}>
       <label><span className="lbl">Name</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} /></label>
       <label><span className="lbl">Address</span><input className="inp mono" value={url} onChange={(e) => setUrl(e.target.value)} /></label>
-      <label><span className="lbl">{s.hasKey ? 'New API key (leave empty to keep the current one)' : 'API key (optional)'}</span><input className="inp mono" type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" /></label>
+      <label><span className="lbl">{s.hasKey ? 'New API key (leave empty to keep the current one)' : 'API key (optional)'}</span><input className="inp mono" {...secretInputProps} name="gr-server-secret" value={key} onChange={(e) => setKey(e.target.value)} /></label>
       <div>
         <span className="lbl">Used for</span>
         <div className="seg">
