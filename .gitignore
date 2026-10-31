@@ -9,6 +9,3 @@ next-env.d.ts
 .env.local
 coverage/
 data/prompts/
-
-# Reference screenshots can show secrets (this one shows .env)
-design/reference/

@@ -8,8 +8,6 @@ import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
 import { type DiscoveredModel, createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
 import { getSettings, updateSettings } from './settings';
-import { readBoardNotes, writeBoardNotes } from './board-notes';
-import { readNotes, writeNotes } from './design-notes';
 import { allowedRoutes, handleCompletion, Trace } from './gateway';
 
 export class HttpError extends Error {
@@ -62,8 +60,6 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
 }
 
 const routes: Record<string, Handler> = {
-  'GET design-notes': () => ({ notes: readNotes() }),
-  'PUT design-notes': ({ body }) => ({ notes: writeNotes(body.notes) }),
   // ---- servers and models ----
   'GET servers': () => {
     void refreshStale().catch(() => undefined);
@@ -209,8 +205,6 @@ const routes: Record<string, Handler> = {
   },
 
   // ---- settings and guard ----
-  'GET board-notes': () => ({ notes: readBoardNotes() }),
-  'PUT board-notes': ({ body }) => ({ notes: writeBoardNotes(body.notes) }),
   'GET settings': () => ({ settings: getSettings(), servers: serverView().map((s) => ({ id: s.id, name: s.name, role: s.role, status: s.status, latency_ms: s.latency_ms, models: s.models.map((m) => m.name) })), groups: treeOrder(groupsView()) }),
   'PATCH settings': ({ body }) => updateSettings(body),
   'GET guard/stats': () => {
