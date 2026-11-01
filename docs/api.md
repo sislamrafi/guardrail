@@ -9,6 +9,7 @@ All gateway routes need `Authorization: Bearer grk_live_…` (or `x-api-key`).
 | `GET` | `/v1/models` | Models this key may use. |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions. Supports streaming. |
 | `POST` | `/v1/completions` | Legacy completions. Supports streaming. |
+| `POST` | `/mcp` | MCP docs server (JSON-RPC, Streamable HTTP). See [mcp.md](mcp.md). |
 
 Errors use OpenAI's shape, `{"error": {"message", "type", "code", "param"}}`:
 
@@ -40,10 +41,10 @@ Everything is under `/api/admin/` and returns JSON. Failures come back as `{"err
 | POST / DELETE | `limits`, `limits/:id` | Global, server or model limits |
 | GET / POST | `groups` | Tree with resolved settings, or `{name, parentId, description}` to create a group |
 | GET / PATCH / DELETE | `groups/:id` | Read (with the resolution matrix), rename or move, delete |
-| PUT | `groups/:id/settings` | `{key, setting: {mode, value}}`, or `{key, setting: null}` to inherit. Keys: `servers`, `models`, `context`, `layers`, `layer_opts`, `blocked_reply`, `rate_limit` |
+| PUT | `groups/:id/settings` | `{key, setting: {mode, value}}`, or `{key, setting: null}` to inherit. Keys: `servers`, `models`, `context`, `layers`, `layer_opts`, `blocked_reply`, `rate_limit`, `mcp_docs` |
 | GET / POST | `keys` | List keys, or create one (the response includes the secret) |
 | POST | `keys/preview` | Effective settings for `{groupId, exceptions}` before creating a key |
-| GET / PATCH / DELETE | `keys/:id` | Read, edit (group, exceptions, IP list, caller line, expiry, revoke), delete |
+| GET / PATCH / DELETE | `keys/:id` | Read, edit (group, exceptions, IP list, caller line, `mcp` access, expiry, revoke), delete |
 | GET | `keys/:id/secret` | Reveal the stored secret |
 | POST | `keys/:id/rotate` | Issue a new secret. The old one stops working |
 | GET / POST | `context` | List files, or create one from `{name, body}` |
@@ -67,4 +68,7 @@ Everything is under `/api/admin/` and returns JSON. Failures come back as `{"err
 | POST | `studio/send` | The same, as one JSON response |
 | GET | `schemas` | Known schemas and the current policy |
 | POST | `schemas/detect` | `{body, path, headers?}` → detection scores |
+| GET / POST | `docs` | MCP docs (with who they're shared with and how many keys read them), each key's effective docs and the tool list; or create a doc `{title, slug?, description?, tags?, body?}` |
+| GET / PATCH / DELETE | `docs/:id` | Read with history, save (`{title, slug, description, tags, body, autosave?}`), or delete (also removed from every group and key) |
+| POST | `docs/test` | `{keyId or groupId, method, params}` runs one MCP call as that key, without logging |
 | GET | `summary` | Sidebar counts |

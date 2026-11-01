@@ -1,9 +1,10 @@
 import type { LayerOpt, SettingKey, SettingValue } from '@/lib/groups';
 
 /** Human text for a stored or effective group setting. */
-export function display(key: SettingKey, v: SettingValue, list: { files: { id: number; name: string }[]; servers: { id: number; name: string }[]; layers?: { id: string; name: string }[] }): string {
+export function display(key: SettingKey, v: SettingValue, list: { docs?: { id: number; title: string }[]; files: { id: number; name: string }[]; servers: { id: number; name: string }[]; layers?: { id: string; name: string }[] }): string {
   if (key === 'servers') return v === null ? 'All servers' : (v as number[]).map((id) => list.servers.find((s) => s.id === id)?.name ?? '?').join(', ') || 'None';
   if (key === 'models') return (v as string[]).includes('*') ? 'All models' : (v as string[]).join(', ') || 'None';
+  if (key === 'mcp_docs') return (v as number[]).map((id) => list.docs?.find((d) => d.id === id)?.title ?? `doc ${id}`).join(', ') || 'None';
   if (key === 'context') return (v as number[]).map((id) => list.files.find((f) => f.id === id)?.name ?? '?').join(', ') || 'None';
   if (key === 'layers') {
     const e = Object.entries((v ?? {}) as Record<string, boolean>);

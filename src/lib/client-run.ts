@@ -24,7 +24,7 @@ export interface ClientRun {
 export function groupKey(groupId: number): ApiKey {
   const g = getGroup(groupId);
   if (!g) throw new Error('Group not found.');
-  return { id: 0, name: `Studio · ${g.name}`, owner: 'Admin', groupId, prefix: '', exceptions: {}, expiresAt: null, revoked: false, lastUsedAt: null, createdAt: 0, ipAllow: [], canReveal: false, identity: { key: true, owner: true } };
+  return { id: 0, name: `Studio · ${g.name}`, owner: 'Admin', groupId, prefix: '', exceptions: {}, expiresAt: null, revoked: false, lastUsedAt: null, createdAt: 0, ipAllow: [], canReveal: false, identity: { key: true, owner: true }, mcp: true };
 }
 
 export async function runAsClient(input: {

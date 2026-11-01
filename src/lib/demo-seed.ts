@@ -14,6 +14,7 @@ import { createRule, listRules } from './rules';
 import { createServer, listServers } from './servers';
 import { getSettings, updateSettings } from './settings';
 import { createScenario, listScenarios } from './studio';
+import { createDoc, docBySlug } from './mcp-docs';
 
 // Deterministic randomness, so two runs produce the same logs.
 function rng(seed: number) {
@@ -57,6 +58,7 @@ type GroupSpec = { name: string; parent: string | null; description: string; set
 export interface DemoSummary {
   groups: number;
   files: number;
+  docs: number;
   servers: number;
   keys: number;
   rules: number;
@@ -149,6 +151,23 @@ export function seedDemo(opts: { mockUrl?: string; logs?: number } = {}): DemoSu
   set('Contractors', 'layers', { mode: 'override', value: { tools: true } });
   set('Contractors', 'blocked_reply', { mode: 'override', value: 'This request was stopped by the client security gateway.\nReason: {reason}\nReference: {request_id}' });
 
+  // ---------------- MCP docs (read by agents on demand at /mcp)
+  const doc = (slug: string, title: string, description: string, tags: string[], body: string) => (docBySlug(slug) ?? createDoc({ slug, title, description, tags, body })).id;
+  const D = {
+    onboarding: doc('onboarding', 'Engineering onboarding', 'Start here: repos, environments, who owns what', ['start', 'team'], '# Engineering onboarding\n\n- Monorepo: `apps/web`, `apps/api`, `apps/mobile`, shared code in `packages/`.\n- Environments: dev → staging → production. Never test against production data.\n- Ask in #eng-help; owners are listed in `CODEOWNERS`.\n'),
+    deploy: doc('deploy-runbook', 'Deploy runbook', 'How we ship to production, step by step, and how to roll back', ['ops', 'deploy'], '# Deploy runbook\n\n1. Merge to `main`; CI builds and tags the release.\n2. Run `make release ENV=staging` and check the smoke tests.\n3. Promote with `make release ENV=prod`. Watch the canary dashboard for 10 minutes.\n4. Roll back with `make rollback` if the error rate doubles.\n'),
+    api: doc('api-error-handling', 'API error handling', 'Error shapes, status codes and retries for apps/api', ['backend', 'api'], '# API error handling\n\nReturn `{ error: { code, message } }` with the right status. Use 422 for validation, 409 for conflicts. Clients retry 429 and 503 with backoff; never retry 4xx otherwise.\n'),
+    ui: doc('ui-components', 'UI component guide', 'When to use which component from packages/ui', ['frontend'], '# UI component guide\n\nUse `Button` variants `primary` and `subtle`. Forms use `Field` + `Input`; never raw `<input>`. Every interactive element must work with the keyboard.\n'),
+    data: doc('data-access', 'Data access rules', 'What data can leave the warehouse and how to anonymise it', ['data', 'security'], '# Data access rules\n\nNo customer PII in notebooks. Use the `anon_` views. Exports over 10k rows need a ticket.\n'),
+    incidents: doc('incident-process', 'Incident process', 'Severity levels and who to page', ['ops'], '# Incident process\n\nSEV1: page on-call now. SEV2: post in #incidents within 15 minutes. Write the review within 5 working days.\n'),
+  };
+  setGroupSetting(root.id, 'mcp_docs', { mode: 'set', value: [D.onboarding] });
+  set('Engineering', 'mcp_docs', { mode: 'add', value: [D.deploy, D.incidents] });
+  set('Backend', 'mcp_docs', { mode: 'add', value: [D.api] });
+  set('Frontend', 'mcp_docs', { mode: 'add', value: [D.ui] });
+  set('Data science', 'mcp_docs', { mode: 'add', value: [D.data] });
+  set('Contractors', 'mcp_docs', { mode: 'override', value: [] });
+
   // ---------------- guard layers
   const layers = [
     normalizeLayer({ id: 'secrets', name: 'Secrets and PII redactor', type: 'redactor', onFail: 'redact' }),
@@ -209,6 +228,7 @@ export function seedDemo(opts: { mockUrl?: string; logs?: number } = {}): DemoSu
   return {
     groups: count('SELECT COUNT(*) n FROM groups'),
     files: count('SELECT COUNT(*) n FROM context_files'),
+    docs: count('SELECT COUNT(*) n FROM mcp_docs'),
     servers: count('SELECT COUNT(*) n FROM servers'),
     keys: count('SELECT COUNT(*) n FROM api_keys'),
     rules: count('SELECT COUNT(*) n FROM rules'),

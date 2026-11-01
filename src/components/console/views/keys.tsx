@@ -10,8 +10,9 @@ import { Empty, Field, GroupSelect, Loading, Note, Page, Pill, Section, Stat, Sw
 import { pathFor, subtree, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import type { Data, GroupSettings, KeyC, Resolution } from '../types';
+import { KeyMcpSection } from './docs';
 
-const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
+const lookups = (data: Data) => ({ docs: data.docs, files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
 
 function excText(e: GroupSettings, data: Data) {
   const L = lookups(data);
@@ -258,6 +259,8 @@ function Preview({ groupId, exceptions, data, caller }: { groupId: number; excep
           <dd>{guardText(e, data)}</dd>
           <dt>Rate limit</dt>
           <dd>{e.rate_limit} per minute</dd>
+          <dt>MCP docs</dt>
+          <dd className="mono">{display('mcp_docs', e.mcp_docs ?? [], L)}</dd>
         </dl>
       )}
     </aside>
@@ -394,8 +397,10 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
   const [expires, setExpires] = useState(toDate(k.expiresAt));
   const [ips, setIps] = useState(k.ipAllow.join(', '));
   const ex = useExceptions(k.exceptions);
-  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
-  const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: ex.value, expiresAt: fromDate(expires), ipAllow: ips } }), `${name} saved`);
+  // MCP docs shared with this key are edited on the doc (and saved at once), so keep the current ones.
+  const exAll = { ...ex.value, ...(k.exceptions.mcp_docs ? { mcp_docs: k.exceptions.mcp_docs } : {}) };
+  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(exAll) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
+  const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: exAll, expiresAt: fromDate(expires), ipAllow: ips } }), `${name} saved`);
   // Name and owner save themselves. Group, expiry, IPs and exceptions change what the key can do: Save.
   const quiet = useQuietSave();
   const auto = useAutoSave({
@@ -404,7 +409,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
     invalid: !name.trim() ? 'Give the key a name.' : !owner.trim() ? 'Say who uses this key.' : null,
     save: () => quiet(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner } })),
   });
-  const accessDirty = groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(ex.value) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
+  const accessDirty = groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(exAll) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
   return (
     <Page
       icon="key"
@@ -467,6 +472,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
             </div>
           </Section>
           <IdentitySection k={k} name={name} owner={owner} />
+          <KeyMcpSection k={k} />
           <Section title="Allowed IPs" hint="Requests from any other address are rejected with a 403. Empty allows any address.">
             <textarea className="cx-input mono" rows={2} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.10, 10.0.0.0/8" aria-label="Allowed IPs" />
           </Section>
@@ -480,7 +486,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
             </button>
           </div>
         </form>
-        <Preview groupId={groupId} exceptions={ex.value} data={data} caller={(() => { const i = k.identity ?? { key: true, owner: true }; const w = i.owner ? owner.trim() : ''; const n = i.key ? name.trim() : ''; return w && n ? `Request from: ${w} (API key: ${n})` : w ? `Request from: ${w}` : n ? `Request from API key: ${n}` : ''; })()} />
+        <Preview groupId={groupId} exceptions={exAll} data={data} caller={(() => { const i = k.identity ?? { key: true, owner: true }; const w = i.owner ? owner.trim() : ''; const n = i.key ? name.trim() : ''; return w && n ? `Request from: ${w} (API key: ${n})` : w ? `Request from: ${w}` : n ? `Request from API key: ${n}` : ''; })()} />
       </div>
     </Page>
   );

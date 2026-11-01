@@ -15,6 +15,9 @@ import { replayLog, runAsClient } from './client-run';
 import { getDb } from './db';
 import { probeFormat } from './adapters';
 import { planFor } from './studio-plan';
+import { createDoc, deleteDoc, docHistory, docsForKey, getDoc, listDocs, updateDoc } from './mcp-docs';
+import { MCP_PATH, listTools, testAsKey } from './mcp';
+import { groupKey } from './client-run';
 import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
 
 export class HttpError extends Error {
@@ -233,6 +236,7 @@ const routes: Record<string, Handler> = {
       revoked: body.revoked === undefined ? undefined : !!body.revoked,
       ipAllow: body.ipAllow,
       identity: body.identity && typeof body.identity === 'object' ? (body.identity as { key?: boolean; owner?: boolean }) : undefined,
+      mcp: body.mcp === undefined ? undefined : !!body.mcp,
     }),
   'DELETE keys/:id': ({ params }) => deleteKey(num(params[0])),
   'GET keys/:id/secret': ({ params }) => {
@@ -257,7 +261,16 @@ const routes: Record<string, Handler> = {
       files: files.map((f) => ({ ...f, tokens: estimateTokens(f.body), usedBy: groups.filter((g) => { const s = g.settings.context; return Array.isArray(s?.value) && (s.value as number[]).includes(f.id); }).map((g) => g.name), reach: used(f.id).length })),
       groups: treeOrder(groupsView()).map((g) => {
         const r = resolveGroup(g.id, undefined, groups);
-        return { ...g, context: r.effective.context, own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [], mode: g.settings.context?.mode ?? null, keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name) };
+        return {
+          ...g,
+          context: r.effective.context,
+          own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [],
+          mode: g.settings.context?.mode ?? null,
+          docs: r.effective.mcp_docs,
+          ownDocs: Array.isArray(g.settings.mcp_docs?.value) ? (g.settings.mcp_docs!.value as number[]) : [],
+          docsMode: g.settings.mcp_docs?.mode ?? null,
+          keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name),
+        };
       }),
       settings: getSettings(),
       cache: listServers().filter((s) => s.cache_hit_rate !== null).map((s) => ({ name: s.name, rate: s.cache_hit_rate })),
@@ -277,6 +290,66 @@ const routes: Record<string, Handler> = {
       if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) setGroupSetting(g.id, 'context', { mode: s.mode, value: (s.value as number[]).filter((x) => x !== id) });
     }
     deleteFile(id);
+  },
+
+  // ---- MCP docs ----
+  'GET docs': () => {
+    const groups = listGroups();
+    const docs = listDocs();
+    const keys = listKeys();
+    const reach = new Map<number, number>();
+    const perKey = keys.map((k) => {
+      const seen = docsForKey(k, groups, docs);
+      for (const d of seen) reach.set(d.id, (reach.get(d.id) ?? 0) + 1);
+      return { id: k.id, name: k.name, owner: k.owner, groupId: k.groupId, mcp: k.mcp, revoked: k.revoked, docs: seen.map((d) => d.id) };
+    });
+    return {
+      endpoint: MCP_PATH,
+      docs: docs.map((d) => ({
+        ...d,
+        groups: groups.filter((g) => Array.isArray(g.settings.mcp_docs?.value) && (g.settings.mcp_docs!.value as number[]).includes(d.id)).map((g) => g.id),
+        keys: keys.filter((k) => Array.isArray(k.exceptions.mcp_docs?.value) && (k.exceptions.mcp_docs!.value as number[]).includes(d.id)).map((k) => k.id),
+        reach: reach.get(d.id) ?? 0,
+      })),
+      keys: perKey,
+      tools: listTools().map((t) => ({ name: t.name, title: t.title, description: t.description })),
+    };
+  },
+  'POST docs': ({ body }) => createDoc(body as never),
+  'GET docs/:id': ({ params }) => {
+    const d = getDoc(num(params[0]));
+    if (!d) throw new HttpError(404, 'Doc not found.');
+    return { doc: d, history: docHistory(d.id) };
+  },
+  'PATCH docs/:id': ({ params, body }) =>
+    updateDoc(num(params[0]), {
+      title: body.title as string | undefined,
+      slug: body.slug as string | undefined,
+      description: body.description as string | undefined,
+      tags: body.tags,
+      body: body.body as string | undefined,
+      autosave: body.autosave === true,
+    }),
+  'DELETE docs/:id': ({ params }) => {
+    const id = num(params[0]);
+    // Drop it from every group and key that lists it, then delete it.
+    for (const g of listGroups()) {
+      const s = g.settings.mcp_docs;
+      if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) setGroupSetting(g.id, 'mcp_docs', { mode: s.mode, value: (s.value as number[]).filter((x) => x !== id) });
+    }
+    for (const k of listKeys()) {
+      const s = k.exceptions.mcp_docs;
+      if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) updateKey(k.id, { exceptions: { ...k.exceptions, mcp_docs: { ...s, value: (s.value as number[]).filter((x) => x !== id) } } });
+    }
+    deleteDoc(id);
+  },
+  // Run one MCP call as a key (or "any key in a group") and show what the agent would get.
+  'POST docs/test': async ({ body }) => {
+    const key = body.keyId ? getKey(num(body.keyId, 'key')) : body.groupId ? groupKey(num(body.groupId, 'group')) : undefined;
+    if (!key) throw new HttpError(404, 'Pick a key or a group.');
+    const method = String(body.method ?? 'tools/call');
+    if (!['tools/list', 'tools/call', 'resources/list', 'resources/read', 'initialize'].includes(method)) throw new HttpError(400, 'Unsupported method.');
+    return testAsKey(key, method, (body.params && typeof body.params === 'object' ? body.params : {}) as Record<string, unknown>);
   },
 
   // ---- settings and guard ----

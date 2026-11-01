@@ -22,6 +22,7 @@ const LABEL: Record<View, string> = {
   keys: 'API keys',
   context: 'Context files',
   rules: 'Custom rules',
+  docs: 'MCP docs',
   schemas: 'Schemas',
   studio: 'Studio',
   settings: 'Settings',
@@ -52,7 +53,7 @@ export function Sidebar({ width }: { width: number }) {
   else if (view === 'rules') body = <RulesSide data={data} />;
   else if (view === 'studio') body = <StudioSide data={data} />;
   else if (view === 'schemas' || view === 'settings') body = <OutlineSide view={view} />;
-  else body = <GroupsSide data={data} mode={view === 'groups' ? 'groups' : view === 'keys' ? 'keys' : view === 'context' ? 'context' : 'filter'} />;
+  else body = <GroupsSide data={data} mode={view === 'groups' ? 'groups' : view === 'keys' ? 'keys' : view === 'context' ? 'context' : view === 'docs' ? 'docs' : 'filter'} />;
   return (
     <aside className="cx-side" style={{ width }} aria-label={`${LABEL[view]} sidebar`}>
       {body}
@@ -62,7 +63,7 @@ export function Sidebar({ width }: { width: number }) {
 
 // ---------------------------------------------------------------- group trees (groups, keys, context, filters)
 
-function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'keys' | 'context' }) {
+function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'keys' | 'context' | 'docs' }) {
   const nav = useNav();
   const act = useActions();
   const ui = useUi();
@@ -71,7 +72,12 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const [creating, setCreating] = useState<Creating>(null);
   // Tree by group, or one flat list (Context files and API keys), remembered per explorer.
   const [flat, setFlat] = usePref(`flat.${mode}`, false);
-  const allFiles = mode === 'context' && flat;
+  // Context files and MCP docs share one explorer: a library of Markdown items attached to groups.
+  const lib = mode === 'context' || mode === 'docs';
+  const docs = mode === 'docs';
+  const items = docs ? data.docs.map((d) => ({ id: d.id, name: d.title, body: d.body, meta: d.tags[0] ?? '', title: `${d.title} · ${d.slug}${d.description ? ` · ${d.description}` : ''} · ${d.reach} key${d.reach === 1 ? '' : 's'} can read it` })) : data.files.map((f) => ({ id: f.id, name: f.name, body: f.body, meta: fmtTokens(f.tokens), title: `${f.name} · ${f.tokens} tokens` }));
+  const ownOf = (g: GroupC) => (docs ? g.ownDocs : g.own);
+  const allFiles = lib && flat;
   const allKeys = mode === 'keys' && flat;
   const upload = useRef<HTMLInputElement>(null);
   // New groups, files and keys go inside the selected group (the one open in Groups, or the open key's).
@@ -79,11 +85,11 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const sel = data.groups.find((g) => g.id === selId) ?? null;
 
   // Reveal the open key or file: expand every group above it so its row (the selection) is visible.
-  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : mode === 'context' && nav.view === 'context' && nav.id ? `f:${nav.id}` : null;
+  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : lib && nav.view === mode && nav.id ? `f:${nav.id}` : null;
   useEffect(() => {
     if (!openItem) return;
     const id = Number(openItem.slice(2));
-    const home = openItem.startsWith('k:') ? [data.keys.find((k) => k.id === id)?.groupId] : data.groups.filter((g) => g.own.includes(id)).map((g) => g.id);
+    const home = openItem.startsWith('k:') ? [data.keys.find((k) => k.id === id)?.groupId] : data.groups.filter((g) => ownOf(g).includes(id)).map((g) => g.id);
     const keys: string[] = [];
     for (const gid of home) for (let g = data.groups.find((x) => x.id === gid); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
     if (keys.length) expand(keys);
@@ -112,16 +118,47 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       if (kind === 'group') {
         const g = await act.createGroup(name, parent);
         if (g && mode === 'groups') nav.go(pathFor('groups', g.id));
-      } else await act.createFile(name, parent);
+      } else if (docs) await act.createDoc(name, parent);
+      else await act.createFile(name, parent);
     },
     onCancelEdit: () => setCreating(null),
   });
 
   const fileNode = (fid: number, g: GroupC | null): TreeNode | null => {
-    const f = data.files.find((x) => x.id === fid);
+    const f = items.find((x) => x.id === fid);
     if (!f) return null;
-    const path = pathFor('context', f.id);
+    const path = pathFor(docs ? 'docs' : 'context', f.id);
     const dirty = nav.drafts[path] !== undefined && nav.drafts[path] !== f.body;
+    if (docs) {
+      const d = data.docs.find((x) => x.id === fid)!;
+      return {
+        key: `f:${g?.id ?? 'x'}:${f.id}`,
+        label: (
+          <>
+            {f.name}
+            {dirty && <span className="cx-dot" aria-label="unsaved" />}
+          </>
+        ),
+        text: f.name,
+        icon: 'file',
+        iconClass: 'md',
+        meta: f.meta,
+        title: `${f.title}${g ? ` · shared with ${g.name}` : ''}. Drag onto a group to share it.`,
+        selected: nav.path === path,
+        onOpen: () => nav.go(path),
+        onRename: (name) => void act.renameDoc(d, name),
+        onDelete: () => void act.deleteDoc(d),
+        drag: `doc:${f.id}:${g?.id ?? ''}`,
+        actions: g ? [{ icon: 'unlink', label: `Stop sharing with ${g.name}`, run: () => void act.unshareDoc(f.id, g.id) }] : [],
+        menu: () => [
+          { label: 'Open', run: () => nav.go(path) },
+          ...(g ? [{ label: `Stop sharing with ${g.name}`, run: () => void act.unshareDoc(f.id, g.id) }] : []),
+          { sep: true, label: '' },
+          { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteDoc(d) },
+        ],
+      };
+    }
+    const file = data.files.find((x) => x.id === fid)!;
     return {
       key: `f:${g?.id ?? 'x'}:${f.id}`,
       label: (
@@ -133,19 +170,19 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       text: f.name,
       icon: 'file',
       iconClass: 'md',
-      meta: fmtTokens(f.tokens),
-      title: `${f.name} · ${f.tokens} tokens${g ? ` · in ${g.name}` : ''}. Drag onto a group to move it.`,
+      meta: fmtTokens(file.tokens),
+      title: `${f.name} · ${file.tokens} tokens${g ? ` · in ${g.name}` : ''}. Drag onto a group to move it.`,
       selected: nav.path === path,
       onOpen: () => nav.go(path),
-      onRename: (name) => void act.renameFile(f, name),
-      onDelete: () => void act.deleteFile(f),
+      onRename: (name) => void act.renameFile(file, name),
+      onDelete: () => void act.deleteFile(file),
       drag: `file:${f.id}:${g?.id ?? ''}`,
       actions: g ? [{ icon: 'unlink', label: `Remove from ${g.name}`, run: () => void act.detach(f.id, g.id) }] : [],
       menu: () => [
         { label: 'Open', run: () => nav.go(path) },
         ...(g ? [{ label: `Remove from ${g.name}`, run: () => void act.detach(f.id, g.id) }] : []),
         { sep: true, label: '' },
-        { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteFile(f) },
+        { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteFile(file) },
       ],
     };
   };
@@ -182,18 +219,19 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     const kids: TreeNode[] = [];
     if (creating?.parent === g.id && creating.kind === 'group') kids.push(newNode('group', g.id));
     kids.push(...data.groups.filter((c) => c.parentId === g.id).map(groupNode));
-    if (mode === 'context') {
+    if (lib) {
       if (creating?.parent === g.id && creating.kind === 'file') kids.push(newNode('file', g.id));
-      kids.push(...(g.own.map((fid) => fileNode(fid, g)).filter(Boolean) as TreeNode[]));
+      kids.push(...(ownOf(g).map((fid) => fileNode(fid, g)).filter(Boolean) as TreeNode[]));
     }
     if (mode === 'keys') kids.push(...data.keys.filter((k) => k.groupId === g.id).map((k) => keyNode(k, false)));
     // One selection per tree: a group is highlighted only while no file or key below it is open.
-    const itemOpen = (mode === 'context' && nav.view === 'context' && !!nav.id) || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
+    const itemOpen = (lib && nav.view === mode && !!nav.id) || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
     const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : !itemOpen && sel?.id === g.id;
     const items = (): MenuItem[] => [
       ...(mode !== 'groups' ? [{ label: 'Open group settings', run: () => nav.go(pathFor('groups', g.id)) }] : []),
       { label: 'New sub-group', run: () => startCreate('group', g.id) },
       ...(mode === 'context' ? [{ label: 'New context file here', run: () => startCreate('file', g.id) }] : []),
+      ...(docs ? [{ label: 'New MCP doc here', run: () => startCreate('file', g.id) }] : []),
       ...(mode === 'keys' || mode === 'groups' ? [{ label: 'New API key here', run: () => nav.go(`/keys/new?group=${g.id}`) }] : []),
       { label: 'Show activity', run: () => nav.go(`/activity?group=${g.id}`) },
       { sep: true, label: '' },
@@ -205,7 +243,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       text: g.name,
       icon: 'folder',
       iconClass: 'folder',
-      badge: mode === 'keys' ? g.keyCount || null : mode === 'context' ? g.own.length || null : null,
+      badge: mode === 'keys' ? g.keyCount || null : lib ? ownOf(g).length || null : null,
       title: g.description || g.path,
       selected,
       children: kids,
@@ -221,6 +259,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
         const [t, id] = p.split(':');
         if (t === 'group') return !subtree(Number(id), data.groups).has(g.id) && data.groups.find((x) => x.id === Number(id))?.parentId !== g.id;
         if (t === 'file') return mode === 'context';
+        if (t === 'doc') return docs;
         if (t === 'key') return mode === 'keys';
         return false;
       },
@@ -230,6 +269,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
           const moving = data.groups.find((x) => x.id === Number(id));
           if (moving) void act.moveGroup(moving, g.id);
         } else if (t === 'file') void act.moveFile(Number(id), from ? Number(from) : null, g.id);
+        else if (t === 'doc') void act.moveDoc(Number(id), from ? Number(from) : null, g.id);
         else if (t === 'key') {
           const k = data.keys.find((x) => x.id === Number(id));
           if (k) void act.moveKey(k, g.id);
@@ -239,7 +279,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     };
   };
 
-  const unattached = data.files.filter((f) => !data.groups.some((g) => g.own.includes(f.id)));
+  const unattached = items.filter((f) => !data.groups.some((g) => ownOf(g).includes(f.id)));
   const nodes: TreeNode[] = root ? [groupNode(root)] : [];
   const parent = sel?.id ?? root?.id ?? null;
 
@@ -249,6 +289,12 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
     actions.push({ icon: 'upload', label: 'Upload .md files', run: () => upload.current?.click() });
     actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show files by group' : 'Show all files', run: () => setFlat(!flat) });
+  }
+  if (docs) {
+    actions.push({ icon: 'newFile', label: 'New MCP doc in the selected group', run: () => startCreate('file', allFiles ? null : parent) });
+    actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
+    actions.push({ icon: 'upload', label: 'Upload .md files as MCP docs', run: () => upload.current?.click() });
+    actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show docs by group' : 'Show all docs', run: () => setFlat(!flat) });
   }
   if (mode === 'groups') actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
   if (mode === 'keys') {
@@ -261,6 +307,22 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
 
   const uploadFiles = async (list: FileList) => {
     const target = data.groups.find((g) => g.id === parent);
+    if (docs) {
+      await ui.run(async () => {
+        for (const f of Array.from(list)) {
+          if (!/\.(md|markdown|txt)$/i.test(f.name)) {
+            ui.toast(`${f.name} is not a Markdown file, skipped`, true);
+            continue;
+          }
+          const body = await f.text();
+          const title = f.name.replace(/\.(md|markdown|txt)$/i, '');
+          const existing = data.docs.find((x) => x.title === title);
+          if (existing) await api(`docs/${existing.id}`, { method: 'PATCH', body: { body } });
+          else await act.createDoc(title, allFiles ? null : (target?.id ?? null), body);
+        }
+      }, `Uploaded${target && !allFiles ? ` and shared with ${target.name}` : ''}`);
+      return;
+    }
     await ui.run(async () => {
       for (const f of Array.from(list)) {
         if (!/\.(md|markdown|txt)$/i.test(f.name)) {
@@ -282,7 +344,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     }, `Uploaded${target ? ` into ${target.name}` : ''}`);
   };
 
-  const title = mode === 'filter' ? LABEL[nav.view] : mode === 'context' ? 'Context files' : mode === 'keys' ? 'API keys' : 'Groups';
+  const title = mode === 'filter' ? LABEL[nav.view] : mode === 'context' ? 'Context files' : docs ? 'MCP docs' : mode === 'keys' ? 'API keys' : 'Groups';
   return (
     <>
       <Header title={title} actions={actions} />
@@ -293,15 +355,17 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
             <div className="cx-section">ALL KEYS · {data.keys.length}</div>
             <Tree label="All API keys" nodes={[...data.keys].sort((a, b) => a.name.localeCompare(b.name)).map((k) => keyNode(k, true))} expanded={expanded} onToggle={toggle} empty={<span>No API keys yet.</span>} />
           </>
-        ) : mode === 'context' && allFiles ? (
+        ) : lib && allFiles ? (
           <>
-            <div className="cx-section">ALL FILES · {data.files.length}</div>
+            <div className="cx-section">
+              {docs ? 'ALL DOCS' : 'ALL FILES'} · {items.length}
+            </div>
             <Tree
-              label="All context files"
-              nodes={[...(creating?.kind === 'file' ? [newNode('file', null)] : []), ...(data.files.map((f) => fileNode(f.id, null)).filter(Boolean) as TreeNode[])]}
+              label={docs ? 'All MCP docs' : 'All context files'}
+              nodes={[...(creating?.kind === 'file' ? [newNode('file', null)] : []), ...(items.map((f) => fileNode(f.id, null)).filter(Boolean) as TreeNode[])]}
               expanded={expanded}
               onToggle={toggle}
-              empty={<span>No context files yet.</span>}
+              empty={<span>{docs ? 'No MCP docs yet.' : 'No context files yet.'}</span>}
             />
           </>
         ) : (
@@ -311,17 +375,17 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
               {mode === 'filter' && <span className="cx-section-hint">pick one to narrow the view</span>}
             </div>
             <Tree label="Groups" nodes={nodes} expanded={expanded} onToggle={toggle} />
-            {mode === 'context' && (
+            {lib && (
               <>
                 <div className="cx-section gap">
-                  NOT IN ANY GROUP <span className="cx-badge">{unattached.length}</span>
+                  {docs ? 'NOT SHARED WITH A GROUP' : 'NOT IN ANY GROUP'} <span className="cx-badge">{unattached.length}</span>
                 </div>
                 <Tree
-                  label="Files not in any group"
+                  label={docs ? 'Docs not shared with a group' : 'Files not in any group'}
                   nodes={[...(creating?.kind === 'file' && creating.parent === null ? [newNode('file', null)] : []), ...(unattached.map((f) => fileNode(f.id, null)).filter(Boolean) as TreeNode[])]}
                   expanded={expanded}
                   onToggle={toggle}
-                  empty={<span>Every file is in a group. Drag a file here from the files list to see it.</span>}
+                  empty={<span>{docs ? 'Every doc is shared with a group.' : 'Every file is in a group. Drag a file here from the files list to see it.'}</span>}
                 />
               </>
             )}

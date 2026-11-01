@@ -6,7 +6,9 @@ Every request is authenticated, checked by a pipeline of guard models you config
 team's project context, routed to the right model, and logged in full. The model's answer can be
 checked as well before the agent sees it.
 
-Agents only need a base URL and a key. There is no SDK, no plugin and no change to the agent.
+Agents only need a base URL and a key. There is no SDK, no plugin and no change to the agent. The
+same key also connects them to **GuardRail Docs**, an MCP server that serves your team's runbooks and
+conventions on demand.
 
 ![Overview dashboard](docs/screenshots/overview.png)
 
@@ -18,6 +20,7 @@ Agents only need a base URL and a key. There is no SDK, no plugin and no change 
 - [How a request flows](#how-a-request-flows)
 - [Quick start](#quick-start)
 - [Connect a client](#connect-a-client)
+- [MCP docs server](#mcp-docs-server)
 - [Configuration](#configuration)
 - [Security notes](#security-notes)
 - [Documentation](#documentation)
@@ -52,6 +55,7 @@ GuardRail puts one controlled point in front of the models:
 | **Per-team policies** | Engineering, QA, contractors and CI bots each get their own models, context files, layers and rate limits through the group tree. A key can carry its own exceptions. |
 | **Cost and latency control** | A router layer asks a decision model how hard a request is and sends it to the matching model. Suffix checks share the prompt cache with the real call, so a check over a long conversation costs a fraction of the tokens. |
 | **Fine-tuning and evaluation datasets** | Label requests in Activity (*correct block*, *false alarm*, *missed attack*…), then export a date range as JSONL with the prompt, every layer's decision and the reply. |
+| **Shared team knowledge for agents** | Runbooks, API guides and conventions as MCP docs. Each agent reads only what its group or key may see, only when it needs it, so nothing is added to every prompt. |
 | **Debugging agents** | Activity shows the whole turn: what the agent sent, the context added, every check with its timing and answer, the model's reply and its tool calls. Studio replays scenarios live and shows each step as it happens. |
 
 ## Features
@@ -164,6 +168,32 @@ Every model field opens a searchable, sortable table of all models on all server
 context size and price. Chips narrow it by type.
 
 ![Model picker](docs/screenshots/model-picker.png)
+
+### MCP docs server
+
+GuardRail is also an MCP server at `/mcp`. Agents connect with the same API key and get the docs
+shared with their group (inherited) or their key. They can list, search and read them with the
+`list_docs`, `search_docs` and `read_doc` tools, or as `guardrail://docs/<slug>` resources.
+
+- **Explorer.** Create docs, upload `.md` files, and drag a doc onto a group to share it.
+- **Doc editor.** Markdown with preview, autosave, versions, tags, and a **Who can see this** panel
+  for groups and single keys.
+- **MCP docs page.** Copy-paste setup for Claude Code, Cline, Cursor and VS Code, what each key
+  sees, and **Test as a key**.
+- **Access.** The same key checks as `/v1` (revoked, expired, IP binding, rate limit), plus an MCP
+  access switch per key.
+- **Activity.** MCP calls are logged under their own **MCP** filter.
+
+```bash
+claude mcp add --transport http guardrail http://your-host:3000/mcp \
+  --header "Authorization: Bearer grk_live_YOUR_KEY_HERE"
+```
+
+![MCP docs](docs/screenshots/mcp-docs.png)
+
+![MCP doc editor](docs/screenshots/mcp-doc-editor.png)
+
+See [docs/mcp.md](docs/mcp.md) for Cline, Cursor and VS Code configs and the protocol details.
 
 ### Activity
 
@@ -374,6 +404,7 @@ agent shows it and you can find the request in Activity.
 | [docs/caching.md](docs/caching.md) | Prefix vs suffix checks, provider pinning, cache breakpoints |
 | [docs/routing.md](docs/routing.md) | Router layers and decision questions that pick a model |
 | [docs/studio.md](docs/studio.md) | Scenarios, live debug, replay |
+| [docs/mcp.md](docs/mcp.md) | MCP docs server: connecting Claude Code, Cline, Cursor; tools, resources, sharing |
 | [docs/api.md](docs/api.md) | Gateway and admin HTTP API |
 | [docs/cache-analysis-2026-11-01.md](docs/cache-analysis-2026-11-01.md) | A worked analysis of cache hits on real traffic |
 
@@ -382,6 +413,7 @@ agent shows it and you can find the request in Activity.
 ```
 server.mjs                 HTTP server: stamps the peer IP, then hands off to Next.js
 src/app/v1/                OpenAI-compatible gateway (/v1/models, /chat/completions, /completions)
+src/app/mcp/               MCP docs server (Streamable HTTP, /mcp)
 src/app/(console)/         The console (VS Code-style UI)
 src/app/old/               The previous admin panel
 src/app/api/admin/         JSON admin API (routes in src/lib/admin-api.ts)
@@ -395,6 +427,7 @@ src/lib/mapping.ts         Custom mapping adapter and presets
 src/lib/groups.ts          Group tree and setting inheritance
 src/lib/keys.ts, ip.ts     Keys, encryption, IP binding
 src/lib/logs.ts            Activity log, prompt files, export
+src/lib/mcp.ts, mcp-docs.ts  MCP protocol, tool registry, doc store and search
 src/lib/db.ts              SQLite schema and migrations
 scripts/                   Seed data, demo data, mock vLLM server
 tests/                     Vitest suites

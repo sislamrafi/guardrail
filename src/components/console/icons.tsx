@@ -50,6 +50,8 @@ const P: Record<string, string> = {
   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4z',
   model: 'M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5',
   warning: 'M12 3l10 18H2zM12 10v4M12 17h.01',
+  // A plug: MCP connections.
+  mcp: 'M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5',
 };
 
 export type IconName = keyof typeof P;

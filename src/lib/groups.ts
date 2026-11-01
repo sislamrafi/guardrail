@@ -9,7 +9,7 @@ import { getSettings } from './settings';
  * A setting a group doesn't store is inherited unchanged.
  */
 export type Mode = 'set' | 'add' | 'override';
-export type SettingKey = 'servers' | 'models' | 'context' | 'layers' | 'layer_opts' | 'blocked_reply' | 'rate_limit';
+export type SettingKey = 'servers' | 'models' | 'context' | 'layers' | 'layer_opts' | 'blocked_reply' | 'rate_limit' | 'mcp_docs';
 
 export interface SettingDef {
   key: SettingKey;
@@ -26,6 +26,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'layer_opts', label: 'Guard layer settings', kind: 'opts', canAdd: false },
   { key: 'blocked_reply', label: 'Blocked reply', kind: 'text', canAdd: false },
   { key: 'rate_limit', label: 'Rate limit', kind: 'number', canAdd: false },
+  { key: 'mcp_docs', label: 'MCP docs', kind: 'list', canAdd: true },
 ];
 
 /** A group's own settings for one guard layer: a score threshold (scoring layers), extra prompt lines (judges). */
@@ -79,6 +80,8 @@ export interface Effective {
   layer_opts: Record<string, { threshold: number | null; thresholdFrom: string | null; prompt_parts: { from: string; text: string }[] }>;
   blocked_reply: string;
   rate_limit: number;
+  /** Docs the key can read over MCP (ids). */
+  mcp_docs: number[];
 }
 
 export interface Resolution {
@@ -112,6 +115,7 @@ export function resolveLayers(layers: Layer[], defaults: Defaults): Resolution {
     layer_opts: {},
     blocked_reply: defaults.blocked_reply,
     rate_limit: defaults.rate_limit,
+    mcp_docs: [],
   };
   const sources = Object.fromEntries(SETTING_DEFS.map((d) => [d.key, ['Default']])) as Record<SettingKey, string[]>;
   const matrix = SETTING_DEFS.map((d) => ({ key: d.key, label: d.label, cells: [] as Cell[] }));
@@ -150,6 +154,11 @@ function apply(eff: Effective, key: SettingKey, value: SettingValue, additive: b
     case 'context': {
       const v = Array.isArray(value) ? (value as number[]).map(Number) : [];
       eff.context = additive ? uniq([...eff.context, ...v]) : v;
+      break;
+    }
+    case 'mcp_docs': {
+      const v = Array.isArray(value) ? (value as number[]).map(Number) : [];
+      eff.mcp_docs = additive ? uniq([...eff.mcp_docs, ...v]) : v;
       break;
     }
     case 'layers': {

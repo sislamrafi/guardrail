@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { pathFor, useNav } from './nav';
 import { api, useStore, useUi } from './store';
-import type { FileC, GroupC, KeyC, ModelKind, Rule, ServerC } from './types';
+import type { DocC, FileC, GroupC, KeyC, ModelKind, Rule, ServerC } from './types';
 
 /** Every create / update / delete the console can do, with confirms, toasts and optimistic updates. */
 export function useActions() {
@@ -17,6 +17,9 @@ export function useActions() {
     const contextSetting = (g: GroupC, value: number[]) =>
       // The root sets the list; a sub-group adds to its parent's unless it already replaces it.
       value.length || g.parentId === null ? { mode: g.mode ?? (g.parentId === null ? 'set' : 'add'), value } : null;
+
+    const docsSetting = (g: GroupC, value: number[]) => (value.length || g.parentId === null ? { mode: g.docsMode ?? (g.parentId === null ? 'set' : 'add'), value } : null);
+    const putDocs = (g: GroupC, value: number[]) => api(`groups/${g.id}/settings`, { method: 'PUT', body: { key: 'mcp_docs', setting: docsSetting(g, value) } });
 
     return {
       // ---------------- groups
@@ -93,6 +96,65 @@ export function useActions() {
           if (!target.own.includes(fileId)) await api(`groups/${to}/settings`, { method: 'PUT', body: { key: 'context', setting: contextSetting(target, [...target.own, fileId]) } });
           if (src) await api(`groups/${src.id}/settings`, { method: 'PUT', body: { key: 'context', setting: contextSetting(src, src.own.filter((i) => i !== fileId)) } });
         }, `Moved to ${target.name}`);
+      },
+
+      // ---------------- MCP docs
+      createDoc: async (title: string, groupId: number | null, body?: string) => {
+        let made: DocC | null = null;
+        const t = title.replace(/\.(md|markdown|txt)$/i, '');
+        await ui.run(async () => {
+          made = await api<DocC>('docs', { body: { title: t, body: body ?? `# ${t}\n\n` } });
+          const g = groups.find((x) => x.id === groupId);
+          if (g && made) await putDocs(g, [...g.ownDocs, (made as DocC).id]);
+        }, `${t} created`);
+        if (made && body === undefined) nav.go(pathFor('docs', (made as DocC).id));
+        return made as DocC | null;
+      },
+      renameDoc: (d: DocC, title: string) => {
+        patch((x) => ({ ...x, docs: x.docs.map((y) => (y.id === d.id ? { ...y, title } : y)) }));
+        return ui.run(() => api(`docs/${d.id}`, { method: 'PATCH', body: { title } }), 'Renamed');
+      },
+      deleteDoc: async (d: DocC) => {
+        const ok = await ui.confirm({ title: `Delete ${d.title}?`, body: d.reach ? `${d.reach} key${d.reach === 1 ? '' : 's'} can read it now; agents lose it right away.` : 'No key can read it.', ok: 'Delete doc', danger: true });
+        if (!ok) return;
+        if (await ui.run(() => api(`docs/${d.id}`, { method: 'DELETE' }), `${d.title} deleted`)) nav.closeTab(pathFor('docs', d.id));
+      },
+      shareDoc: (docId: number, groupId: number) => {
+        const g = groups.find((x) => x.id === groupId);
+        const d = data?.docs.find((x) => x.id === docId);
+        if (!g || !d) return;
+        if (g.ownDocs.includes(docId)) return ui.toast(`${d.title} is already shared with ${g.name}`);
+        patch((x) => ({ ...x, groups: x.groups.map((y) => (y.id === g.id ? { ...y, ownDocs: [...y.ownDocs, docId] } : y)) }));
+        return ui.run(() => putDocs(g, [...g.ownDocs, docId]), `${d.title} shared with ${g.name}`);
+      },
+      unshareDoc: (docId: number, groupId: number) => {
+        const g = groups.find((x) => x.id === groupId);
+        if (!g) return;
+        patch((x) => ({ ...x, groups: x.groups.map((y) => (y.id === g.id ? { ...y, ownDocs: y.ownDocs.filter((i) => i !== docId) } : y)) }));
+        return ui.run(() => putDocs(g, g.ownDocs.filter((i) => i !== docId)), `No longer shared with ${g.name}`);
+      },
+      /** Drag between groups moves the doc; from the list (no source group) it only adds. */
+      moveDoc: async (docId: number, from: number | null, to: number) => {
+        const target = groups.find((x) => x.id === to);
+        const src = groups.find((x) => x.id === from);
+        if (!target || from === to) return;
+        await ui.run(async () => {
+          if (!target.ownDocs.includes(docId)) await putDocs(target, [...target.ownDocs, docId]);
+          if (src) await putDocs(src, src.ownDocs.filter((i) => i !== docId));
+        }, src ? `Moved to ${target.name}` : `Shared with ${target.name}`);
+      },
+      /** Give one key a doc (or take it away) as its own exception, on top of its group's. */
+      setKeyDoc: (k: KeyC, docId: number, on: boolean) => {
+        const cur = Array.isArray(k.exceptions.mcp_docs?.value) ? (k.exceptions.mcp_docs!.value as number[]) : [];
+        const next = on ? [...new Set([...cur, docId])] : cur.filter((i) => i !== docId);
+        const exceptions = { ...k.exceptions };
+        if (next.length) exceptions.mcp_docs = { mode: 'add', value: next };
+        else delete exceptions.mcp_docs;
+        return ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { exceptions } }), on ? `Shared with ${k.name}` : `No longer shared with ${k.name}`);
+      },
+      setKeyMcp: (k: KeyC, mcp: boolean) => {
+        patch((x) => ({ ...x, keys: x.keys.map((y) => (y.id === k.id ? { ...y, mcp } : y)) }));
+        return ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { mcp } }), mcp ? `MCP access on for ${k.name}` : `MCP access off for ${k.name}`);
       },
 
       // ---------------- keys

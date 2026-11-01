@@ -737,3 +737,17 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-newout-wrap { position: relative; height: 0; display: flex; justify-content: center; z-index: 4; }
 .cx .cx-newout { position: absolute; bottom: 10px; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 12px !important; border-radius: 13px; background: var(--accent) !important; color: #fff !important; font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
 .cx-newout svg { transform: rotate(90deg); }
+
+/* MCP docs */
+.cx-doc-meta { flex: none; display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(140px, 1fr) minmax(120px, 0.8fr); gap: 4px 12px; padding: 8px 16px 10px; border-bottom: 1px solid var(--edge); }
+.cx-doc-meta .cx-field.grow { grid-column: 1 / -1; }
+.cx-textarea.plain { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px 16px 50vh; }
+.cx-share-row { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 0 12px; font-size: 13px; cursor: pointer; }
+.cx-share-row:hover { background: var(--hover); }
+.cx-share-row input:disabled + span { opacity: 0.8; }
+.cx-codebox { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.cx-codebox-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cx-codebox .cx-pre { max-height: 360px; }
+.cx-plainlist { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.cx-dim { opacity: 0.55; }
+.cx-bad { color: var(--bad); }

@@ -232,7 +232,7 @@ function GroupDetails({ g, data }: { g: GroupC; data: Data }) {
   );
 }
 
-const lookups = (data: Data) => ({ files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
+const lookups = (data: Data) => ({ docs: data.docs, files: data.files, servers: data.servers.map((s) => ({ id: s.id, name: s.name })), layers: data.settings.guard.layers });
 
 function effValue(key: SettingKey, r: Resolution): unknown {
   const e = r.effective;

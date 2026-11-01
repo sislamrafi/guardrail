@@ -9,7 +9,7 @@ import type { AppSettings } from '@/lib/settings';
 export type { ModelKind, Scenario };
 export type { GroupSettings, LimitView, LogEntry, Resolution, Rule, SettingKey, AppSettings };
 
-export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'schemas', 'studio', 'settings'] as const;
+export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'docs', 'schemas', 'studio', 'settings'] as const;
 export type View = (typeof VIEWS)[number];
 
 export interface GroupC {
@@ -27,6 +27,41 @@ export interface GroupC {
   /** Files attached to this group itself. */
   own: number[];
   mode: 'set' | 'add' | 'override' | null;
+  /** Effective MCP doc ids, inherited ones included. */
+  docs: number[];
+  /** MCP docs assigned to this group itself. */
+  ownDocs: number[];
+  docsMode: 'set' | 'add' | 'override' | null;
+}
+
+/** A doc served to agents over MCP. */
+export interface DocC {
+  id: number;
+  slug: string;
+  title: string;
+  description: string;
+  tags: string[];
+  body: string;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  /** Groups that list it themselves. */
+  groups: number[];
+  /** Keys that get it as their own exception. */
+  keys: number[];
+  /** How many keys can read it. */
+  reach: number;
+}
+
+/** What each key sees over MCP. */
+export interface DocKeyC {
+  id: number;
+  name: string;
+  owner: string;
+  groupId: number;
+  mcp: boolean;
+  revoked: boolean;
+  docs: number[];
 }
 
 export interface FileC {
@@ -56,6 +91,8 @@ export interface KeyC {
   canReveal: boolean;
   /** Tell the model who is calling (key name, owner), first in the context. */
   identity: { key: boolean; owner: boolean };
+  /** May use the MCP docs server. */
+  mcp: boolean;
   groupName: string;
   groupPath: string;
 }
@@ -118,6 +155,11 @@ export interface Data {
   summary: Summary;
   rules: Rule[];
   scenarios: Scenario[];
+  docs: DocC[];
+  docKeys: DocKeyC[];
+  /** The MCP endpoint path ("/mcp"). */
+  mcpPath: string;
+  mcpTools: { name: string; title: string; description: string }[];
 }
 
 export const KIND_LABEL: Record<ModelKind, string> = {

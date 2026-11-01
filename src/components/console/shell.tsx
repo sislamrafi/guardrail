@@ -12,6 +12,7 @@ import { DataProvider, UiProvider, useStore, useUi } from './store';
 import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
+import { DocEditor, DocsHome } from './views/docs';
 import { GroupEditor, GroupsHome } from './views/groups';
 import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
@@ -31,6 +32,7 @@ const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'guard', label: 'Guard checks', icon: 'guard' },
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
+  { view: 'docs', label: 'MCP docs', icon: 'mcp' },
 ];
 // Bottom of the activity bar, above Account and Settings.
 const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
@@ -40,8 +42,8 @@ const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
 ];
 // Views that start on the root group when you open them from the activity bar.
 const GROUP_VIEWS: View[] = ['overview', 'activity', 'guard'];
-const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', schemas: 'braces', studio: 'studio', settings: 'settings' };
-const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
+const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', schemas: 'braces', studio: 'studio', settings: 'settings' };
+const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
 
 /** The whole console. Mounted once by the (console) layout, so it survives navigation. */
 export function ConsoleApp() {
@@ -130,7 +132,8 @@ function Workbench() {
   // Ask before closing a tab with unsaved text.
   const closeTab = async (p: string) => {
     const d = nav.drafts[p];
-    const f = parsePath(p).view === 'context' ? data?.files.find((x) => x.id === Number(parsePath(p).id)) : null;
+    const pv = parsePath(p);
+    const f = pv.view === 'context' ? data?.files.find((x) => x.id === Number(pv.id)) : pv.view === 'docs' ? data?.docs.map((x) => ({ ...x, name: x.title })).find((x) => x.id === Number(pv.id)) : null;
     if (d !== undefined && f && d !== f.body) {
       const ok = await ui.confirm({ title: `Close ${f.name} without saving?`, body: 'Your changes will be lost.', ok: "Don't save", danger: true });
       if (!ok) return;
@@ -288,7 +291,7 @@ function Workbench() {
             Ln {cursor.ln}, Col {cursor.col}
           </span>
         )}
-        {nav.view === 'context' && nav.id && <span>Markdown</span>}
+        {(nav.view === 'context' || nav.view === 'docs') && nav.id && <span>Markdown</span>}
         <button type="button" onClick={() => nav.go(group ? pathFor('groups', group.id) : '/groups')} title="Selected group">
           <Ico n="folder" size={13} /> {group?.name ?? '–'}
         </button>
@@ -337,6 +340,8 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
   switch (view) {
     case 'context':
       return { title: data?.files.find((f) => f.id === n)?.name ?? 'File', icon: 'file', cls: 'md' };
+    case 'docs':
+      return { title: data?.docs.find((d) => d.id === n)?.title ?? 'Doc', icon: 'file', cls: 'md' };
     case 'groups':
       return { title: data?.groups.find((g) => g.id === n)?.name ?? 'Group', icon: 'folder', cls: 'folder' };
     case 'keys':
@@ -552,6 +557,8 @@ function Editor(): ReactNode {
       return id ? <ContextFileEditor id={n} /> : <ContextHome />;
     case 'rules':
       return id ? <RuleEditor id={id === 'new' ? 'new' : n} /> : <RulesHome />;
+    case 'docs':
+      return id ? <DocEditor id={n} /> : <DocsHome />;
     case 'schemas':
       return <SchemasPage />;
     case 'studio':
@@ -578,6 +585,7 @@ function QuickOpen({ q, setQ, data }: { q: string; setQ: (v: string | null) => v
     ];
     if (data) {
       out.push(...data.files.map((f) => ({ label: f.name, hint: 'context file', icon: 'file' as IconName, path: pathFor('context', f.id) })));
+      out.push(...data.docs.map((d) => ({ label: d.title, hint: `MCP doc · ${d.slug}`, icon: 'file' as IconName, path: pathFor('docs', d.id) })));
       out.push(...data.groups.map((g) => ({ label: g.name, hint: `group · ${g.path}`, icon: 'folder' as IconName, path: pathFor('groups', g.id) })));
       out.push(...data.keys.map((k) => ({ label: k.name, hint: `key · ${k.owner} · ${k.groupName}`, icon: 'key' as IconName, path: pathFor('keys', k.id) })));
       out.push(...data.servers.map((s) => ({ label: s.name, hint: `server · ${s.url}`, icon: 'servers' as IconName, path: pathFor('servers', s.id) })));

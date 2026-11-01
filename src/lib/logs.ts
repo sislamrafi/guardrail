@@ -211,6 +211,8 @@ export function queryLogs(opts: { filter?: string; q?: string; limit?: number; b
     where.push(`feedback IN ${inList(opts.feedback.length)}`);
     args.push(...opts.feedback);
   }
+  // MCP docs traffic (no model involved) is its own filter.
+  if (opts.filter === 'mcp') where.push("path = '/mcp'");
   const outs = opts.filter ? OUTCOME_FILTERS[opts.filter] : undefined;
   if (outs) {
     where.push(`outcome IN (${outs.map(() => '?').join(',')})`);
@@ -239,8 +241,8 @@ export function countByFilter(since?: number, groups?: number[], test?: LogScope
   const args: unknown[] = [];
   scopeWhere({ since, groups, test }, where, args);
   const rows = getDb()
-    .prepare(`SELECT outcome, COUNT(*) n FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
-    .all(...args) as { outcome: Outcome; n: number }[];
+    .prepare(`SELECT outcome, COUNT(*) n, SUM(path = '/mcp') mcp FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
+    .all(...args) as { outcome: Outcome; n: number; mcp: number | null }[];
   const by = Object.fromEntries(rows.map((r) => [r.outcome, r.n])) as Record<string, number>;
   const sum = (xs: Outcome[]) => xs.reduce((a, o) => a + (by[o] ?? 0), 0);
   return {
@@ -249,6 +251,7 @@ export function countByFilter(since?: number, groups?: number[], test?: LogScope
     false_alarm: sum(OUTCOME_FILTERS.false_alarm),
     clean: sum(OUTCOME_FILTERS.clean),
     error: sum(OUTCOME_FILTERS.error),
+    mcp: rows.reduce((a, r) => a + (r.mcp ?? 0), 0),
   };
 }
 

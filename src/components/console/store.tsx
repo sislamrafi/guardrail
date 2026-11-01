@@ -2,7 +2,7 @@
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/components/ui';
-import type { Data, FileC, GroupC, KeyC, ServerC, Summary } from './types';
+import type { Data, DocC, DocKeyC, FileC, GroupC, KeyC, ServerC, Summary } from './types';
 
 export { api };
 
@@ -26,7 +26,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     const n = ++seq.current;
     try {
-      const [c, k, s, g, sum, r, sc] = await Promise.all([
+      const [c, k, s, g, sum, r, sc, dc] = await Promise.all([
         api<{ files: FileC[]; groups: GroupC[]; settings: Data['settings']; cache: Data['cache'] }>('context'),
         api<{ keys: KeyC[] }>('keys'),
         api<{ servers: ServerC[]; limits: Data['limits']; access: Data['access'] }>('servers'),
@@ -34,9 +34,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         api<Summary>('summary'),
         api<{ rules: Data['rules'] }>('rules'),
         api<{ scenarios: Data['scenarios'] }>('studio/scenarios'),
+        api<{ docs: DocC[]; keys: DocKeyC[]; endpoint: string; tools: Data['mcpTools'] }>('docs'),
       ]);
       if (n !== seq.current) return;
-      setData({ groups: c.groups, files: c.files, settings: c.settings, cache: c.cache, keys: k.keys, servers: s.servers, limits: s.limits, access: s.access, models: g.models, modelServers: g.modelServers, summary: sum, rules: r.rules, scenarios: sc.scenarios });
+      setData({ groups: c.groups, files: c.files, settings: c.settings, cache: c.cache, keys: k.keys, servers: s.servers, limits: s.limits, access: s.access, models: g.models, modelServers: g.modelServers, summary: sum, rules: r.rules, scenarios: sc.scenarios, docs: dc.docs, docKeys: dc.keys, mcpPath: dc.endpoint, mcpTools: dc.tools });
       setError(null);
     } catch (e) {
       if (n === seq.current) setError((e as Error).message);

@@ -16,7 +16,7 @@ import { DecisionRow } from './guard';
 import { usePref } from '../prefs';
 import { MdText } from '../md-text';
 
-type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number };
+type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number; mcp: number };
 
 const FILTERS: [string, string, keyof Counts][] = [
   ['', 'All', 'all'],
@@ -24,6 +24,8 @@ const FILTERS: [string, string, keyof Counts][] = [
   ['false_alarm', 'False alarm', 'false_alarm'],
   ['error', 'Error', 'error'],
   ['blocked', 'Blocked', 'blocked'],
+  // Doc reads by agents over MCP: no model, no guard layers.
+  ['mcp', 'MCP', 'mcp'],
 ];
 
 export const OUTCOME: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
@@ -48,6 +50,7 @@ export function Outcome({ r }: { r: Pick<LogEntry, 'outcome' | 'status_code'> })
 
 /** One pill for what the guard layers did. */
 function GuardPill({ r }: { r: LogEntry }) {
+  if (r.path === '/mcp') return <Pill tone={r.outcome === 'answered' ? 'info' : 'bad'}>MCP</Pill>;
   if (r.outcome === 'rejected') return <Pill>Not checked</Pill>;
   if (r.outcome === 'blocked') return <Pill tone="bad">Blocked</Pill>;
   if (r.outcome === 'false_alarm') return <Pill tone="warn">Flag cleared</Pill>;

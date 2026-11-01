@@ -7,7 +7,7 @@ const g = globalThis as unknown as { __grDb?: Database.Database; __grSchema?: nu
 
 // Bump when migrate() gains a step. The connection outlives code reloads in dev,
 // so getDb() re-runs migrate() whenever the code expects a newer schema.
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS servers (
@@ -220,6 +220,29 @@ function migrate(db: Database.Database) {
   if (!keyCols.has('ip_allow')) db.exec("ALTER TABLE api_keys ADD COLUMN ip_allow TEXT NOT NULL DEFAULT '[]'");
   // The secret, encrypted (see secret-box.ts), so admins can reveal it. Older keys have only a hash.
   if (!keyCols.has('secret_enc')) db.exec('ALTER TABLE api_keys ADD COLUMN secret_enc TEXT');
+  // Whether the key may use the MCP docs server at /mcp; on by default.
+  if (!keyCols.has('mcp')) db.exec('ALTER TABLE api_keys ADD COLUMN mcp INTEGER NOT NULL DEFAULT 1');
+  // Docs served to agents over MCP (read on demand, never added to prompts), with full history.
+  db.exec(`CREATE TABLE IF NOT EXISTS mcp_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    body TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS mcp_doc_versions (
+    doc_id INTEGER NOT NULL REFERENCES mcp_docs(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    auto INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (doc_id, version)
+  )`);
 }
 
 // A fresh install gets one root group so keys can be created right away.

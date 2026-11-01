@@ -82,6 +82,7 @@ Groups form a tree under one root (**Everyone**). These settings inherit:
 | `layers` | per-layer on/off switches |
 | `layer_opts` | per-layer additions (judge prompt lines, decision policy, threshold) |
 | `blocked_reply` | text |
+| `mcp_docs` | list (MCP docs the group's keys can read; see [mcp.md](mcp.md)) |
 | `rate_limit` | number |
 
 For each setting, a group stores either nothing (inherit) or one of these modes:
@@ -109,6 +110,7 @@ contributed each one (`sources`), and the matrix the Groups page shows as **Effe
 | `settings` | One JSON document of global settings, including the layer list (`src/lib/settings.ts`) |
 | `request_logs` | One row per request: outcome, stages, steps, decisions, injected context, feedback label, test flag, and `prompt_file` (the Markdown file with the full prompt and reply) |
 | `studio_scenarios` | Saved Studio scenarios |
+| `mcp_docs`, `mcp_doc_versions` | Docs served over MCP, with history |
 
 Secrets (key secrets, server API keys) are encrypted with AES-256-GCM, using a key derived from
 `GUARDRAIL_KEY_SECRET` or `GUARDRAIL_SECRET` (`src/lib/secret-box.ts`). Server keys never leave the
@@ -118,5 +120,5 @@ server: the console only sees whether one is saved.
 
 - If `GUARDRAIL_ADMIN_PASSWORD` is set, `src/middleware.ts` requires a session cookie on every
   console page and on `/api/admin/*`. The cookie is an HMAC token signed with `GUARDRAIL_SECRET`.
-- `/v1/*`, `/login` and `/api/auth/*` are exempt.
+- `/v1/*`, `/mcp`, `/login` and `/api/auth/*` are exempt.
 - With no password set, the console is open, which is meant for local development.
