@@ -1,5 +1,7 @@
 import crypto from 'crypto';
+import type { LayerResult } from './pipeline';
 import { getDb } from './db';
+import { getSettings } from './settings';
 import { prunePromptFiles, readPromptFile, retentionDays, writePromptFile } from './prompt-files';
 
 export type Outcome = 'answered' | 'false_alarm' | 'blocked' | 'redacted' | 'rejected' | 'error';
@@ -11,6 +13,24 @@ export interface Step {
   text: string;
   quote?: string;
   why?: string;
+}
+
+/** The reply to one request, as the client got it (streams are put back together). */
+export interface ModelResponse {
+  message: PromptMessage & { tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]; reasoning?: string };
+  finish_reason?: string | null;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+  /** The reply was GuardRail's blocked message, not the model's. */
+  blocked?: boolean;
+  /** The upstream error text, when the model call failed. */
+  error?: string;
+  streamed?: boolean;
+  /** The client stopped reading before the stream ended. */
+  interrupted?: boolean;
+  /** Text was cut at the size limit. */
+  truncated?: boolean;
+  /** The backend that answered (OpenRouter's provider), to check that checks and calls share a cache. */
+  provider?: string;
 }
 
 /** One message of a logged prompt. Completions requests are stored as a single user message. */
@@ -50,11 +70,19 @@ export interface LogEntry {
   /** Read from prompt_file by getLog only; lists leave them out. */
   prompt?: PromptMessage[] | null;
   forwarded?: PromptMessage[] | null;
+  /** What came back for this request (model reply, tool calls, the blocked reply or the error), also kept in the file. */
+  response?: ModelResponse | null;
   /** True when the file was deleted by the retention rule. */
   prompt_expired?: boolean;
+  /** Each guard layer's result, in order (see pipeline.ts). */
+  decisions?: LayerResult[] | null;
+  /** What GuardRail added to the request: context files, policy prompt, tokens, placement. */
+  injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string; identity?: string } | null;
+  /** Studio or replay traffic, kept out of normal lists and stats. */
+  test?: boolean;
 }
 
-type Row = Omit<LogEntry, 'stages' | 'steps' | 'prompt' | 'forwarded' | 'prompt_expired'> & { stages: string; steps: string };
+type Row = Omit<LogEntry, 'stages' | 'steps' | 'prompt' | 'forwarded' | 'prompt_expired' | 'decisions' | 'injected' | 'test'> & { stages: string; steps: string; decisions: string | null; injected: string | null; test: number | null };
 
 /** A shallow copy of the messages for the prompt file; anything that isn't a list is no prompt. */
 export function promptForLog(messages: unknown): PromptMessage[] | null {
@@ -64,8 +92,8 @@ export function promptForLog(messages: unknown): PromptMessage[] | null {
 
 export const newRequestId = () => 'req_' + crypto.randomBytes(6).toString('hex');
 
-const COLS = ['id', 'ts', 'key_id', 'key_name', 'owner', 'group_id', 'group_name', 'ip', 'path', 'schema', 'model', 'server', 'c1_score', 'c1_status', 'c2_status', 'c2_reason', 'outcome', 'status_code', 'reason', 'latency_ms', 'tokens_out', 'stages', 'steps', 'feedback', 'prompt_file'] as const;
-const JSON_COLS = ['stages', 'steps'];
+const COLS = ['id', 'ts', 'key_id', 'key_name', 'owner', 'group_id', 'group_name', 'ip', 'path', 'schema', 'model', 'server', 'c1_score', 'c1_status', 'c2_status', 'c2_reason', 'outcome', 'status_code', 'reason', 'latency_ms', 'tokens_out', 'stages', 'steps', 'feedback', 'prompt_file', 'decisions', 'injected', 'test'] as const;
+const JSON_COLS = ['stages', 'steps', 'decisions', 'injected'];
 const SELECT_COLS = COLS.join(', ');
 
 // Pruning runs at most this often, from the write path, so no separate job is needed.
@@ -90,9 +118,9 @@ function maybePrune() {
 }
 
 export function writeLog(e: Partial<LogEntry> & { id: string; ts: number; outcome: Outcome }) {
-  const { prompt, forwarded, ...rest } = e;
-  const row: Record<string, unknown> = { ...rest, stages: JSON.stringify(e.stages ?? {}), steps: JSON.stringify(e.steps ?? []) };
-  if (prompt !== undefined || forwarded !== undefined) row.prompt_file = writePromptFile({ ...blankFileEntry, ...e });
+  const { prompt, forwarded, response, ...rest } = e;
+  const row: Record<string, unknown> = { ...rest, stages: JSON.stringify(e.stages ?? {}), steps: JSON.stringify(e.steps ?? []), decisions: e.decisions ? JSON.stringify(e.decisions) : null, injected: e.injected ? JSON.stringify(e.injected) : null, test: e.test ? 1 : 0 };
+  if (prompt !== undefined || forwarded !== undefined || response !== undefined) row.prompt_file = writePromptFile({ ...blankFileEntry, ...e });
   getDb()
     .prepare(`INSERT OR REPLACE INTO request_logs (${COLS.join(', ')}) VALUES (${COLS.map((c) => '@' + c).join(', ')})`)
     .run(Object.fromEntries(COLS.map((c) => [c, row[c] ?? null])));
@@ -110,14 +138,14 @@ export function updateLog(id: string, patch: Partial<LogEntry>) {
     vals[k] = JSON_COLS.includes(k) ? JSON.stringify(v) : v;
   }
   if (sets.length) getDb().prepare(`UPDATE request_logs SET ${sets.join(', ')} WHERE id = @id`).run(vals);
-  // A stream finishes after its row was written; bring the file's steps up to date.
-  if (patch.steps) {
+  // A stream finishes after its row was written; bring the file's steps and reply up to date.
+  if (patch.steps || patch.response) {
     const l = getLog(id);
-    if (l?.prompt_file && (l.prompt || l.forwarded)) writePromptFile(l, l.prompt_file);
+    if (l?.prompt_file && (l.prompt || l.forwarded || patch.response)) writePromptFile({ ...l, ...patch }, l.prompt_file);
   }
 }
 
-const parse = (r: Row): LogEntry => ({ ...r, stages: safeJson(r.stages, {}), steps: safeJson(r.steps, []) });
+const parse = (r: Row): LogEntry => ({ ...r, stages: safeJson(r.stages, {}), steps: safeJson(r.steps, []), decisions: safeJson(r.decisions, null), injected: safeJson(r.injected, null), test: !!r.test });
 
 function safeJson<T>(s: string | null | undefined, d: T): T {
   if (s === null || s === undefined) return d;
@@ -135,6 +163,7 @@ export function getLog(id: string): LogEntry | undefined {
   const file = e.prompt_file ? readPromptFile(e.prompt_file) : null;
   e.prompt = file?.prompt ?? null;
   e.forwarded = file?.forwarded ?? null;
+  e.response = file?.response ?? null;
   if (!file) e.prompt_expired = e.ts < Date.now() - retentionDays() * 86400_000;
   return e;
 }
@@ -146,9 +175,50 @@ export const OUTCOME_FILTERS: Record<string, Outcome[]> = {
   error: ['error'],
 };
 
-export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number }) {
+const inList = (n: number) => `(${Array.from({ length: n }, () => '?').join(',')})`;
+
+/** Log filters shared by lists, counts, the overview and exports. `groups` limits to those group ids. */
+export interface LogScope {
+  groups?: number[];
+  /** One API key's requests only. */
+  key?: number;
+  since?: number;
+  until?: number;
+  /** Studio and replay traffic is left out unless asked for. */
+  test?: 'exclude' | 'include' | 'only';
+}
+
+function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
+  if ((scope.test ?? 'exclude') === 'exclude') where.push('test = 0');
+  else if (scope.test === 'only') where.push('test = 1');
+  if (scope.key) {
+    where.push('key_id = ?');
+    args.push(scope.key);
+  }
+  if (scope.groups) {
+    where.push(scope.groups.length ? `group_id IN ${inList(scope.groups.length)}` : '0');
+    args.push(...scope.groups);
+  }
+  if (scope.since) {
+    where.push('ts >= ?');
+    args.push(scope.since);
+  }
+  if (scope.until) {
+    where.push('ts < ?');
+    args.push(scope.until);
+  }
+}
+
+export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; key?: number; feedback?: string[]; test?: LogScope['test'] }) {
   const where: string[] = [];
   const args: unknown[] = [];
+  scopeWhere({ groups: opts.groups, key: opts.key, until: opts.until, test: opts.test }, where, args);
+  if (opts.feedback?.length) {
+    where.push(`feedback IN ${inList(opts.feedback.length)}`);
+    args.push(...opts.feedback);
+  }
+  // MCP docs traffic (no model involved) is its own filter.
+  if (opts.filter === 'mcp') where.push("path = '/mcp'");
   const outs = opts.filter ? OUTCOME_FILTERS[opts.filter] : undefined;
   if (outs) {
     where.push(`outcome IN (${outs.map(() => '?').join(',')})`);
@@ -172,10 +242,13 @@ export function queryLogs(opts: { filter?: string; q?: string; limit?: number; b
   return (getDb().prepare(sql).all(...args) as Row[]).map(parse);
 }
 
-export function countByFilter(since?: number) {
+export function countByFilter(since?: number, groups?: number[], test?: LogScope['test'], key?: number) {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  scopeWhere({ since, groups, test, key }, where, args);
   const rows = getDb()
-    .prepare(`SELECT outcome, COUNT(*) n FROM request_logs ${since ? 'WHERE ts >= ?' : ''} GROUP BY outcome`)
-    .all(...(since ? [since] : [])) as { outcome: Outcome; n: number }[];
+    .prepare(`SELECT outcome, COUNT(*) n, SUM(path = '/mcp') mcp FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
+    .all(...args) as { outcome: Outcome; n: number; mcp: number | null }[];
   const by = Object.fromEntries(rows.map((r) => [r.outcome, r.n])) as Record<string, number>;
   const sum = (xs: Outcome[]) => xs.reduce((a, o) => a + (by[o] ?? 0), 0);
   return {
@@ -184,6 +257,7 @@ export function countByFilter(since?: number) {
     false_alarm: sum(OUTCOME_FILTERS.false_alarm),
     clean: sum(OUTCOME_FILTERS.clean),
     error: sum(OUTCOME_FILTERS.error),
+    mcp: rows.reduce((a, r) => a + (r.mcp ?? 0), 0),
   };
 }
 
@@ -213,49 +287,69 @@ export const STAGE_LABELS: Record<string, string> = {
   schema: 'Schema detection',
   access: 'Model access and limits',
   rules: 'Custom rules',
-  piguard: 'Check 1 · PIGuard',
-  oss: 'Check 2 · OSS (when flagged)',
   context: 'Context injection',
 };
 
-export function overview(range = '24h', at = Date.now()) {
+/** Guard layer timings are stored as layer_<id> (older requests: piguard, oss). */
+const layerOfStage = (k: string) => (k.startsWith('layer_') ? k.slice(6) : k === 'piguard' ? 'piguard' : k === 'oss' ? 'judge' : null);
+
+export function overview(range = '24h', at = Date.now(), groups?: number[], key?: number) {
   const R = RANGES[range] ?? RANGES['24h'];
   const since = at - R.ms;
-  const prevCounts = countByFilter(since - R.ms);
-  const counts = countByFilter(since);
+  const prevCounts = countByFilter(since - R.ms, groups);
+  const counts = countByFilter(since, groups);
   const prevAll = prevCounts.all - counts.all;
+  const where: string[] = [];
+  const args: unknown[] = [];
+  scopeWhere({ since, groups, key }, where, args);
   const rows = getDb()
-    .prepare('SELECT ts, outcome, stages FROM request_logs WHERE ts >= ? ORDER BY ts DESC LIMIT 20000')
-    .all(since) as { ts: number; outcome: Outcome; stages: string }[];
+    .prepare(`SELECT ts, outcome, stages FROM request_logs WHERE ${where.join(' AND ')} ORDER BY ts DESC LIMIT 20000`)
+    .all(...args) as { ts: number; outcome: Outcome; stages: string }[];
 
   const first = Math.floor(since / R.bucket) * R.bucket;
   const n = Math.max(1, Math.ceil((at - first) / R.bucket));
   const req = Array.from({ length: n }, (_, i) => ({ t: first + i * R.bucket, label: R.label(new Date(first + i * R.bucket)), total: 0, blocked: 0 }));
   const stageVals: Record<string, number[]> = {};
   const overhead: number[] = [];
+  const guardTimes: number[] = [];
   for (const r of rows) {
     const i = Math.min(n - 1, Math.max(0, Math.floor((r.ts - first) / R.bucket)));
     req[i].total++;
     if (r.outcome === 'blocked' || r.outcome === 'rejected') req[i].blocked++;
     const st = safeJson<Record<string, number>>(r.stages, {});
     let o = 0;
+    let g = 0;
     for (const [k, v] of Object.entries(st)) {
       if (k === 'upstream') continue;
       (stageVals[k] ??= []).push(v);
-      if (k !== 'oss') o += v;
+      o += v;
+      if (layerOfStage(k)) g += v;
     }
     overhead.push(o);
+    if (g) guardTimes.push(g);
   }
-  const stages = Object.keys(STAGE_LABELS)
+  // Fixed stages, then each guard layer in pipeline order (named as on the Guard checks page), then context.
+  const layers = getSettings().guard.layers;
+  const layerKeys = Object.keys(stageVals)
+    .filter((k) => layerOfStage(k))
+    .sort((a, b) => layers.findIndex((l) => l.id === layerOfStage(a)) - layers.findIndex((l) => l.id === layerOfStage(b)));
+  const order = ['auth', 'schema', 'access', 'rules', ...layerKeys, 'context'];
+  const stages = order
     .filter((k) => stageVals[k]?.length)
-    .map((k) => ({ key: k, name: STAGE_LABELS[k], p50: median(stageVals[k])! }));
-  const recentBlocks = queryLogs({ filter: 'blocked', limit: 6 });
+    .map((k) => {
+      const id = layerOfStage(k);
+      const name = id ? `Guard layer · ${layers.find((l) => l.id === id)?.name ?? id}` : STAGE_LABELS[k];
+      return { key: k, name, p50: median(stageVals[k])! };
+    });
+  const recentBlocks = queryLogs({ filter: 'blocked', limit: 6, groups });
   return {
     range,
     counts,
     change: prevAll > 0 ? Math.round(((counts.all - prevAll) / prevAll) * 100) : null,
     overheadP95: pct(overhead, 0.95),
-    ossP50: median(stageVals.oss ?? []),
+    guardP50: median(guardTimes),
+    /** Kept for the old UI. */
+    ossP50: median(guardTimes),
     buckets: req,
     stages,
     recentBlocks,

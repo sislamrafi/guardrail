@@ -1,91 +1,129 @@
 # Architecture
 
-GuardRail is one Next.js app with two jobs:
+GuardRail is one Next.js app, started by `server.mjs`, with two jobs:
 
 - **Gateway.** `src/app/v1/*` is an OpenAI-compatible API that agents call with a `grk_live_…` key.
-- **Admin panel.** `src/app/(admin)/*` holds the UI pages, and `src/app/api/admin/[...path]` is the JSON API behind them.
+- **Console.** `src/app/(console)/*` is the admin UI, and `src/app/api/admin/[...path]` is the JSON
+  API behind it (`src/lib/admin-api.ts`). The previous panel still runs at `/old`.
 
-All state lives in one SQLite file, accessed with `better-sqlite3` (`src/lib/db.ts`).
+`server.mjs` stamps every request with the real TCP peer address (`x-guardrail-peer`), which is used
+for IP binding. A header sent by the client cannot override it.
 
-```
-Cline ──► /v1/chat/completions ──► auth ► schema ► access & limits ► rules ► check 1 ► check 2 ► context ► vLLM
-                                     │       │          │              │        │         │                  │
-                                     401     422      403/429        block    flagged   block ──► streamed   stream back
-                                                                                          allow ──► false alarm
-```
+All state lives in one SQLite file, accessed with `better-sqlite3` (`src/lib/db.ts`, migrated by
+`SCHEMA_VERSION`). Full prompts and replies are stored as one Markdown file per request under
+`data/prompts`.
 
 ## A request, step by step (`src/lib/gateway.ts`)
 
-1. **Auth.** The key comes from `Authorization: Bearer …` or `x-api-key`. It is looked up by its SHA-256 hash. Revoked, expired or unknown keys get a 401.
-2. **Schema.** `detectSchema` scores the body against six API shapes using weighted signals (`src/lib/schemas.ts`). Under the strict policy, a body that confidently looks like a different shape than the path expects gets a 422.
-3. **Access and limits.**
-   - The key's group chain is resolved, with the key's own exceptions applied on top as the last layer (see below).
-   - The model must be in the effective `models` list, and its server in `servers` when that list is set.
-   - Limits set globally, per server or per model can narrow this further by allowed groups and rate limits.
-   - The narrowest rate limit applies, counted in a one-minute sliding window in memory (`src/lib/limits.ts`).
-4. **Custom rules.** Rules for the key's group chain run against new content (`src/lib/rules.ts`). Each rule can do one of three things:
-   - `block` stops the request with the rule's message.
-   - `redact` replaces matches with `[REDACTED]` before the request goes on.
-   - `escalate` sends the request straight to check 2.
-5. **Check 1, PIGuard** (`runCheck1` in `src/lib/guard.ts`).
-   - It scans only *new segments*: messages after the last assistant turn, which covers the user's new message and new tool results. Cline's `[tool for x] Result:` text counts as a tool result. The system prompt is scanned only if that option is on.
-   - Cline's own trailing `<environment_details>` block (open tabs, file list, time, mode) is not scanned. It is client-generated and classifiers flag it almost every time, which would send every request to the second check. Only that exact shape is removed: it must be the last thing in the message, start with Cline's first heading (`# VSCode Visible Files`), stay under 20 000 characters and contain no further tags. Anything else, such as a fake block inside a file, is scanned like any other text.
-   - Text is sent in 1800-character windows to vLLM `POST /classify`. The score is `probs[labelIndex]`.
-   - If the server can't be reached, built-in patterns score the text instead. A score at or above the group's threshold flags the request.
-   - Check 1 can be switched off on its own (`guard.piguard.enabled`). It is then logged as `off` and skipped.
-6. **Check 2, the OSS judge** (`runCheck2`). With PIGuard on, this runs only for flagged or escalated requests. With PIGuard off, it runs for every request that has new content, and its verdict alone decides. With both checks off, requests go straight on.
-   - It sends the group's OSS prompt and the flagged content to `/v1/chat/completions` with `reasoning_effort`, and asks for `{"verdict":"allow|block","reason":"…"}`.
-   - `block` returns the blocked reply. `allow` lets the request through; if PIGuard had flagged it, it is logged as a *false alarm*.
-   - If check 2 is off but PIGuard flags a request, the "on timeout" setting decides (block by default).
-   - A timeout or error follows the "on timeout" setting.
-7. **Context.** The policy prompt and the group's context files, in order, are wrapped in `<project_context file="…">` tags. They go at the **top of the first system message** (or just before the last user message, if that placement is chosen). Placing them at the top keeps an identical prefix across requests, so vLLM's automatic prefix caching can reuse it.
-8. **Forward.** The request goes to the first healthy server that serves the model. If a server fails before responding, the next one is tried and the failed one is marked down. Streams are passed through as they arrive, and the log row is finalized when the stream ends or the client disconnects.
+```mermaid
+flowchart LR
+    A[1 Who] --> B[2 Format] --> C[3 Access] --> D[4 Rules] --> E[5 Layers in] --> F[6 Context] --> G[7 Model] --> H[7b Layers out] --> I[Client]
+```
 
-Every stage records its own duration (`stages`) and a human-readable step (`steps`), which the Activity page shows as the **Why?** timeline.
+1. **Who is calling.**
+   - The key comes from `Authorization: Bearer …` or `x-api-key`, and is looked up by its SHA-256
+     hash. A revoked, expired or unknown key gets a 401.
+   - If the key has an IP list (addresses or CIDR ranges), any other peer gets a 403.
+2. **Format.** `detectSchema` scores the body against known API shapes (`src/lib/schemas.ts`).
+   Under the strict policy, a body that confidently looks like a different shape gets a 422.
+3. **Access and limits.**
+   - The key's group chain is resolved, with the key's own exceptions as the last layer.
+   - The model must be in the effective `models` list, and its server in `servers`. Otherwise the
+     request gets a 403.
+   - Limits (global, per server, per model) can narrow this further. The narrowest rate limit
+     applies, counted in a one-minute sliding window, and a request over it gets a 429.
+4. **Custom rules** (`src/lib/rules.ts`). A rule can block (stop the request with its message),
+   redact (replace matches with `[REDACTED]`) or escalate (mark the request as flagged).
+5. **Guard layers before the model** (`src/lib/pipeline.ts`). Enabled input layers run in order;
+   see [guard-layers.md](guard-layers.md).
+   - Each layer reads what it is set to read: new user messages, new tool results, the system
+     prompt. "New" means after the last assistant turn.
+   - A hit blocks, flags (later layers with scope `flagged` then run) or redacts.
+   - A router layer picks the model ([routing.md](routing.md)).
+   - Suffix layers send the request exactly as the model will get it ([caching.md](caching.md)).
+   - A flag that no later layer clears is decided by **Flag nobody cleared**. A flag a later layer
+     clears is logged as a false alarm.
+6. **Context.** The context block is built in this order:
+   - the caller line (`Request from: <owner> (API key: <name>)`, unless the key turns it off);
+   - the policy prompt;
+   - the group chain's context files, each in `<project_context file="…">` tags.
+
+   It goes at the top of the first system message (or before the last user message). The same
+   function builds the message list for the model call and for suffix checks.
+7. **Call the model.**
+   - The first healthy server that serves the model is called; on failure the next one is tried.
+   - Anthropic and Gemini models get a cache breakpoint.
+   - On OpenRouter, the provider that last served the model is requested.
+   - Streams pass through unchanged and are collected for the log (`src/lib/stream-collect.ts`).
+
+   7b. **Layers after the model.** If any output layers are on, the answer is collected first,
+   checked, and retried with feedback if needed. It is then delivered, or blocked. See
+   [after-model-checks.md](after-model-checks.md).
+
+Every stage records its duration (`stages`), a readable step (`steps`), and each layer's decision
+(`decisions`: verdict, score, reason, latency, cost, cache hits, provider, attempt). The Activity
+Summary and the Studio debug panel draw from these.
 
 ### The blocked reply (`src/lib/sse.ts`)
 
-A blocked request still gets HTTP 200 with an ordinary assistant message, so agents display it instead of retrying.
-
-- When `stream: true`, the reply is a `text/event-stream` of `chat.completion.chunk` events: a role chunk, then word chunks, then `finish_reason: "stop"`, then `data: [DONE]`.
-- Otherwise it is a single `chat.completion`.
-- Legacy `/v1/completions` gets `text_completion` objects.
-
-The text comes from the template on the Guard page, with `{reason}` and `{request_id}` filled in.
+A blocked request still gets HTTP 200 with an ordinary assistant message, so agents display it
+instead of retrying. With `stream: true` it is an SSE stream of `chat.completion.chunk` events
+ending in `[DONE]`. Otherwise it is a single `chat.completion`, or `text_completion` objects for
+`/v1/completions`. The text comes from the group's template, with `{reason}` and `{request_id}`
+filled in. The response carries `x-guardrail-blocked: 1`.
 
 ## Group inheritance (`src/lib/groups.ts`)
 
-**Turning a check off for a group.** `piguard_enabled` and `oss_enabled` are on/off flags. They start from the switches on the Guard checks page, so every group is checked the way that page says. A group can set either to **off** to bypass that check for all its keys, or to **on** (a sub-group can switch a check back on under a group that turned it off). Flags replace the parent's value; they never add. The gateway uses the resolved flags: PIGuard off sends every request with new content to check 2, check 2 off makes a flagged request follow "if it fails or times out", both off goes straight to the model. Activity records `off` for a skipped check and a step naming the group.
+Groups form a tree under one root (**Everyone**). These settings inherit:
 
-Groups form a tree under one root. The settings that inherit are `servers`, `models`, `context`, `piguard_enabled`, `piguard_threshold`, `oss_enabled`, `oss_prompt`, `blocked_reply` and `rate_limit`. Each group stores, for each setting, either nothing (inherit) or one of three modes:
+| Key | Kind |
+| --- | --- |
+| `servers`, `models`, `context` | lists |
+| `layers` | per-layer on/off switches |
+| `layer_opts` | per-layer additions (judge prompt lines, decision policy, threshold) |
+| `blocked_reply` | text |
+| `mcp_docs` | list (MCP docs the group's keys can read; see [mcp.md](mcp.md)) |
+| `rate_limit` | number |
 
-| Mode | Lists (servers, models, context) | Values | OSS prompt |
-| --- | --- | --- | --- |
-| `set` (root only) | starting list | starting value | — |
-| `add` | parent's list + these | — | parent's prompt + a section "Added by <group>" |
-| `override` | replaces the parent's list | replaces the value | replaces the prompt |
+For each setting, a group stores either nothing (inherit) or one of these modes:
 
-How a setting is resolved:
+| Mode | Lists | Values |
+| --- | --- | --- |
+| `set` (root only) | the starting list | the starting value |
+| `add` | parent's list plus these | — |
+| `override` | replaces the parent's list | replaces the value |
 
-- `resolveLayers` walks the chain from root to leaf, starting from the global defaults set on the Guard and Context pages.
-- A key's exceptions are applied as a final layer named "This key".
-- It returns the effective values, which layers contributed to each one (`sources`), and a matrix the Groups page draws as *Effective rules*.
+A `context` or `mcp_docs` setting can also carry `exclude: [ids]`: inherited items the group (or key)
+turns off. They are removed after the group's own additions, sub-groups inherit that, and a
+sub-group that adds an id back gets it again. A key's exceptions work the same way, and so do its
+own layer switches (`layers`), which are applied last, as "This key".
+
+`resolveLayers` walks the chain from the root to the leaf, starting from the global defaults, and
+applies the key's exceptions last ("This key"). It returns the effective values, which group
+contributed each one (`sources`), and the matrix the Groups page shows as **Effective**.
 
 ## Data model (`src/lib/db.ts`)
 
 | Table | Holds |
 | --- | --- |
-| `servers`, `models` | vLLM servers (role `inference` or `guard`) and their discovered models, each with an enabled flag |
-| `groups` | tree via `parent_id`; `settings` is JSON of `{key: {mode, value}}` |
-| `api_keys` | name, owner, group, `prefix` (first 13 chars), `hash`, `exceptions` JSON, expiry, revoked flag, last used |
-| `context_files`, `context_file_versions` | `.md` library with full history |
-| `limits` | scope `global` / `server` / `model`, rate limit, allowed groups |
-| `rules` | custom WHEN/THEN rules |
-| `settings` | one JSON document of global settings (`src/lib/settings.ts`) |
-| `request_logs` | one row per request with outcome, check results, `stages` and `steps` JSON, feedback, and `prompt_file`: the path of the request's Markdown file under `data/prompts`, which holds the full prompt and is deleted after 20 days |
+| `servers`, `models` | Servers (address, encrypted API key, health) and their models: on/hidden, type, context size, price, `api` (`decisions` for Decisions-API models), `structured` output support |
+| `groups` | Tree via `parent_id`. `settings` is JSON of `{key: {mode, value}}` |
+| `api_keys` | Name, owner, group, prefix, hash, encrypted secret, exceptions, IP list, caller-line switches (`id_key`, `id_owner`), expiry, revoked, last used |
+| `context_files`, `context_file_versions` | Markdown library with full history |
+| `limits` | Scope `global` / `server` / `model`, rate limit, allowed groups |
+| `rules` | Custom rules |
+| `settings` | One JSON document of global settings, including the layer list (`src/lib/settings.ts`) |
+| `request_logs` | One row per request: outcome, stages, steps, decisions, injected context, feedback label, test flag, and `prompt_file` (the Markdown file with the full prompt and reply) |
+| `studio_scenarios` | Saved Studio scenarios |
+| `mcp_docs`, `mcp_doc_versions` | Docs served over MCP, with history |
+
+Secrets (key secrets, server API keys) are encrypted with AES-256-GCM, using a key derived from
+`GUARDRAIL_KEY_SECRET` or `GUARDRAIL_SECRET` (`src/lib/secret-box.ts`). Server keys never leave the
+server: the console only sees whether one is saved.
 
 ## Admin auth
 
-- If `GUARDRAIL_ADMIN_PASSWORD` is set, `src/middleware.ts` requires a session cookie on every page and on `/api/admin/*`. The cookie is an HMAC token signed with `GUARDRAIL_SECRET`.
-- `/v1/*`, `/login` and `/api/auth/*` are exempt.
-- With no password set, the panel is open, which is meant for local development.
+- If `GUARDRAIL_ADMIN_PASSWORD` is set, `src/middleware.ts` requires a session cookie on every
+  console page and on `/api/admin/*`. The cookie is an HMAC token signed with `GUARDRAIL_SECRET`.
+- `/v1/*`, `/mcp`, `/login` and `/api/auth/*` are exempt.
+- With no password set, the console is open, which is meant for local development.

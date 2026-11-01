@@ -44,17 +44,25 @@ export function createFile(name: string, body: string): ContextFile {
   }
 }
 
-/** Saving new text starts a new version; renaming alone does not. */
-export function updateFile(id: number, patch: { name?: string; body?: string }): ContextFile {
+/**
+ * Saving new text starts a new version; renaming alone does not. Autosaves while someone types
+ * update the version they started instead of adding one every few seconds: a new version only
+ * comes after a pause of more than two minutes, or from an explicit save.
+ */
+export const AUTOSAVE_COALESCE_MS = 2 * 60 * 1000;
+export function updateFile(id: number, patch: { name?: string; body?: string; autosave?: boolean }): ContextFile {
   const db = getDb();
   const f = getFile(id);
   if (!f) throw new Error('File not found.');
   const name = patch.name ? cleanName(patch.name) : f.name;
   const changed = patch.body !== undefined && patch.body !== f.body;
-  const version = changed ? f.version + 1 : f.version;
+  const last = db.prepare('SELECT version, created_at, auto FROM context_file_versions WHERE file_id = ? ORDER BY version DESC LIMIT 1').get(id) as { version: number; created_at: number; auto: number } | undefined;
+  const coalesce = changed && patch.autosave && last?.auto === 1 && last.version === f.version && now() - last.created_at < AUTOSAVE_COALESCE_MS;
+  const version = changed && !coalesce ? f.version + 1 : f.version;
   db.transaction(() => {
     db.prepare('UPDATE context_files SET name = ?, body = ?, version = ?, updated_at = ? WHERE id = ?').run(name, changed ? patch.body : f.body, version, now(), id);
-    if (changed) db.prepare('INSERT INTO context_file_versions (file_id, version, body, created_at) VALUES (?, ?, ?, ?)').run(id, version, patch.body, now());
+    if (coalesce) db.prepare('UPDATE context_file_versions SET body = ?, created_at = ? WHERE file_id = ? AND version = ?').run(patch.body, now(), id, version);
+    else if (changed) db.prepare('INSERT INTO context_file_versions (file_id, version, body, created_at, auto) VALUES (?, ?, ?, ?, ?)').run(id, version, patch.body, now(), patch.autosave ? 1 : 0);
   })();
   return getFile(id)!;
 }

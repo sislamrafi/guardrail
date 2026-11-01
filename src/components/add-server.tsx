@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Icon, api, ms, useAction } from './ui';
+import { Icon, api, ms, price, secretInputProps, useAction } from './ui';
 
 interface Found {
   ok: boolean;
   error?: string;
   url?: string;
   latency?: number;
-  models?: { name: string; contextLen: number | null }[];
+  models?: { name: string; contextLen: number | null; priceIn?: number | null; priceOut?: number | null }[];
 }
 
 export interface SavedServer {
@@ -70,7 +70,7 @@ export function AddServer({ role = 'inference', onSaved, compact }: { role?: 'in
         </label>
         <label style={{ flex: '1 1 180px' }}>
           <span className="lbl">Server API key (optional)</span>
-          <input className="inp mono" type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" />
+          <input className="inp mono" {...secretInputProps} name="gr-server-secret" value={key} onChange={(e) => setKey(e.target.value)} />
         </label>
         <button type="submit" className="btn pri" style={{ minHeight: 44 }} disabled={busy || !url.trim()}>
           <Icon name="search" stroke={2.2} />
@@ -106,6 +106,7 @@ export function AddServer({ role = 'inference', onSaved, compact }: { role?: 'in
               <span className="mono" style={{ fontWeight: 500, flex: '1 1 200px' }}>
                 {m.name}
               </span>
+              {price(m.priceIn, m.priceOut) && <span className="muted">{price(m.priceIn, m.priceOut)}</span>}
               <span className="muted">{ctx(m.contextLen)}</span>
             </label>
           ))}

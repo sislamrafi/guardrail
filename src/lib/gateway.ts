@@ -1,15 +1,20 @@
+import { StreamCollector, responseFromJson } from './stream-collect';
+import { cacheOf } from './adapters';
 import { buildContextBlock, estimateTokens, filesByIds } from './context';
-import { contentText, newSegments, renderBlocked, runCheck1, runCheck2, Segment } from './guard';
+import { clientIp as ipOf, ipAllowed } from './ip';
+import { contentText, newSegments, renderBlocked, Segment } from './guard';
+import { type GuardLayer, RETRY_PROMPT } from './layers';
+import { type LayerResult, applyRedactions, layerOn, runPipeline } from './pipeline';
 import { chainOf, groupPath, listGroups, resolveGroup, Effective } from './groups';
-import { ApiKey, checkKey, lookupKey, touchKey } from './keys';
+import { ApiKey, checkKey, identityLine, lookupKey, touchKey } from './keys';
 import { groupAllowed, limitsFor, listLimits, takeToken } from './limits';
 import { LogEntry, Outcome, Step, newRequestId, promptForLog, updateLog, writeLog } from './logs';
 import { countHit, matchRules, redactMessages } from './rules';
 import { detectSchema, schemaForPath } from './schemas';
 import { getDb } from './db';
-import { errMsg, listModelsForRouting, markDown, Server } from './servers';
+import { errMsg, getServer, listModelsForRouting, markDown, modelMeta, Server } from './servers';
 import { getSettings } from './settings';
-import { apiError, blockedResponse } from './sse';
+import { apiError, blockedResponse, sseFromJson } from './sse';
 
 type Msg = { role?: string; content?: unknown };
 type Kind = 'chat' | 'completions';
@@ -29,14 +34,24 @@ export interface GatewayOptions {
   key?: ApiKey;
   /** Filled in as the request moves through the gateway. */
   trace?: Trace;
-  /** Shown as the client address in the log. */
+  /** Marks the request as test traffic (Studio, replay). */
   source?: string;
+  /** For test traffic: the address of the admin who sent it. */
+  ip?: string | null;
+  /** Run these guard layers instead of the saved ones (Studio, replay). */
+  layers?: GuardLayer[];
+  /** Live progress for Studio: each step, layer, model call and draft answer as it happens. */
+  onEvent?: (e: LiveEvent) => void;
 }
 
+export type LiveEvent =
+  | { type: 'step'; step: Step }
+  | { type: 'layer'; phase: 'start' | 'done'; id: string; name: string; n: number; stage: 'input' | 'output'; attempt?: number; result?: LayerResult }
+  | { type: 'model'; attempt: number; model: string }
+  | { type: 'draft'; attempt: number; text: string; toolCalls: number; cache: { cached: number; prompt: number } | null; cost: number | null };
+
 export function clientIp(req: Request): string | null {
-  const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
-  return req.headers.get('x-real-ip');
+  return ipOf(req.headers, getSettings().trustProxy);
 }
 
 export function bearer(req: Request): string | null {
@@ -46,6 +61,22 @@ export function bearer(req: Request): string | null {
 }
 
 /** Put the context block where vLLM can cache it: the very start of the prompt. */
+/**
+ * The OpenRouter provider that last answered each server and model, to keep prompt caches warm.
+ * Kept on globalThis so a dev-server code reload doesn't forget it (which made every call cold).
+ */
+const lastProvider: Map<string, string> = ((globalThis as { __grLastProvider?: Map<string, string> }).__grLastProvider ??= new Map());
+
+/** Put a cache breakpoint (Anthropic-style cache_control) on the last message's text. */
+export function withCacheBreakpoint(messages: Msg[]): Msg[] {
+  if (!messages.length) return messages;
+  const last = messages[messages.length - 1];
+  const parts = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : Array.isArray(last.content) ? [...(last.content as Record<string, unknown>[])] : null;
+  if (!parts?.length) return messages;
+  parts[parts.length - 1] = { ...parts[parts.length - 1], cache_control: { type: 'ephemeral' } };
+  return [...messages.slice(0, -1), { ...last, content: parts }];
+}
+
 export function injectContext(messages: Msg[], block: string, placement: 'top' | 'end'): Msg[] {
   if (!block) return messages;
   if (placement === 'end') {
@@ -108,8 +139,16 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const settings = getSettings();
   const path = new URL(req.url).pathname;
   const steps: Step[] = [];
+  const emit = opts.onEvent;
+  if (emit) {
+    const push = steps.push.bind(steps);
+    steps.push = (...xs: Step[]) => {
+      for (const x of xs) emit({ type: 'step', step: x });
+      return push(...xs);
+    };
+  }
   const stages: Record<string, number> = {};
-  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ?? clientIp(req), path };
+  const log: Partial<LogEntry> & { id: string; ts: number } = { id, ts: Date.now(), ip: opts.source ? (opts.ip ?? null) : clientIp(req), path, test: !!opts.source };
 
   const finish = (outcome: Outcome, status: number, reason: string | null, extra: Partial<LogEntry> = {}) =>
     writeLog({ ...log, ...extra, outcome, status_code: status, reason, latency_ms: Math.round(at()), stages, steps });
@@ -123,6 +162,13 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     return apiError(401, found.reason, 'authentication_error', id, 'invalid_api_key');
   }
   const key = found.key;
+  // Studio acts as a key from inside the admin panel, so the key's IP list does not apply to it.
+  if (!opts.source && !ipAllowed(log.ip ?? null, key.ipAllow)) {
+    const reason = `This key can only be used from ${key.ipAllow.join(', ')}. The request came from ${log.ip ?? 'an unknown address'}.`;
+    steps.push({ tone: 'bad', head: 'Rejected: address not allowed', ms: at(), text: reason });
+    finish('rejected', 403, reason, { key_id: key.id, key_name: key.name, owner: key.owner, group_id: key.groupId, c1_status: 'not_run', c2_status: 'not_run' });
+    return apiError(403, reason, 'permission_error', id, 'ip_not_allowed');
+  }
   touchKey(key.id);
   const groups = listGroups();
   const gpath = groupPath(key.groupId, groups);
@@ -154,10 +200,10 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // 3. What this key may do
   const res = resolveGroup(key.groupId, key.exceptions, groups);
   const eff = res.effective;
-  const model = String(body.model ?? '');
+  let model = String(body.model ?? '');
   log.model = model || null;
   const { byModel } = allowedRoutes(key, eff);
-  const routes = byModel.get(model);
+  let routes = byModel.get(model);
   if (!routes?.length) {
     const allowed = [...byModel.keys()];
     const msg = model
@@ -181,7 +227,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   const block = (reason: string, extra: Partial<LogEntry>) => {
     const text = renderBlocked(eff.blocked_reply, reason, id, settings.guard.reply.includeReason);
     steps.push({ tone: 'bad', head: `Blocked reply ${stream ? 'streamed' : 'sent'} to the client`, ms: at(), text: 'The model was never called. The client was shown:', quote: text });
-    finish('blocked', 200, reason, extra);
+    finish('blocked', 200, reason, { ...extra, response: { message: { role: 'assistant', content: text }, finish_reason: 'stop', blocked: true } });
     return blockedResponse({ stream, model, text, requestId: id, kind });
   };
 
@@ -190,7 +236,6 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   // 4. Custom rules
   const hits = matchRules(segments, chainOf(key.groupId, groups).map((g) => g.id));
   stages.rules = lap();
-  let escalate = false;
   let redacted = false;
   for (const h of hits) countHit(h.rule.id);
   const blockHit = hits.find((h) => h.rule.action === 'block');
@@ -206,83 +251,230 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
   }
   const escHit = hits.find((h) => h.rule.action === 'escalate');
   if (escHit) {
-    escalate = true;
-    steps.push({ tone: 'warn', head: `Rule "${escHit.rule.name}" sent it to check 2`, ms: at(), text: `Matched in a ${escHit.source}:`, quote: escHit.match });
+    steps.push({ tone: 'warn', head: `Rule "${escHit.rule.name}" flagged it for the guard layers`, ms: at(), text: `Matched in a ${escHit.source}:`, quote: escHit.match });
   }
 
-  // 5. The two guard checks. Each can be off on its own: with PIGuard off,
-  // check 2 judges every request; with both off, requests go straight on.
+  // 5. Guard layers, in order (see pipeline.ts). The first two are the classic PIGuard + judge pair.
   let outcome: Outcome = redacted ? 'redacted' : 'answered';
-  // The Guard checks page sets the default for everyone; a group (and so every key in it) can turn either
-  // check off, or on again under a group that turned it off. `eff` already holds the resolved answer.
-  const g = settings.guard;
-  const c1On = g.enabled && eff.piguard_enabled;
-  const c2On = g.enabled && eff.oss_enabled;
   const groupName = groups.find((x) => x.id === key.groupId)?.name ?? 'this group';
-  const c1Bypass = g.enabled && g.piguard.enabled && !eff.piguard_enabled; // on for the app, off for this group
-  const c2Bypass = g.enabled && g.oss.enabled && !eff.oss_enabled;
-  const gc2 = { ...g, oss: { ...g.oss, enabled: c2On } }; // what check 2 sees: on or off for THIS group
-  const judge = settings.guard.oss.model.split('/').pop();
-  let toCheck2 = false;
-  let c1Flagged = false;
-  let c1Quote: string | null = null;
-  if (c1On) {
-    const c1 = await runCheck1(segments, g);
-    stages.piguard = c1.ms;
-    log.c1_score = c1.score;
-    c1Flagged = c1.score >= eff.piguard_threshold;
-    c1Quote = c1.quote;
-    toCheck2 = c1Flagged || escalate;
-    log.c1_status = !segments.length ? 'skipped' : c1Flagged ? 'flagged' : 'clean';
-    if (c1.error) steps.push({ tone: 'warn', head: 'Check 1 fell back to built-in patterns', ms: at(), text: c1.error });
-    if (!segments.length) steps.push({ tone: 'ok', head: 'Check 1 · nothing new to scan', ms: at(), text: 'No new user message or tool result since the model last answered.' });
-    else if (c1Flagged)
-      steps.push({ tone: 'warn', head: `Check 1 · PIGuard flagged it (${c1.score.toFixed(2)})`, ms: at(), text: `Score is at or above the limit of ${eff.piguard_threshold.toFixed(2)} (${c1.engine}). Text that triggered it, from a ${c1.source}:`, quote: c1.quote ?? undefined });
-    else steps.push({ tone: 'ok', head: `Check 1 · PIGuard: clean (${c1.score.toFixed(2)})`, ms: at(), text: `Below the limit of ${eff.piguard_threshold.toFixed(2)}, so check 2 was skipped.` });
-  } else {
-    log.c1_status = 'off';
-    // Nothing new means nothing for the judge to read either.
-    toCheck2 = c2On && segments.length > 0;
-    steps.push({
-      tone: 'neutral',
-      head: c1Bypass ? `Check 1 · PIGuard is off for ${groupName}` : 'Check 1 · PIGuard is off',
-      ms: at(),
-      text: !c2On ? 'Check 2 is off too, so no guard check ran.' : toCheck2 ? `Sent straight to check 2 (${judge}).` : 'Nothing new to scan, so check 2 was skipped.',
-    });
+  const allLayers = opts.layers ?? settings.guard.layers;
+  // Layers before the model check the request; "after the model" layers check its answer (step 7b).
+  const layers = allLayers.filter((l) => l.stage !== 'output');
+  const outLayers = kind === 'chat' ? allLayers.filter((l) => l.stage === 'output' && layerOn(l, eff)) : [];
+  // The context block and the message list the model gets, built once by one function, so a
+  // "suffix" guard layer sends exactly the same prefix as the real call (and shares its cache).
+  const files = filesByIds(eff.context);
+  // The caller line (key's own setting) goes first, then the policy prompt and the context files.
+  const identity = identityLine(key);
+  const ctx = [identity, buildContextBlock(settings.policyPrompt, files)].filter(Boolean).join('\n\n');
+  const suffixOn = kind === 'chat' && allLayers.some((l) => (l.placement === 'suffix' || l.stage === 'output') && layerOn(l, eff));
+  const forwardMessages = (msgs: Msg[]) => {
+    const m = ctx ? injectContext(msgs, ctx, settings.contextPlacement) : msgs;
+    // Anthropic and Gemini models only cache from explicit breakpoints: mark the end of the shared part.
+    return suffixOn && /anthropic\/|claude|gemini/i.test(model) ? withCacheBreakpoint(m) : m;
+  };
+  // OpenRouter spreads a model over several providers, each with its own cache. For suffix checks ask
+  // for the provider that served this model last, so the check and the call land on the same cache.
+  const onOpenRouter = /openrouter\.ai/i.test(routes[0].server.url);
+  const stickyKey = `${routes[0].server.id}::${model}`;
+  if (suffixOn && onOpenRouter && !body.provider && lastProvider.get(stickyKey)) body.provider = { order: [lastProvider.get(stickyKey)], allow_fallbacks: true };
+  const conversation = suffixOn ? { body: { ...body, model, messages: forwardMessages(messages) }, model, serverId: routes[0].server.id } : null;
+  const pipe = await runPipeline({
+    conversation,
+    onLayer: emit ? (e) => emit({ type: 'layer', ...e, stage: 'input' }) : undefined,
+    segments,
+    layers,
+    resolution: res,
+    escalate: escHit ? { quote: escHit.match } : null,
+    unresolvedFlag: settings.guard.unresolvedFlag,
+    serverOf: (sid) => getServer(sid),
+    segmentsFor: (scan) => newSegments(messages, scan),
+    metaOf: modelMeta,
+  });
+  log.decisions = pipe.results;
+  for (const r of pipe.results) {
+    const d = r.decision;
+    const label = `Check ${r.n} · ${r.name}`;
+    const key = `layer_${r.id}`;
+    if (d) stages[key] = d.latency_ms;
+    const score = d?.score != null ? ` (${d.score.toFixed(2)})` : '';
+    if (d?.error) steps.push({ tone: 'warn', head: `${label} failed`, ms: at(), text: `${d.error}. ${r.action === 'block' ? 'Blocked by its fallback setting.' : r.fellBack && d.raw === '' && d.reason.startsWith('Built-in') ? 'Used the built-in patterns instead.' : 'Its fallback setting decided.'}` });
+    if (r.action === 'off') steps.push({ tone: 'neutral', head: r.bypassed ? `${label} is off for ${groupName}` : `${label} is off`, ms: at(), text: r.bypassed ? `${groupName} skips this layer.` : 'This layer is switched off.' });
+    else if (r.action === 'nothing') steps.push({ tone: 'ok', head: `${label} · nothing new to scan`, ms: at(), text: 'No new user message or tool result since the model last answered.' });
+    else if (r.action === 'pass' || r.action === 'cleared') steps.push({ tone: 'ok', head: `${label}: ${r.type === 'judge' ? 'allow' : 'clean'}${score}`, ms: at(), text: r.action === 'cleared' ? 'It cleared what an earlier layer flagged.' : d?.reason ?? '', why: r.type === 'judge' ? d?.raw || d?.reason : undefined });
+    else if (r.action === 'flag') steps.push({ tone: 'warn', head: `${label} flagged it${score}`, ms: at(), text: `${d?.reason ?? ''}. Text that triggered it:`, quote: d?.quote ?? undefined });
+    else if (r.action === 'redact') steps.push({ tone: 'warn', head: `${label} redacted ${d?.categories.join(', ')}`, ms: at(), text: 'Matching text was replaced with [REDACTED] before the request went on.' });
+    else if (r.action === 'block') steps.push({ tone: 'bad', head: `${label}: block${score}`, ms: at(), text: d?.reason ?? '', why: d?.raw || undefined, quote: d?.quote ?? undefined });
+  }
+  // The Activity columns still show "check 1" (first scoring layer) and "check 2" (first judge).
+  const c1 = pipe.results.find((r) => r.id === 'piguard') ?? pipe.results.find((r) => r.type === 'classifier' || r.type === 'patterns');
+  const c2 = pipe.results.find((r) => r.id === 'judge') ?? pipe.results.find((r) => r.type === 'judge');
+  log.c1_score = c1?.decision?.score ?? null;
+  log.c1_status = !c1 ? 'off' : c1.action === 'off' ? 'off' : c1.action === 'nothing' ? 'skipped' : c1.action === 'flag' || c1.action === 'block' ? 'flagged' : 'clean';
+  log.c2_status = !c2 ? 'off' : c2.action === 'off' ? (pipe.unresolved ? 'error' : 'off') : c2.action === 'skipped' || c2.action === 'nothing' ? 'skipped' : c2.action === 'block' ? (c2.decision?.error ? 'error' : 'block') : 'allow';
+  log.c2_reason = c2?.decision?.reason ?? null;
+  if (pipe.unresolved) steps.push({ tone: pipe.block ? 'bad' : 'warn', head: pipe.block ? 'Flag not cleared: blocked' : 'Flag not cleared: allowed', ms: at(), text: `No later layer judged what was flagged, so the "unresolved flag" setting decided (${settings.guard.unresolvedFlag}).` });
+  if (pipe.block) return block(pipe.block.reason, {});
+  if (pipe.redact.length) {
+    messages = applyRedactions(messages, pipe.redact);
+    redacted = true;
+    outcome = 'redacted';
+  }
+  if (pipe.cleared && outcome === 'answered') outcome = 'false_alarm';
+  // The suffix check warmed one provider's cache: send the real call there too.
+  const warmed = pipe.results.find((x) => x.decision?.suffix && x.decision.provider)?.decision?.provider;
+  if (suffixOn && onOpenRouter && warmed) {
+    body.provider = { ...(body.provider as object), order: [warmed], allow_fallbacks: true };
+    lastProvider.set(stickyKey, warmed);
   }
 
-  if (c2Bypass && c1On)
-    steps.push({ tone: 'neutral', head: `Check 2 · off for ${groupName}`, ms: at(), text: toCheck2 ? 'This group skips the second check, so the "if it fails or times out" setting decides what happens to a flagged request.' : 'This group skips the second check.' });
-  if (toCheck2) {
-    const c2 = await runCheck2(segments, c1Quote ?? escHit?.match ?? null, eff.oss_prompt, gc2);
-    stages.oss = c2.ms;
-    log.c2_status = c2.error ? (c2.verdict === 'block' ? 'error' : 'allow') : c2.verdict;
-    log.c2_reason = c2.reason;
-    if (c2.verdict === 'block') {
-      steps.push({ tone: 'bad', head: `Check 2 · ${judge}: block`, ms: at(), text: c2.error ? `It could not decide: ${c2.error}.` : 'Its reasoning:', why: c2.reasoning ? `${c2.reason}\n\n${c2.reasoning}` : c2.reason });
-      return block(c2.reason, {});
-    }
-    steps.push({ tone: 'ok', head: `Check 2 · ${judge}: allow`, ms: at(), text: c2.error ? `It could not decide (${c2.error}); allowed by setting.` : 'Its reasoning:', why: c2.reasoning ? `${c2.reason}\n\n${c2.reasoning}` : c2.reason });
-    if (c1Flagged) outcome = 'false_alarm';
-  } else log.c2_status = c2On ? 'skipped' : 'off';
+  // A router layer picked the model. Only a model this key may use; otherwise keep the client's.
+  if (pipe.route && pipe.route.model !== model) {
+    const to = pipe.route.model;
+    const allowed = byModel.get(to);
+    if (allowed?.length) {
+      steps.push({ tone: 'neutral', head: `Routed to ${to}`, ms: at(), text: `${pipe.route.layer} answered "${pipe.route.label ?? 'no answer'}", so the request goes to ${to} instead of ${model}.` });
+      model = to;
+      routes = allowed;
+      log.model = to;
+      body.model = to;
+    } else steps.push({ tone: 'warn', head: `Router picked ${to}, kept ${model}`, ms: at(), text: `${pipe.route.layer} picked ${to}, but this key's group may not use it, so the request stays on ${model}.` });
+  }
 
   // 6. Project context
   lap();
-  const files = filesByIds(eff.context);
-  const ctx = buildContextBlock(settings.policyPrompt, files);
   trace.context = files.map((f) => ({ name: f.name, tokens: estimateTokens(f.body) }));
   trace.contextTokens = ctx ? estimateTokens(ctx) : 0;
   trace.placement = settings.contextPlacement;
+  log.injected = ctx ? { files: trace.context, policy: !!settings.policyPrompt.trim(), tokens: trace.contextTokens, placement: settings.contextPlacement, ...(identity ? { identity } : {}) } : null;
   if (ctx) {
-    if (kind === 'chat') body.messages = injectContext(messages, ctx, settings.contextPlacement);
+    if (kind === 'chat') body.messages = forwardMessages(messages);
     else body.prompt = `${ctx}\n\n${contentText(messages[0].content)}`;
-    steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${files.map((f) => f.name).join(', ') || 'Policy prompt'} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
-  } else if (kind === 'chat') body.messages = messages;
-  else body.prompt = contentText(messages[0].content);
+    steps.push({ tone: 'neutral', head: 'Context added', ms: at(), text: `${[identity && 'caller identity', ...files.map((f) => f.name), settings.policyPrompt.trim() && 'policy prompt'].filter(Boolean).join(', ')} · ${estimateTokens(ctx).toLocaleString()} tokens, ${settings.contextPlacement === 'top' ? 'at the top (cacheable)' : 'before the last message'}` });
+  } else {
+    // Nothing selected: the request goes on exactly as the client sent it (after any redaction).
+    if (kind === 'chat') body.messages = forwardMessages(messages);
+    else if (redacted) body.prompt = contentText(messages[0].content);
+    steps.push({ tone: 'neutral', head: 'No context added', ms: at(), text: `${groupName} has no context files, the policy prompt is empty and this key doesn't send its caller identity, so nothing was added to the request.` });
+  }
   stages.context = lap();
   trace.forwarded = body;
   log.forwarded = promptForLog(kind === 'chat' ? body.messages : promptMessages(body.prompt));
 
+  // 7b. After-the-model layers: the answer is checked before the client sees any of it. A rejected
+  // answer can go back to the model with the reason as feedback (the conversation stays a prefix,
+  // so the provider cache is reused), up to the layer's retries; then it is blocked or let through.
+  if (outLayers.length) {
+    const callOnce = async (b: Record<string, unknown>): Promise<Record<string, unknown> | Response> => {
+      for (const r of routes) {
+        const t0 = at();
+        let up: Response;
+        try {
+          up = await fetch(`${r.server.url}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(r.server.api_key ? { Authorization: `Bearer ${r.server.api_key}` } : {}) }, body: JSON.stringify({ ...b, stream: false }), signal: req.signal });
+        } catch (e) {
+          markDown(r.server.id, e);
+          steps.push({ tone: 'warn', head: `${r.server.name} unreachable`, ms: at(), text: errMsg(e) });
+          continue;
+        }
+        log.server = r.server.name;
+        stages.upstream = (stages.upstream ?? 0) + (at() - t0);
+        if (!up.ok) {
+          const text = await up.text();
+          steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
+          finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
+          return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
+        }
+        const json = (await up.json()) as Record<string, unknown>;
+        if (typeof json.provider === 'string') lastProvider.set(`${r.server.id}::${model}`, json.provider);
+        return json;
+      }
+      const msg = `No server for ${model} is reachable right now.`;
+      finish('error', 502, msg);
+      return apiError(502, msg, 'api_error', id, 'backend_unavailable');
+    };
+    const produce = async (): Promise<Response> => {
+      let msgs = body.messages as Msg[];
+      const outResults: LayerResult[] = [];
+      for (let attempt = 1; ; attempt++) {
+        emit?.({ type: 'model', attempt, model });
+        const json = await callOnce({ ...body, messages: msgs });
+        if (json instanceof Response) return json;
+        // Retries go to the provider that just answered, whose cache now holds this conversation.
+        if (onOpenRouter && typeof json.provider === 'string') body.provider = { ...(body.provider as object), order: [json.provider], allow_fallbacks: true };
+        const resp = responseFromJson(json);
+        const usage = json.usage as { cost?: number } | undefined;
+        emit?.({ type: 'draft', attempt, text: typeof resp.message.content === 'string' ? resp.message.content : '', toolCalls: resp.message.tool_calls?.length ?? 0, cache: cacheOf(json), cost: typeof usage?.cost === 'number' ? usage.cost : null });
+        const text = typeof resp.message.content === 'string' ? resp.message.content : JSON.stringify(resp.message.content ?? '');
+        const calls = resp.message.tool_calls ?? [];
+        const segs: Segment[] = [...(text.trim() ? [{ source: 'model answer' as const, text }] : []), ...calls.map((c) => ({ source: 'tool call' as const, text: `${c.function?.name ?? 'tool'}(${c.function?.arguments ?? ''})` }))];
+        const check = await runPipeline({
+          segments: segs,
+          layers: outLayers,
+          resolution: res,
+          escalate: null,
+          unresolvedFlag: 'allow',
+          serverOf: (sid) => getServer(sid),
+          metaOf: modelMeta,
+          conversation: { body: { ...body, messages: [...msgs, resp.message] }, model, serverId: routes[0].server.id },
+          onLayer: emit ? (e) => emit({ type: 'layer', ...e, stage: 'output', attempt }) : undefined,
+        });
+        outResults.push(...check.results.map((x) => ({ ...x, stage: 'output' as const, attempt })));
+        log.decisions = [...pipe.results, ...outResults];
+        const flagged = check.results.filter((x) => x.action === 'flag');
+        if (!check.block) {
+          steps.push({ tone: flagged.length ? 'warn' : 'ok', head: `Answer #${attempt} checked: ${flagged.length ? `flagged by ${flagged.map((x) => x.name).join(', ')}` : 'passed'}`, ms: at(), text: `${outLayers.length} after-the-model layer(s) checked it before the client saw it.` });
+          finish(outcome, 200, null, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-guardrail-checked': '1' } });
+        }
+        const layer = outLayers.find((l) => l.name === check.block!.layer);
+        const d = check.results.find((x) => x.action === 'block')?.decision;
+        steps.push({ tone: 'warn', head: `Answer #${attempt} rejected by ${check.block.layer}`, ms: at(), text: check.block.reason, quote: (text || calls.map((c) => `${c.function?.name}(${c.function?.arguments ?? ''})`).join('\n')).slice(0, 600) });
+        if (layer?.onFail === 'retry' && attempt <= (layer.retries ?? 2)) {
+          const feedback = (layer.retryPrompt || RETRY_PROMPT)
+            .replace(/\{reason\}/g, check.block.reason.replace(/[.\s]+$/, ''))
+            .replace(/\{categories\}/g, d?.categories.join(', ') || 'none')
+            .replace(/\{verdict\}/g, d?.verdict ?? 'block');
+          msgs = [...msgs, resp.message as Msg, { role: 'user', content: feedback }];
+          steps.push({ tone: 'neutral', head: `Asked the model to fix it (retry ${attempt} of ${layer.retries ?? 2})`, ms: at(), text: feedback });
+          continue;
+        }
+        if (layer?.onFail === 'retry' && layer.onExhausted === 'flag') {
+          steps.push({ tone: 'warn', head: 'Retries used up: answer let through, flagged', ms: at(), text: check.block.reason });
+          finish('false_alarm', 200, check.block.reason, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id } });
+        }
+        return block(layer?.onFail === 'retry' ? `${check.block.reason} (still failing after ${layer.retries ?? 2} retries)` : check.block.reason, {});
+      }
+    };
+    if (!stream) return produce();
+    // Streaming clients wait for the checked answer; keep-alive comments keep the connection open.
+    const enc = new TextEncoder();
+    const out = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const t = setInterval(() => c.enqueue(enc.encode(': checking the answer\n\n')), 5000);
+        try {
+          const r = await produce();
+          clearInterval(t);
+          if (r.body) {
+            const reader = r.body.getReader();
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              c.enqueue(value);
+            }
+          }
+        } catch (e) {
+          c.enqueue(enc.encode(`data: ${JSON.stringify({ error: { message: errMsg(e) } })}\n\n`));
+        } finally {
+          clearInterval(t);
+          c.close();
+        }
+      },
+    });
+    return new Response(out, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id } });
+  }
+
+  emit?.({ type: 'model', attempt: 1, model });
   // 7. Forward to vLLM, failing over between servers
   for (const r of routes) {
     const tStart = at();
@@ -307,7 +499,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     if (!up.ok) {
       const text = await up.text();
       steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
-      finish('error', up.status, `Backend error ${up.status}`);
+      finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
       return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
     }
     const label = outcome === 'false_alarm' ? 'Sent to the model (false alarm logged)' : 'Sent to the model';
@@ -315,7 +507,8 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       const json = (await up.json()) as { usage?: { completion_tokens?: number } };
       stages.upstream = at() - tStart;
       steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, answered`, ms: at(), text: `${json.usage?.completion_tokens ?? '?'} tokens.` });
-      finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null });
+      if (typeof (json as { provider?: unknown }).provider === 'string') lastProvider.set(`${r.server.id}::${model}`, (json as unknown as { provider: string }).provider);
+      finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null, response: responseFromJson(json) });
       return Response.json(json, { headers: { 'x-guardrail-request-id': id } });
     }
     // Stream straight through; count chunks as we go and finish the log at the end.
@@ -326,12 +519,15 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     const dec = new TextDecoder();
     let tail = '';
     const reader = up.body.getReader();
-    const close = (how: string) => {
+    // Rebuild the reply for the log as it streams by; the client gets every byte unchanged and undelayed.
+    const collect = new StreamCollector();
+    const close = (how: string, interrupted = false) => {
       if (done) return;
       done = true;
       stages.upstream = at() - tStart;
-      steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, ${how}`, ms: at(), text: `Streamed ${usage ?? chunks} ${usage ? 'tokens' : 'chunks'}.` });
-      updateLog(id, { latency_ms: Math.round(at()), tokens_out: usage ?? chunks, stages, steps });
+      steps.push({ tone: interrupted ? 'warn' : 'ok', head: `${label} · ${r.server.name}, ${how}`, ms: at(), text: `Streamed ${usage ?? chunks} ${usage ? 'tokens' : 'chunks'}.` });
+      if (collect.provider) lastProvider.set(`${r.server.id}::${model}`, collect.provider);
+      updateLog(id, { latency_ms: Math.round(at()), tokens_out: usage ?? chunks, stages, steps, response: collect.result({ interrupted }) });
     };
     const out = new ReadableStream<Uint8Array>({
       async pull(c) {
@@ -342,7 +538,9 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
             c.close();
             return;
           }
-          const lines = (tail + dec.decode(value, { stream: true })).split('\n');
+          const text = dec.decode(value, { stream: true });
+          collect.push(text);
+          const lines = (tail + text).split('\n');
           tail = lines.pop() ?? '';
           for (const l of lines) {
             if (!l.startsWith('data:') || l.includes('[DONE]')) continue;
@@ -352,12 +550,12 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
           }
           c.enqueue(value);
         } catch (e) {
-          close(`stream broke (${errMsg(e)})`);
+          close(`stream broke (${errMsg(e)})`, true);
           c.error(e);
         }
       },
       cancel(reason) {
-        close('client stopped reading');
+        close('client stopped reading', true);
         return reader.cancel(reason);
       },
     });
@@ -376,6 +574,7 @@ export function handleModels(req: Request): Response {
   const id = newRequestId();
   const found = lookupKey(bearer(req));
   if (!found.ok) return apiError(401, found.reason, 'authentication_error', id, 'invalid_api_key');
+  if (!ipAllowed(clientIp(req), found.key.ipAllow)) return apiError(403, `This key can only be used from ${found.key.ipAllow.join(', ')}.`, 'permission_error', id, 'ip_not_allowed');
   const eff = resolveGroup(found.key.groupId, found.key.exceptions).effective;
   const { byModel } = allowedRoutes(found.key, eff);
   const ctxRows = new Map(

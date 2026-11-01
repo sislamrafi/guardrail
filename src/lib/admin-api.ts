@@ -1,14 +1,24 @@
 import { estimateTokens, createFile, deleteFile, fileHistory, getFile, listFiles, updateFile } from './context';
-import { builtinScore, runCheck1, runCheck2 } from './guard';
+import { normalizeLayer } from './layers';
+import { runPipeline } from './pipeline';
 import { SETTING_DEFS, SettingKey, chainOf, createGroup, deleteGroup, getGroup, groupPath, listGroups, resolveGroup, setGroupSetting, updateGroup } from './groups';
-import { cleanExceptions, createKey, deleteKey, getKey, listKeys, requestsToday, updateKey } from './keys';
+import { cleanExceptions, createKey, deleteKey, getKey, listKeys, requestsToday, revealKey, rotateKey, updateKey } from './keys';
+import { weakSecret } from './secret-box';
 import { deleteLimit, groupAllowed, limitsFor, listLimits, saveLimit } from './limits';
 import { getLog, overview, queryLogs, setFeedback, countByFilter, falseAlarmCount } from './logs';
 import { createRule, deleteRule, listRules, updateRule } from './rules';
 import { SCHEMAS, detectSchema } from './schemas';
-import { createServer, deleteServer, discover, errMsg, listModels, listServers, rediscover, refreshStale, setModelEnabled, updateServer } from './servers';
+import { type DiscoveredModel, addModelByHand, createServer, deleteServer, discover, errMsg, getServer, listModels, modelMeta, listServers, rediscover, refreshStale, setModelEnabled, setModelKind, updateServer, type ModelKind } from './servers';
 import { getSettings, updateSettings } from './settings';
-import { allowedRoutes, handleCompletion, Trace } from './gateway';
+import { allowedRoutes, clientIp } from './gateway';
+import { replayLog, runAsClient } from './client-run';
+import { getDb } from './db';
+import { probeFormat } from './adapters';
+import { planFor } from './studio-plan';
+import { createDoc, deleteDoc, docHistory, docsForKey, getDoc, listDocs, updateDoc } from './mcp-docs';
+import { MCP_PATH, listTools, testAsKey } from './mcp';
+import { groupKey } from './client-run';
+import { createScenario, deleteScenario, duplicateScenario, listScenarios, scenarioFromLog, updateScenario } from './studio';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -59,6 +69,63 @@ function treeOrder<T extends { id: number; parentId: number | null }>(groups: T[
   return out;
 }
 
+/** Logs with their full prompts for a date range, as JSONL (one session per line) or a JSON list. */
+function exportLogs(url: URL): Response {
+  const p = url.searchParams;
+  const day = (s: string | null, end = false) => (s ? new Date(`${s}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : undefined);
+  const labels = (p.get('labels') ?? '').split(',').filter(Boolean);
+  const rows = queryLogs({ since: day(p.get('from')), until: day(p.get('to'), true), groups: groupScope(url), key: keyScope(url), feedback: labels.length ? labels : undefined, filter: p.get('filter') || undefined, test: testScope(url), limit: 5000 });
+  const items = rows.map((r) => {
+    const full = getLog(r.id) ?? r;
+    return {
+      id: r.id,
+      time: new Date(r.ts).toISOString(),
+      key: r.key_name,
+      owner: r.owner,
+      group: r.group_name,
+      ip: r.ip,
+      model: r.model,
+      server: r.server,
+      outcome: r.outcome,
+      reason: r.reason,
+      label: r.feedback,
+      layers: full.decisions ?? null,
+      injected: full.injected ?? null,
+      prompt: full.prompt ?? null,
+      sent_to_model: full.forwarded ?? null,
+    };
+  });
+  const json = p.get('format') === 'json';
+  const body = json ? JSON.stringify(items, null, 2) : items.map((i) => JSON.stringify(i)).join('\n') + (items.length ? '\n' : '');
+  const name = `guardrail-activity-${p.get('from') ?? 'all'}-${p.get('to') ?? 'now'}.${json ? 'json' : 'jsonl'}`;
+  return new Response(body, { headers: { 'content-type': json ? 'application/json' : 'application/x-ndjson', 'content-disposition': `attachment; filename="${name}"`, 'x-row-count': String(items.length) } });
+}
+
+/** ?test=include|only shows Studio and replay traffic too; by default it is left out. */
+const testScope = (url: URL) => (['include', 'only'].includes(url.searchParams.get('test') ?? '') ? (url.searchParams.get('test') as 'include' | 'only') : 'exclude');
+
+/** ?key=<id>: one key's requests only. */
+const keyScope = (url: URL) => Number(url.searchParams.get('key')) || undefined;
+
+/** ?group=<id> as that group and its sub-groups; the root group (or none) means every log. */
+function groupScope(url: URL): number[] | undefined {
+  const id = Number(url.searchParams.get('group'));
+  if (!id) return undefined;
+  const groups = listGroups();
+  const g = groups.find((x) => x.id === id);
+  if (!g || g.parentId === null) return undefined;
+  const ids = new Set([id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const x of groups)
+      if (x.parentId !== null && ids.has(x.parentId) && !ids.has(x.id)) {
+        ids.add(x.id);
+        grew = true;
+      }
+  }
+  return [...ids];
+}
+
 const routes: Record<string, Handler> = {
   // ---- servers and models ----
   'GET servers': () => {
@@ -82,7 +149,7 @@ const routes: Record<string, Handler> = {
   'POST servers/discover': async ({ body }) => {
     try {
       const r = await discover(String(body.url ?? ''), (body.apiKey as string) || null);
-      return { ok: true, url: r.base, latency: r.latency, models: r.models };
+      return { ok: true, url: r.base, latency: r.latency, models: r.models, notes: r.notes };
     } catch (e) {
       return { ok: false, error: errMsg(e) };
     }
@@ -93,15 +160,21 @@ const routes: Record<string, Handler> = {
       url: String(body.url ?? ''),
       apiKey: (body.apiKey as string) || null,
       role: body.role === 'guard' ? 'guard' : 'inference',
-      models: Array.isArray(body.models) ? (body.models as { name: string; contextLen: number | null }[]) : [],
+      models: Array.isArray(body.models) ? (body.models as DiscoveredModel[]) : [],
       enabled: Array.isArray(body.enabled) ? (body.enabled as string[]) : undefined,
       latency: typeof body.latency === 'number' ? body.latency : null,
     }),
   'PATCH servers/:id': ({ params, body }) =>
     updateServer(num(params[0]), { name: body.name as string, url: body.url as string, apiKey: body.apiKey as string | null | undefined, role: body.role as 'inference' | 'guard' }),
   'DELETE servers/:id': ({ params }) => deleteServer(num(params[0])),
+  'POST servers/:id/models': ({ params, body }) => addModelByHand(num(params[0]), String(body.name ?? '')),
   'POST servers/:id/rediscover': ({ params }) => rediscover(num(params[0])),
-  'PATCH models/:id': ({ params, body }) => setModelEnabled(num(params[0]), !!body.enabled),
+  'PATCH models/:id': ({ params, body }) => {
+    const id = num(params[0]);
+    if ('kind' in body) setModelKind(id, (body.kind as ModelKind | null) || null);
+    if ('enabled' in body) setModelEnabled(id, !!body.enabled);
+    return { ok: true };
+  },
   'POST limits': ({ body }) =>
     saveLimit({
       id: body.id ? num(body.id) : undefined,
@@ -117,7 +190,7 @@ const routes: Record<string, Handler> = {
   // ---- groups ----
   'GET groups': () => {
     const files = listFiles().map((f) => ({ id: f.id, name: f.name, tokens: estimateTokens(f.body) }));
-    const servers = listServers().filter((s) => s.role === 'inference').map((s) => ({ id: s.id, name: s.name }));
+    const servers = listServers().map((s) => ({ id: s.id, name: s.name }));
     const models = [...new Set(listModels().filter((m) => m.enabled && servers.some((s) => s.id === m.server_id)).map((m) => m.name))].sort();
     const modelServers = Object.fromEntries(models.map((m) => [m, listModels().filter((x) => x.name === m && x.enabled).map((x) => servers.find((s) => s.id === x.server_id)?.name).filter(Boolean)]));
     return { groups: treeOrder(groupsView()), defs: SETTING_DEFS, files, servers, models, modelServers, settings: getSettings() };
@@ -155,7 +228,7 @@ const routes: Record<string, Handler> = {
     return resolveGroup(gid, cleanExceptions(body.exceptions));
   },
   'POST keys': ({ body }) =>
-    createKey({ name: String(body.name ?? ''), owner: String(body.owner ?? ''), groupId: num(body.groupId, 'group'), exceptions: body.exceptions, expiresAt: body.expiresAt ? num(body.expiresAt, 'expiry') : null }),
+    createKey({ name: String(body.name ?? ''), owner: String(body.owner ?? ''), groupId: num(body.groupId, 'group'), exceptions: body.exceptions, expiresAt: body.expiresAt ? num(body.expiresAt, 'expiry') : null, ipAllow: body.ipAllow }),
   'PATCH keys/:id': ({ params, body }) =>
     updateKey(num(params[0]), {
       name: body.name as string,
@@ -164,8 +237,17 @@ const routes: Record<string, Handler> = {
       exceptions: body.exceptions,
       expiresAt: body.expiresAt === undefined ? undefined : body.expiresAt === null ? null : num(body.expiresAt),
       revoked: body.revoked === undefined ? undefined : !!body.revoked,
+      ipAllow: body.ipAllow,
+      identity: body.identity && typeof body.identity === 'object' ? (body.identity as { key?: boolean; owner?: boolean }) : undefined,
+      mcp: body.mcp === undefined ? undefined : !!body.mcp,
     }),
   'DELETE keys/:id': ({ params }) => deleteKey(num(params[0])),
+  'GET keys/:id/secret': ({ params }) => {
+    const secret = revealKey(num(params[0]));
+    if (!secret) throw new HttpError(409, 'This key was created before secrets could be shown again, or with a different GUARDRAIL_SECRET. Rotate it to get a new secret you can view.');
+    return { secret };
+  },
+  'POST keys/:id/rotate': ({ params }) => rotateKey(num(params[0])),
   'GET keys/:id': ({ params }) => {
     const k = getKey(num(params[0]));
     if (!k) throw new HttpError(404, 'Key not found.');
@@ -182,10 +264,21 @@ const routes: Record<string, Handler> = {
       files: files.map((f) => ({ ...f, tokens: estimateTokens(f.body), usedBy: groups.filter((g) => { const s = g.settings.context; return Array.isArray(s?.value) && (s.value as number[]).includes(f.id); }).map((g) => g.name), reach: used(f.id).length })),
       groups: treeOrder(groupsView()).map((g) => {
         const r = resolveGroup(g.id, undefined, groups);
-        return { ...g, context: r.effective.context, own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [], mode: g.settings.context?.mode ?? null, keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name) };
+        return {
+          ...g,
+          context: r.effective.context,
+          own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [],
+          mode: g.settings.context?.mode ?? null,
+          ctxExclude: g.settings.context?.exclude ?? [],
+          docs: r.effective.mcp_docs,
+          docsExclude: g.settings.mcp_docs?.exclude ?? [],
+          ownDocs: Array.isArray(g.settings.mcp_docs?.value) ? (g.settings.mcp_docs!.value as number[]) : [],
+          docsMode: g.settings.mcp_docs?.mode ?? null,
+          keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name),
+        };
       }),
       settings: getSettings(),
-      cache: listServers().filter((s) => s.role === 'inference' && s.cache_hit_rate !== null).map((s) => ({ name: s.name, rate: s.cache_hit_rate })),
+      cache: listServers().filter((s) => s.cache_hit_rate !== null).map((s) => ({ name: s.name, rate: s.cache_hit_rate })),
     };
   },
   'POST context': ({ body }) => createFile(String(body.name ?? ''), String(body.body ?? '')),
@@ -194,7 +287,7 @@ const routes: Record<string, Handler> = {
     if (!f) throw new HttpError(404, 'File not found.');
     return { file: f, history: fileHistory(f.id) };
   },
-  'PATCH context/:id': ({ params, body }) => updateFile(num(params[0]), { name: body.name as string | undefined, body: body.body as string | undefined }),
+  'PATCH context/:id': ({ params, body }) => updateFile(num(params[0]), { name: body.name as string | undefined, body: body.body as string | undefined, autosave: body.autosave === true }),
   'DELETE context/:id': ({ params }) => {
     const id = num(params[0]);
     for (const g of listGroups()) {
@@ -202,6 +295,66 @@ const routes: Record<string, Handler> = {
       if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) setGroupSetting(g.id, 'context', { mode: s.mode, value: (s.value as number[]).filter((x) => x !== id) });
     }
     deleteFile(id);
+  },
+
+  // ---- MCP docs ----
+  'GET docs': () => {
+    const groups = listGroups();
+    const docs = listDocs();
+    const keys = listKeys();
+    const reach = new Map<number, number>();
+    const perKey = keys.map((k) => {
+      const seen = docsForKey(k, groups, docs);
+      for (const d of seen) reach.set(d.id, (reach.get(d.id) ?? 0) + 1);
+      return { id: k.id, name: k.name, owner: k.owner, groupId: k.groupId, mcp: k.mcp, revoked: k.revoked, docs: seen.map((d) => d.id) };
+    });
+    return {
+      endpoint: MCP_PATH,
+      docs: docs.map((d) => ({
+        ...d,
+        groups: groups.filter((g) => Array.isArray(g.settings.mcp_docs?.value) && (g.settings.mcp_docs!.value as number[]).includes(d.id)).map((g) => g.id),
+        keys: keys.filter((k) => Array.isArray(k.exceptions.mcp_docs?.value) && (k.exceptions.mcp_docs!.value as number[]).includes(d.id)).map((k) => k.id),
+        reach: reach.get(d.id) ?? 0,
+      })),
+      keys: perKey,
+      tools: listTools().map((t) => ({ name: t.name, title: t.title, description: t.description })),
+    };
+  },
+  'POST docs': ({ body }) => createDoc(body as never),
+  'GET docs/:id': ({ params }) => {
+    const d = getDoc(num(params[0]));
+    if (!d) throw new HttpError(404, 'Doc not found.');
+    return { doc: d, history: docHistory(d.id) };
+  },
+  'PATCH docs/:id': ({ params, body }) =>
+    updateDoc(num(params[0]), {
+      title: body.title as string | undefined,
+      slug: body.slug as string | undefined,
+      description: body.description as string | undefined,
+      tags: body.tags,
+      body: body.body as string | undefined,
+      autosave: body.autosave === true,
+    }),
+  'DELETE docs/:id': ({ params }) => {
+    const id = num(params[0]);
+    // Drop it from every group and key that lists it, then delete it.
+    for (const g of listGroups()) {
+      const s = g.settings.mcp_docs;
+      if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) setGroupSetting(g.id, 'mcp_docs', { mode: s.mode, value: (s.value as number[]).filter((x) => x !== id) });
+    }
+    for (const k of listKeys()) {
+      const s = k.exceptions.mcp_docs;
+      if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) updateKey(k.id, { exceptions: { ...k.exceptions, mcp_docs: { ...s, value: (s.value as number[]).filter((x) => x !== id) } } });
+    }
+    deleteDoc(id);
+  },
+  // Run one MCP call as a key (or "any key in a group") and show what the agent would get.
+  'POST docs/test': async ({ body }) => {
+    const key = body.keyId ? getKey(num(body.keyId, 'key')) : body.groupId ? groupKey(num(body.groupId, 'group')) : undefined;
+    if (!key) throw new HttpError(404, 'Pick a key or a group.');
+    const method = String(body.method ?? 'tools/call');
+    if (!['tools/list', 'tools/call', 'resources/list', 'resources/read', 'initialize'].includes(method)) throw new HttpError(400, 'Unsupported method.');
+    return testAsKey(key, method, (body.params && typeof body.params === 'object' ? body.params : {}) as Record<string, unknown>);
   },
 
   // ---- settings and guard ----
@@ -212,31 +365,65 @@ const routes: Record<string, Handler> = {
     const c = countByFilter(since);
     return { ...c, falseAlarms: falseAlarmCount(since) };
   },
-  'POST guard/test': async ({ body }) => {
-    const s = getSettings();
-    const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
-    const eff = resolveGroup(gid).effective;
-    const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
-    const c1 = await runCheck1(segments, s.guard);
-    const flagged = c1.score >= eff.piguard_threshold;
-    // Same routing as the gateway, for the chosen group: with PIGuard off, check 2 judges everything (if it is on).
-    const c1On = s.guard.enabled && eff.piguard_enabled;
-    const c2On = s.guard.enabled && eff.oss_enabled;
-    const toCheck2 = c1On ? flagged : c2On;
-    const c2 = toCheck2 ? await runCheck2(segments, c1On ? c1.quote : null, eff.oss_prompt, { ...s.guard, oss: { ...s.guard.oss, enabled: c2On } }) : null;
-    return { threshold: eff.piguard_threshold, c1, c1On, c2On, flagged, c2, builtin: builtinScore(segments) };
+  // One small probe to tell which response format a model speaks (costs one model call).
+  'POST guard/detect': async ({ body }) => {
+    const server = getServer(num(body.serverId, 'server'));
+    if (!server) throw new HttpError(404, 'Server not found.');
+    const model = String(body.model ?? '');
+    if (!model) throw new Error('Pick a model first.');
+    const meta = modelMeta(server.id, model);
+    if (meta?.api === 'decisions') return { adapter: 'decisions', why: 'The server lists this model as Decisions-API only (no probe needed).', raw: '' };
+    return probeFormat({ url: server.url, apiKey: server.api_key, model });
   },
+  // How often a layer's suffix checks (and the model calls after them) hit the prompt cache lately.
+  'GET guard/cache/:id': ({ params }) => {
+    const id = params[0];
+    const rows = getDb().prepare("SELECT decisions FROM request_logs WHERE decisions LIKE ? ORDER BY ts DESC LIMIT 200").all(`%"id":"${id.replace(/[%_"]/g, '')}"%`) as { decisions: string }[];
+    let n = 0, cached = 0, prompt = 0;
+    for (const r of rows) {
+      try {
+        const d = (JSON.parse(r.decisions) as { id: string; decision?: { cache?: { cached: number; prompt: number } | null } }[]).find((x) => x.id === id)?.decision?.cache;
+        if (d && d.prompt > 0) {
+          n++;
+          cached += d.cached;
+          prompt += d.prompt;
+        }
+      } catch {
+        // skip a broken row
+      }
+    }
+    return { calls: n, cached, prompt, rate: prompt ? cached / prompt : null };
+  },
+  'POST guard/test': ({ body }) => guardTest(body),
+  // The same, as a live event stream: each layer as it starts and finishes, then the result.
+  'POST guard/test-live': ({ body }) => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const send = (o: unknown) => c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+        try {
+          send({ type: 'result', result: await guardTest(body, (e) => send({ type: 'layer', ...e })) });
+        } catch (e) {
+          send({ type: 'error', message: errMsg(e) });
+        } finally {
+          c.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+  },
+
 
   // ---- activity ----
   'GET overview': ({ url }) => {
     const servers = listServers();
-    return { ...overview(url.searchParams.get('range') ?? '24h'), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
+    return { ...overview(url.searchParams.get('range') ?? '24h', Date.now(), groupScope(url), keyScope(url)), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
   },
   'GET logs': ({ url }) => {
     const p = url.searchParams;
     return {
-      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined }),
-      counts: countByFilter(),
+      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url), key: keyScope(url), test: testScope(url) }),
+      counts: countByFilter(undefined, groupScope(url), testScope(url), keyScope(url)),
     };
   },
   'GET logs/:id': ({ params }) => {
@@ -245,6 +432,8 @@ const routes: Record<string, Handler> = {
     return l;
   },
   'PATCH logs/:id': ({ params, body }) => setFeedback(params[0], (body.feedback as string) || null),
+  'POST logs/:id/replay': ({ params, req }) => replayLog(params[0], undefined, clientIp(req)),
+  'GET logs-export': ({ url }) => exportLogs(url),
 
   // ---- rules ----
   'GET rules': () => ({ rules: listRules(), groups: treeOrder(groupsView()) }),
@@ -268,57 +457,64 @@ const routes: Record<string, Handler> = {
       schemas: SCHEMAS,
     };
   },
-  'POST studio/send': async ({ body }) => {
-    const path = body.path === '/v1/completions' ? '/v1/completions' : '/v1/chat/completions';
-    const headers = new Headers({ 'content-type': 'application/json' });
-    for (const [k, v] of Object.entries((body.headers as Record<string, string>) ?? {})) {
-      try {
-        headers.set(k, String(v));
-      } catch {
-        // ignore bad header names
-      }
-    }
-    let key;
-    if (body.keyId) {
-      key = getKey(num(body.keyId, 'key'));
-      if (!key) throw new HttpError(404, 'Key not found.');
-    } else if (typeof body.secret === 'string' && body.secret.trim()) headers.set('authorization', `Bearer ${body.secret.trim()}`);
-    const payload = typeof body.body === 'string' ? body.body : JSON.stringify(body.body ?? {});
-    const trace: Trace = {};
-    const t0 = Date.now();
-    const res = await handleCompletion(new Request(`http://studio${path}`, { method: 'POST', headers, body: payload }), path === '/v1/completions' ? 'completions' : 'chat', { key, trace, source: 'Studio' });
-    const raw = await res.text();
-    const ms = Date.now() - t0;
-    const sse = (res.headers.get('content-type') ?? '').includes('event-stream');
-    let text = '';
-    let error: string | null = null;
-    try {
-      if (sse) {
-        for (const line of raw.split('\n')) {
-          if (!line.startsWith('data:') || line.includes('[DONE]')) continue;
-          const c = JSON.parse(line.slice(5)).choices?.[0];
-          text += c?.delta?.content ?? c?.text ?? '';
+  'GET studio/scenarios': () => ({ scenarios: listScenarios() }),
+  'POST studio/scenarios': ({ body }) => (body.duplicateOf ? duplicateScenario(num(body.duplicateOf)) : body.fromLog ? scenarioFromLog(String(body.fromLog)) : createScenario(body as never)),
+  'PATCH studio/scenarios/:id': ({ params, body }) => updateScenario(num(params[0]), body as never),
+  'DELETE studio/scenarios/:id': ({ params }) => deleteScenario(num(params[0])),
+  'POST studio/plan': ({ body }) =>
+    planFor({
+      keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+      groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+      model: String(body.model ?? ''),
+      layers: Array.isArray(body.layers) ? body.layers.map(String) : null,
+    }),
+  // The same as studio/send, but as a live event stream: steps, layers, tokens, drafts, then the result.
+  'POST studio/live': ({ body, req }) => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const send = (o: unknown) => {
+          try {
+            c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+          } catch {
+            // the page went away
+          }
+        };
+        try {
+          const run = await runAsClient({
+            keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+            groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+            secret: typeof body.secret === 'string' ? body.secret : undefined,
+            path: String(body.path ?? ''),
+            body: body.body,
+            headers: (body.headers as Record<string, string>) ?? {},
+            source: 'Studio',
+            ip: clientIp(req),
+            layers: Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : undefined,
+            onEvent: send,
+          });
+          send({ type: 'result', run });
+        } catch (e) {
+          send({ type: 'error', message: errMsg(e) });
+        } finally {
+          c.close();
         }
-      } else {
-        const j = JSON.parse(raw);
-        if (j.error) error = j.error.message ?? String(j.error);
-        else text = j.choices?.[0]?.message?.content ?? j.choices?.[0]?.text ?? '';
-      }
-    } catch {
-      text = raw;
-    }
-    return {
-      status: res.status,
-      ms,
-      streamed: sse,
-      blocked: res.headers.get('x-guardrail-blocked') === '1',
-      text,
-      error,
-      raw: raw.length > 20000 ? raw.slice(0, 20000) + '\n…' : raw,
-      trace,
-      log: trace.requestId ? getLog(trace.requestId) ?? null : null,
-    };
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   },
+  'POST studio/send': ({ body, req }) =>
+    runAsClient({
+      keyId: body.keyId ? num(body.keyId, 'key') : undefined,
+      groupId: body.groupId ? num(body.groupId, 'group') : undefined,
+      secret: typeof body.secret === 'string' ? body.secret : undefined,
+      path: String(body.path ?? ''),
+      body: body.body,
+      headers: (body.headers as Record<string, string>) ?? {},
+      source: 'Studio',
+      ip: clientIp(req),
+      layers: Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : undefined,
+    }),
 
   // ---- schemas ----
   'GET schemas': () => ({ schemas: SCHEMAS, policy: getSettings().schemaPolicy }),
@@ -346,14 +542,15 @@ const routes: Record<string, Handler> = {
   'GET summary': () => {
     const servers = listServers();
     return {
-      online: servers.filter((s) => s.role === 'inference' && s.status === 'online').length,
-      servers: servers.filter((s) => s.role === 'inference').length,
+      online: servers.filter((s) => s.status === 'online').length,
+      servers: servers.length,
       groups: listGroups().length,
       keys: listKeys().filter((k) => !k.revoked).length,
-      guard: getSettings().guard.piguard.enabled || getSettings().guard.oss.enabled,
+      guard: getSettings().guard.layers.some((l) => l.enabled),
       blockedToday: countByFilter(Date.now() - 86400_000).blocked,
       name: process.env.GUARDRAIL_ADMIN_NAME || 'Admin',
       authEnabled: !!process.env.GUARDRAIL_ADMIN_PASSWORD,
+      weakSecret: weakSecret(),
     };
   },
 };
@@ -383,6 +580,7 @@ export async function dispatch(req: Request, parts: string[]): Promise<Response>
   }
   try {
     const out = await found.h({ params: found.params, body, url: new URL(req.url), req });
+    if (out instanceof Response) return out;
     return Response.json(out ?? { ok: true });
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 400;
@@ -390,3 +588,17 @@ export async function dispatch(req: Request, parts: string[]): Promise<Response>
   }
 }
 
+
+/** Run the guard layers on sample text with a group's settings (the "Try it" tester). Nothing is logged. */
+async function guardTest(body: Record<string, unknown>, onLayer?: Parameters<typeof runPipeline>[0]['onLayer']) {
+  const s = getSettings();
+  const gid = body.groupId ? num(body.groupId) : listGroups()[0].id;
+  const resolution = resolveGroup(gid);
+  const segments = [{ source: (body.source === 'tool' ? 'tool result' : 'user message') as 'tool result' | 'user message', text: String(body.text ?? '') }];
+  // Optionally try unsaved layers from the editor. Only layers before the model: there is no answer here.
+  const layers = (Array.isArray(body.layers) ? body.layers.map((l, i) => normalizeLayer(l as never, i)) : s.guard.layers).filter((l) => l.stage !== 'output');
+  // A layer with its own "reads" only sees the sample if it reads that kind of text.
+  const segmentsFor = (scan: { user: boolean; tool: boolean }) => segments.filter((x) => (x.source === 'user message' ? scan.user : scan.tool));
+  const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta, segmentsFor, onLayer });
+  return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
+}

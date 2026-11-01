@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { LogEntry, PromptMessage, Step } from './logs';
+import type { LogEntry, ModelResponse, PromptMessage, Step } from './logs';
 
 /**
  * Full prompts live on disk, one Markdown file per request, so the database
@@ -32,6 +32,7 @@ type FileEntry = Pick<LogEntry, 'id' | 'ts' | 'owner' | 'key_name' | 'group_name
   steps?: Step[];
   prompt?: PromptMessage[] | null;
   forwarded?: PromptMessage[] | null;
+  response?: ModelResponse | null;
 };
 
 // ---- writing ----
@@ -90,6 +91,10 @@ export function renderPromptFile(e: FileEntry): string {
     '',
     renderMessages('Prompt', e.prompt, 'No prompt was read from this request.'),
     renderMessages('Sent to model', e.forwarded, 'Nothing was sent to the model.'),
+    '## Response',
+    '',
+    e.response ? block('json response', JSON.stringify(e.response, null, 2)) : 'No reply was recorded.',
+    '',
     '## What GuardRail did',
     '',
     steps.length ? steps.join('\n') : 'No steps were recorded.',
@@ -114,8 +119,10 @@ export function writePromptFile(e: FileEntry, rel = relPathFor(e.id, e.ts)): str
 
 // ---- reading ----
 
-export function parsePromptFile(md: string): { prompt: PromptMessage[] | null; forwarded: PromptMessage[] | null } {
-  const result: { prompt: PromptMessage[] | null; forwarded: PromptMessage[] | null } = { prompt: null, forwarded: null };
+type Parsed = { prompt: PromptMessage[] | null; forwarded: PromptMessage[] | null; response: ModelResponse | null };
+
+export function parsePromptFile(md: string): Parsed {
+  const result: Parsed = { prompt: null, forwarded: null, response: null };
   const lines = md.split('\n');
   let section: 'prompt' | 'forwarded' | null = null;
   let msg: PromptMessage | null = null;
@@ -124,6 +131,17 @@ export function parsePromptFile(md: string): { prompt: PromptMessage[] | null; f
     if (line.startsWith('## ')) {
       section = line === '## Prompt' ? 'prompt' : line === '## Sent to model' ? 'forwarded' : null;
       msg = null;
+      continue;
+    }
+    const resp = line.match(/^(`{3,})json response$/);
+    if (resp) {
+      const body: string[] = [];
+      for (i++; i < lines.length && lines[i] !== resp[1]; i++) body.push(lines[i]);
+      try {
+        result.response = JSON.parse(body.join('\n')) as ModelResponse;
+      } catch {
+        // A hand-edited file; leave the reply out.
+      }
       continue;
     }
     if (!section) continue;
@@ -151,7 +169,7 @@ export function parsePromptFile(md: string): { prompt: PromptMessage[] | null; f
   return result;
 }
 
-export function readPromptFile(rel: string): { prompt: PromptMessage[] | null; forwarded: PromptMessage[] | null } | null {
+export function readPromptFile(rel: string): Parsed | null {
   const full = resolve(rel);
   if (!full) return null;
   try {

@@ -9,6 +9,8 @@
 //
 // Usage: node scripts/mock-vllm.mjs [port] [model,model,...]
 import http from 'node:http';
+// Delay between streamed words (ms); raise it to watch streaming, e.g. MOCK_TOKEN_MS=120.
+const TOKEN_MS = Number(process.env.MOCK_TOKEN_MS) || 5;
 
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 const models = (process.argv[3] ?? process.env.MODELS ?? 'qwen3-coder-30b,gpt-oss-120b').split(',').filter(Boolean);
@@ -77,7 +79,9 @@ const server = http.createServer(async (req, res) => {
   if (seenPrefixes.has(prefix)) hits += 1;
   seenPrefixes.add(prefix);
 
-  const reply = body.model.includes('safeguard') ? judge(messages) : `Mock answer from ${body.model}. I received ${messages.length} message(s); the first starts with: ${text(messages[0]?.content).slice(0, 80).replace(/\s+/g, ' ')}`;
+  // After GuardRail's retry feedback, answer cleanly (tests the after-the-model retry loop).
+  const fixed = /previous answer was rejected/i.test(text(messages.at(-1)?.content));
+  const reply = body.model.includes('safeguard') ? judge(messages) : fixed ? 'Here is a safe answer that follows the rules.' : `Mock answer from ${body.model}. I received ${messages.length} message(s); the first starts with: ${text(messages[0]?.content).slice(0, 80).replace(/\s+/g, ' ')}; the last says: ${text(messages.at(-1)?.content).slice(0, 120).replace(/\s+/g, ' ')}`;
   const created = Math.floor(Date.now() / 1000);
   const id = `cmpl-mock-${Date.now()}`;
   const words = reply.match(/\S+\s*/g) ?? [reply];
@@ -88,7 +92,7 @@ const server = http.createServer(async (req, res) => {
     if (chat) chunk({ id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
     for (const w of words) {
       chunk(chat ? { id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: { content: w }, finish_reason: null }] } : { id, object: 'text_completion', created, model: body.model, choices: [{ index: 0, text: w, finish_reason: null }] });
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, TOKEN_MS));
     }
     chunk(chat ? { id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } : { id, object: 'text_completion', created, model: body.model, choices: [{ index: 0, text: '', finish_reason: 'stop' }] });
     res.end('data: [DONE]\n\n');
