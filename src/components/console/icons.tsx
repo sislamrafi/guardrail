@@ -52,6 +52,7 @@ const P: Record<string, string> = {
   warning: 'M12 3l10 18H2zM12 10v4M12 17h.01',
   // A plug: MCP connections.
   mcp: 'M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5',
+  arrowUp: 'M12 19V5M6 11l6-6 6 6',
   // A sparkle: the console agent.
   agent: 'M12 3l1.8 4.6L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.9zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
 };

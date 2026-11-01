@@ -2,13 +2,13 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ico } from '../icons';
-import { Dialog, Empty, Loading, Note, Pill, ago, clock } from '../kit';
+import { Dialog, Loading, Note, Pill, ago, clock } from '../kit';
 import { MdText } from '../md-text';
 import { pathFor, useNav } from '../nav';
 import { readPref, usePref, writePref } from '../prefs';
 import { adminFetch, api, useStore, useUi } from '../store';
 import { applyTheme, type Theme } from '../theme';
-import { useStickToBottom } from '../stick';
+import { NewOutput, useStickToBottom } from '../stick';
 import { KIND_LABEL, kindOf, type Data } from '../types';
 
 // The console agent: chat history on the left, the chat in the middle, its change log on the right.
@@ -20,7 +20,7 @@ type UiComponent =
   | { kind: 'table'; title?: string; columns: string[]; rows: (string | number | null)[][] }
   | { kind: 'chart'; title?: string; unit?: string; bars: { label: string; value: number; hint?: string }[] }
   | { kind: 'choice'; question: string; options: { label: string; value: string }[] }
-  | { kind: 'form'; title: string; fields: { name: string; label: string; type?: string; options?: string[]; value?: string }[]; submit?: string }
+  | { kind: 'form'; title: string; fields: { name: string; label: string; type?: string; options?: (string | { label: string; value: string | number })[]; value?: string }[]; submit?: string }
   | { kind: 'diff'; title: string; before: string; after: string }
   | { kind: 'link'; label: string; path: string }
   | { kind: 'ui_effect'; effect: { pref?: string; value?: unknown; navigate?: string; theme?: string } };
@@ -112,13 +112,21 @@ async function stream(url: string, body: unknown, onEvent: (e: Ev) => void, sign
 
 // ---------------------------------------------------------------- left: chats
 
-const dayLabel = (t: number) => {
-  const d = new Date(t);
-  const today = new Date();
-  const y = new Date(Date.now() - 86400000);
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+/** "now", "5m", "2h", "3d", "12d", then a date. */
+const since = (t: number) => {
+  const m = Math.floor((Date.now() - t) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return d < 60 ? `${d}d` : new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+};
+const section = (t: number) => {
+  const d = new Date(t).toDateString();
+  if (d === new Date().toDateString()) return 'Today';
+  if (d === new Date(Date.now() - 86400000).toDateString()) return 'Yesterday';
+  return 'Earlier';
 };
 
 export function AgentSide() {
@@ -127,56 +135,54 @@ export function AgentSide() {
   const [q, setQ] = useState('');
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [renaming, setRenaming] = useState<number | null>(null);
+  const [, tick] = useState(0);
   const load = useCallback(() => api<{ chats: Chat[] }>(`agent/chats${q ? `?q=${encodeURIComponent(q)}` : ''}`).then((r) => setChats(r.chats), () => setChats([])), [q]);
   useEffect(() => {
     const t = setTimeout(() => void load(), 200);
     window.addEventListener('cx-agent', load);
+    // Keep "5m" and "2h" current.
+    const clockTick = setInterval(() => tick((n) => n + 1), 60000);
     return () => {
       clearTimeout(t);
+      clearInterval(clockTick);
       window.removeEventListener('cx-agent', load);
     };
   }, [load]);
   const groups = useMemo(() => {
+    const order = ['Today', 'Yesterday', 'Earlier'];
     const m = new Map<string, Chat[]>();
-    for (const c of chats ?? []) {
-      const k = dayLabel(c.updated_at);
-      m.set(k, [...(m.get(k) ?? []), c]);
-    }
-    return [...m.entries()];
+    for (const c of chats ?? []) m.set(section(c.updated_at), [...(m.get(section(c.updated_at)) ?? []), c]);
+    return order.filter((k) => m.has(k)).map((k) => [k, m.get(k)!] as const);
   }, [chats]);
   const remove = async (c: Chat) => {
-    if (!(await ui.confirm({ title: `Delete the chat "${c.title}"?`, body: 'The chat goes; the change log of what it did to the gateway is kept.', ok: 'Delete chat', danger: true }))) return;
+    if (!(await ui.confirm({ title: `Delete the chat "${c.title}"?`, body: 'The chat goes; the change log of what it did is kept.', ok: 'Delete chat', danger: true }))) return;
     await ui.run(() => api(`agent/chats/${c.id}`, { method: 'DELETE' }), 'Chat deleted');
     if (nav.id === String(c.id)) nav.go(pathFor('agent'));
     void load();
   };
   return (
-    <>
-      <div className="cx-side-head">
-        <span>AGENT</span>
-        <div className="cx-side-acts">
-          <button type="button" title="New chat" aria-label="New chat" onClick={() => nav.go(pathFor('agent'))}>
-            <Ico n="plus" />
-          </button>
-        </div>
+    <div className="cx-chats">
+      <div className="cx-chats-head">
+        <span>Agent</span>
       </div>
-      <div className="cx-side-body">
-        <div className="cx-attach">
-          <input className="cx-input sm" type="search" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search chats" />
-        </div>
-        <button type="button" className={`cx-chat-new ${!nav.id ? 'on' : ''}`} onClick={() => nav.go(pathFor('agent'))}>
-          <Ico n="plus" size={13} /> New chat
-        </button>
+      <button type="button" className={`cx-chats-new ${!nav.id ? 'on' : ''}`} onClick={() => nav.go(pathFor('agent'))}>
+        <Ico n="plus" size={14} /> New chat
+      </button>
+      <label className="cx-chats-search">
+        <Ico n="search" size={13} />
+        <input type="search" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search chats" />
+      </label>
+      <div className="cx-chats-list">
         {!chats ? (
           <Loading />
         ) : chats.length === 0 ? (
-          <p className="cx-details-empty">{q ? 'No chat matches.' : 'No chats yet.'}</p>
+          <p className="cx-details-empty">{q ? 'No chat matches.' : 'No chats yet. Start one above.'}</p>
         ) : (
-          groups.map(([day, list]) => (
-            <div key={day}>
-              <div className="cx-section">{day.toUpperCase()}</div>
+          groups.map(([label, list]) => (
+            <div key={label}>
+              <div className="cx-chats-sec">{label}</div>
               {list.map((c) => (
-                <div key={c.id} className={`cx-chat-row ${nav.id === String(c.id) ? 'on' : ''}`} title={c.preview}>
+                <div key={c.id} className={`cx-chats-row ${nav.id === String(c.id) ? 'on' : ''}`} title={c.preview || c.title}>
                   {renaming === c.id ? (
                     <input
                       className="cx-input sm"
@@ -192,24 +198,26 @@ export function AgentSide() {
                       }}
                     />
                   ) : (
-                    <button type="button" className="cx-chat-title" onClick={() => nav.go(pathFor('agent', c.id))} onDoubleClick={() => setRenaming(c.id)}>
-                      <span>{c.title}</span>
-                      <small>{clock(c.updated_at)}</small>
+                    <button type="button" className="cx-chats-title" onClick={() => nav.go(pathFor('agent', c.id))} onDoubleClick={() => setRenaming(c.id)}>
+                      {c.title}
                     </button>
                   )}
-                  <button type="button" className="cx-row-act" title="Rename" aria-label="Rename chat" onClick={() => setRenaming(c.id)}>
-                    <Ico n="edit" size={13} />
-                  </button>
-                  <button type="button" className="cx-row-act" title="Delete" aria-label="Delete chat" onClick={() => void remove(c)}>
-                    <Ico n="trash" size={13} />
-                  </button>
+                  <span className="cx-chats-time">{since(c.updated_at)}</span>
+                  <span className="cx-chats-acts">
+                    <button type="button" title="Rename" aria-label="Rename chat" onClick={() => setRenaming(c.id)}>
+                      <Ico n="edit" size={12} />
+                    </button>
+                    <button type="button" title="Delete" aria-label="Delete chat" onClick={() => void remove(c)}>
+                      <Ico n="trash" size={12} />
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
           ))
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -325,6 +333,9 @@ function SecretReveal({ c }: { c: Extract<UiComponent, { kind: 'secret_reveal' }
   );
 }
 
+/** A form option given as text or as {label, value}. */
+const opt = (o: string | { label: string; value: string | number }) => (typeof o === 'string' ? { label: o, value: o } : { label: String(o.label), value: String(o.value) });
+
 function A2({ c, send, confirm, answered }: { c: UiComponent; send: (text: string) => void; confirm: (pending: string, approve: boolean) => void; answered: boolean }) {
   const nav = useNav();
   const [form, setForm] = useState<Record<string, string>>({});
@@ -420,18 +431,26 @@ function A2({ c, send, confirm, answered }: { c: UiComponent; send: (text: strin
           className="cx-a2-card"
           onSubmit={(e) => {
             e.preventDefault();
-            send(`${c.title}: ${c.fields.map((f) => `${f.label} = ${form[f.name] ?? f.value ?? ''}`).join('; ')}`);
+            // Say both what the person picked and its value (e.g. a group's name and id).
+            const said = (f: (typeof c.fields)[number]) => {
+              const v = form[f.name] ?? f.value ?? '';
+              const o = (f.options ?? []).map(opt).find((x) => x.value === v);
+              return o && o.label !== v ? `${o.label} (${v})` : v;
+            };
+            send(`${c.title}: ${c.fields.map((f) => `${f.label} = ${said(f)}`).join('; ')}`);
           }}
         >
           <b>{c.title}</b>
           {c.fields.map((f) => (
             <label key={f.name} className="cx-field">
               <span className="cx-field-label">{f.label}</span>
-              {f.type === 'select' ? (
+              {f.options?.length || f.type === 'select' || f.type === 'choice' ? (
                 <select className="cx-input" value={form[f.name] ?? f.value ?? ''} onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}>
-                  <option value="" />
-                  {(f.options ?? []).map((o) => (
-                    <option key={o}>{o}</option>
+                  <option value="">Choose…</option>
+                  {(f.options ?? []).map(opt).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
                   ))}
                 </select>
               ) : f.type === 'textarea' ? (
@@ -529,7 +548,9 @@ export function AgentChat({ id }: { id: number | null }) {
   const [undo, setUndo] = useState<number | null>(null);
   const abort = useRef<AbortController | null>(null);
   const pick: Pick | null = state?.chat.model && state.chat.server_id ? { serverId: state.chat.server_id, model: state.chat.model } : saved;
-  const { ref: scroller } = useStickToBottom<HTMLDivElement>();
+  const [files, setFiles] = useState<{ name: string; text: string }[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const { ref: scroller, unseen, jump } = useStickToBottom<HTMLDivElement>(!!data);
 
   const load = useCallback(async () => {
     if (!id) return setState(null);
@@ -617,29 +638,47 @@ export function AgentChat({ id }: { id: number | null }) {
   }, [state?.changes]);
 
   if (!data) return <Loading />;
-  const modelLabel = pick ? `${pick.model} · ${data.servers.find((s) => s.id === pick.serverId)?.name ?? '?'}` : 'Pick a model';
+  const serverName = pick ? (data.servers.find((s) => s.id === pick.serverId)?.name ?? '?') : '';
+  const attach = async (files: FileList) => {
+    const out: { name: string; text: string }[] = [];
+    for (const f of Array.from(files)) {
+      if (!/\.(md|markdown|txt|text|json|ya?ml|csv|log)$/i.test(f.name) && !f.type.startsWith('text/')) {
+        ui.toast(`${f.name} is not a text file, skipped`, true);
+        continue;
+      }
+      if (f.size > 200_000) {
+        ui.toast(`${f.name} is over 200 kB, skipped`, true);
+        continue;
+      }
+      out.push({ name: f.name, text: await f.text() });
+    }
+    setFiles((x) => [...x, ...out]);
+  };
+  const submit = () => {
+    const body = [text.trim(), ...files.map((f) => `Attached file "${f.name}":\n\`\`\`\n${f.text}\n\`\`\``)].filter(Boolean).join('\n\n');
+    if (!body) return;
+    setFiles([]);
+    void send(body);
+  };
   return (
     <div className="cx-agent">
-      <div className="cx-agent-head">
-        <Ico n="agent" />
-        <b className="grow cx-ell">{state?.chat.title ?? 'New chat'}</b>
-        <button type="button" className="cx-btn sm" onClick={() => setPicking(true)} title="Pick the model the agent uses">
-          <Ico n="model" size={13} /> {modelLabel}
-        </button>
-      </div>
       <div className="cx-agent-body" ref={scroller}>
         {err && <Note tone="bad">{err}</Note>}
         {!id && !busy && (
-          <Empty icon="agent" title="Ask the Opsara agent">
-            It can manage everything in this console: groups and keys, context files and MCP docs, guard layers, rules, servers and models, settings. Every change is logged on the right and can be undone. Deleting or revoking always asks you first; secrets never pass through it.
+          <div className="cx-agent-hello">
+            <div className="cx-agent-mark">
+              <Ico n="agent" size={22} />
+            </div>
+            <h2>What should we change today?</h2>
+            <p>The agent can manage everything in Opsara: groups and keys, context files and MCP docs, guard layers, rules, servers and models, settings. Every change is logged on the right and can be undone. Deleting or revoking always asks you first; secrets never pass through it.</p>
             <div className="cx-agent-tips">
               {['Show me the groups and how many keys each has', 'Create a group "Mobile QA" under Engineering', 'Compare the prices of text models on my servers', 'Write an MCP doc "Release checklist" and share it with Backend'].map((t) => (
-                <button key={t} type="button" className="cx-chip" onClick={() => setText(t)}>
+                <button key={t} type="button" className="cx-tip" onClick={() => setText(t)}>
                   {t}
                 </button>
               ))}
             </div>
-          </Empty>
+          </div>
         )}
         {turns.map(({ turn, msgs }) => (
           <div key={turn} className={`cx-aturn ${msgs[0]?.undone ? 'undone' : ''}`}>
@@ -647,23 +686,24 @@ export function AgentChat({ id }: { id: number | null }) {
               if (m.role === 'user')
                 return (
                   <div key={m.id} className="cx-amsg user">
-                    <div className="cx-amsg-body">{m.content}</div>
                     {!m.undone && (
-                      <button type="button" className="cx-amsg-undo" title={changesByTurn.get(turn) || [...changesByTurn.keys()].some((t) => t > turn) ? 'Undo to here: revert what the agent changed from this message on' : 'Undo to here'} aria-label="Undo to here" onClick={() => setUndo(turn)}>
+                      <button type="button" className="cx-amsg-undo" title="Undo to here: revert what the agent changed from this message on" aria-label="Undo to here" onClick={() => setUndo(turn)}>
                         <Ico n="history" size={13} />
                       </button>
                     )}
-                    {m.undone ? <span className="cx-muted small">undone</span> : null}
+                    <UserText text={m.content} />
+                    {m.undone ? <span className="cx-undone-tag">undone</span> : null}
                   </div>
                 );
               if (m.role === 'assistant')
                 return (
                   <div key={m.id} className="cx-amsg bot">
+                    {m.tool_calls?.length ? (
+                      <ToolSteps
+                        steps={m.tool_calls.map((tc) => ({ id: tc.id, name: tc.function.name, args: tc.function.arguments, result: msgs.find((x) => x.role === 'tool' && x.tool_call_id === tc.id)?.content }))}
+                      />
+                    ) : null}
                     {m.content && <MdText text={m.content} />}
-                    {m.tool_calls?.map((tc) => {
-                      const res = msgs.find((x) => x.role === 'tool' && x.tool_call_id === tc.id);
-                      return <ToolCard key={tc.id} name={tc.function.name} args={tc.function.arguments} result={res?.content} />;
-                    })}
                   </div>
                 );
               return m.ui?.length ? (
@@ -676,7 +716,7 @@ export function AgentChat({ id }: { id: number | null }) {
             })}
             {changesByTurn.get(turn) ? (
               <div className="cx-amsg-changes">
-                <Ico n="edit" size={12} /> {changesByTurn.get(turn)} change{changesByTurn.get(turn) === 1 ? '' : 's'} in this turn (see the log on the right)
+                <Ico n="edit" size={11} /> {changesByTurn.get(turn)} change{changesByTurn.get(turn) === 1 ? '' : 's'} · see the log on the right
               </div>
             ) : null}
           </div>
@@ -684,9 +724,7 @@ export function AgentChat({ id }: { id: number | null }) {
         {live && (
           <div className="cx-aturn">
             <div className="cx-amsg bot">
-              {live.tools.map((t) => (
-                <ToolCard key={t.id} name={t.name} args={JSON.stringify(t.args)} result={t.result === undefined ? undefined : JSON.stringify(t.result)} status={t.status} />
-              ))}
+              <ToolSteps steps={live.tools.map((t) => ({ id: t.id, name: t.name, args: JSON.stringify(t.args), result: t.result === undefined ? undefined : JSON.stringify(t.result), status: t.status }))} live />
               {live.ui.map((c, i) => (
                 <A2 key={i} c={c} send={(t) => void send(t)} confirm={confirm} answered={false} />
               ))}
@@ -696,36 +734,71 @@ export function AgentChat({ id }: { id: number | null }) {
           </div>
         )}
       </div>
+      <NewOutput show={unseen} onClick={jump} />
       <form
-        className="cx-composer"
+        className="cx-acomposer"
         onSubmit={(e) => {
           e.preventDefault();
-          void send(text);
+          submit();
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.files.length) void attach(e.dataTransfer.files);
         }}
       >
-        <div className="cx-composer-box">
+        <div className="cx-acomposer-box">
+          {files.length > 0 && (
+            <div className="cx-attachments">
+              {files.map((f, i) => (
+                <span key={i} className="cx-attachment" title={`${f.text.length.toLocaleString()} characters`}>
+                  <Ico n="file" size={12} /> {f.name}
+                  <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
+                    <Ico n="close" size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             value={text}
-            rows={2}
-            placeholder={pick ? 'Ask the agent to change or explain anything in Opsara (Enter to send, Shift+Enter for a new line)' : 'Pick a model first'}
+            rows={1}
+            placeholder={pick ? 'Ask Opsara to change or explain anything…' : 'Pick a model below to start'}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                void send(text);
+                submit();
               }
             }}
             aria-label="Message the agent"
           />
-          {busy ? (
-            <button type="button" className="cx-icon-btn" title="Stop" aria-label="Stop" onClick={() => abort.current?.abort()}>
-              <Ico n="close" />
+          <div className="cx-acomposer-bar">
+            <button type="button" className="cx-aicon" title="Add .md or .txt files" aria-label="Add files" onClick={() => fileInput.current?.click()}>
+              <Ico n="plus" size={15} />
             </button>
-          ) : (
-            <button type="submit" className="cx-icon-btn" title="Send" aria-label="Send" disabled={!text.trim()}>
-              <Ico n="send" />
+            <input ref={fileInput} type="file" multiple hidden accept=".md,.markdown,.txt,.text,.json,.yaml,.yml,.csv,.log,text/*" onChange={(e) => e.target.files && void attach(e.target.files).then(() => (e.target.value = ''))} />
+            <button type="button" className="cx-model-pill" onClick={() => setPicking(true)} title="Pick the model the agent uses">
+              {pick ? (
+                <>
+                  <b>{pick.model}</b> <span>{serverName}</span>
+                </>
+              ) : (
+                <b>Pick a model</b>
+              )}
+              <Ico n="chevron" size={11} />
             </button>
-          )}
+            <span className="grow" />
+            {busy ? (
+              <button type="button" className="cx-asend stop" title="Stop" aria-label="Stop" onClick={() => abort.current?.abort()}>
+                <span className="cx-stop-sq" />
+              </button>
+            ) : (
+              <button type="submit" className="cx-asend" title="Send (Enter)" aria-label="Send" disabled={!text.trim() && !files.length}>
+                <Ico n="arrowUp" size={15} />
+              </button>
+            )}
+          </div>
         </div>
       </form>
       {picking && <ModelDialog data={data} value={pick} onPick={(p) => void choose(p)} onClose={() => setPicking(false)} />}
@@ -745,30 +818,162 @@ export function AgentChat({ id }: { id: number | null }) {
   );
 }
 
-function ToolCard({ name, args, result, status }: { name: string; args: string; result?: string; status?: string }) {
-  let a: unknown = args;
+/** A user message: attached files fold into chips instead of a wall of text. */
+function UserText({ text }: { text: string }) {
+  const parts = text.split(/\n\nAttached file "([^"]+)":\n```\n[\s\S]*?\n```/);
+  const body = parts.filter((_, i) => i % 2 === 0).join('').trim();
+  const names = parts.filter((_, i) => i % 2 === 1);
+  return (
+    <div className="cx-amsg-body">
+      {body}
+      {names.length > 0 && (
+        <div className="cx-attachments">
+          {names.map((n, i) => (
+            <span key={i} className="cx-attachment">
+              <Ico n="file" size={12} /> {n}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Tools whose only output is a component in the chat: no step line for them.
+const SILENT = new Set(['show_ui', 'set_ui', 'reveal_key_secret', 'request_server_key']);
+
+/** A short, human line for what a tool did. */
+function describeTool(name: string, a: Record<string, unknown>, done: boolean): string {
+  const q = (v: unknown) => (v === undefined || v === null || v === '' ? '' : `"${String(v)}"`);
+  const id = (k: string, what: string) => (a[k] !== undefined ? `${what} #${a[k]}` : what);
+  const v = (past: string, now: string) => (done ? past : now);
+  const map: Record<string, string> = {
+    get_overview: v('Checked the overview', 'Checking the overview'),
+    list_groups: v('Read the groups', 'Reading the groups'),
+    get_group: v(`Read ${id('groupId', 'group')}`, `Reading ${id('groupId', 'group')}`),
+    list_keys: v('Read the API keys', 'Reading the API keys'),
+    list_servers_and_models: v('Read servers and models', 'Reading servers and models'),
+    model_price_analytics: v('Compared model prices', 'Comparing model prices'),
+    list_context_files: v('Read the context files', 'Reading the context files'),
+    read_context_file: v(`Read ${id('fileId', 'context file')}`, `Reading ${id('fileId', 'context file')}`),
+    list_mcp_docs: v('Read the MCP docs', 'Reading the MCP docs'),
+    read_mcp_doc: v(`Read ${id('docId', 'MCP doc')}`, `Reading ${id('docId', 'MCP doc')}`),
+    list_guard_layers: v('Read the guard layers', 'Reading the guard layers'),
+    list_rules: v('Read the custom rules', 'Reading the custom rules'),
+    query_activity: v('Looked through activity', 'Looking through activity'),
+    get_settings: v('Read the settings', 'Reading the settings'),
+    create_group: v(`Created group ${q(a.name)}`, `Creating group ${q(a.name)}`),
+    update_group: v(`Updated ${id('groupId', 'group')}`, `Updating ${id('groupId', 'group')}`),
+    delete_group: v(`Deleted ${id('groupId', 'group')}`, `Deleting ${id('groupId', 'group')}`),
+    set_group_setting: v(`Changed ${a.key ?? 'a setting'} of ${id('groupId', 'group')}`, `Changing ${a.key ?? 'a setting'} of ${id('groupId', 'group')}`),
+    create_key: v(`Created API key ${q(a.name)}`, `Creating API key ${q(a.name)}`),
+    update_key: v(`Updated ${id('keyId', 'API key')}`, `Updating ${id('keyId', 'API key')}`),
+    revoke_key: v(`${a.restore ? 'Restored' : 'Revoked'} ${id('keyId', 'API key')}`, `${a.restore ? 'Restoring' : 'Revoking'} ${id('keyId', 'API key')}`),
+    rotate_key: v(`Rotated ${id('keyId', 'API key')}`, `Rotating ${id('keyId', 'API key')}`),
+    delete_key: v(`Deleted ${id('keyId', 'API key')}`, `Deleting ${id('keyId', 'API key')}`),
+    create_context_file: v(`Created context file ${q(a.name)}`, `Creating context file ${q(a.name)}`),
+    edit_context_file: v(`Edited ${id('fileId', 'context file')}`, `Editing ${id('fileId', 'context file')}`),
+    delete_context_file: v(`Deleted ${id('fileId', 'context file')}`, `Deleting ${id('fileId', 'context file')}`),
+    assign_context_file: v(`Updated where ${id('fileId', 'context file')} applies`, `Updating where ${id('fileId', 'context file')} applies`),
+    create_mcp_doc: v(`Created MCP doc ${q(a.title)}`, `Creating MCP doc ${q(a.title)}`),
+    edit_mcp_doc: v(`Edited ${id('docId', 'MCP doc')}`, `Editing ${id('docId', 'MCP doc')}`),
+    delete_mcp_doc: v(`Deleted ${id('docId', 'MCP doc')}`, `Deleting ${id('docId', 'MCP doc')}`),
+    assign_mcp_doc: v(`Updated who reads ${id('docId', 'MCP doc')}`, `Updating who reads ${id('docId', 'MCP doc')}`),
+    add_guard_layer: v(`Added guard layer ${q(a.name)}`, `Adding guard layer ${q(a.name)}`),
+    update_guard_layer: v(`Updated layer ${q(a.layerId)}`, `Updating layer ${q(a.layerId)}`),
+    remove_guard_layer: v(`Removed layer ${q(a.layerId)}`, `Removing layer ${q(a.layerId)}`),
+    reorder_guard_layers: v('Reordered the guard layers', 'Reordering the guard layers'),
+    set_layer_for_scope: v(`Turned layer ${q(a.layerId)} ${a.state}`, `Turning layer ${q(a.layerId)} ${a.state}`),
+    create_rule: v(`Created rule ${q(a.name)}`, `Creating rule ${q(a.name)}`),
+    update_rule: v(`Updated ${id('ruleId', 'rule')}`, `Updating ${id('ruleId', 'rule')}`),
+    delete_rule: v(`Deleted ${id('ruleId', 'rule')}`, `Deleting ${id('ruleId', 'rule')}`),
+    add_server: v(`Added server ${q(a.name)}`, `Adding server ${q(a.name)}`),
+    update_server: v(`Updated ${id('serverId', 'server')}`, `Updating ${id('serverId', 'server')}`),
+    rediscover_models: v(`Re-read the models of ${id('serverId', 'server')}`, `Re-reading the models of ${id('serverId', 'server')}`),
+    set_model: v(`Updated ${id('modelId', 'model')}`, `Updating ${id('modelId', 'model')}`),
+    delete_server: v(`Removed ${id('serverId', 'server')}`, `Removing ${id('serverId', 'server')}`),
+    update_settings: v('Updated the settings', 'Updating the settings'),
+  };
+  return map[name] ?? (done ? name.replace(/_/g, ' ') : `${name.replace(/_/g, ' ')}…`);
+}
+
+type Step = { id: string; name: string; args: string; result?: string; status?: string };
+
+/** The agent's steps in one reply: a single line, or "Used N tools" that opens to the list. */
+function ToolSteps({ steps, live }: { steps: Step[]; live?: boolean }) {
+  const shown = steps.filter((s) => !SILENT.has(s.name));
+  const [open, setOpen] = useState(false);
+  if (!shown.length) return null;
+  if (shown.length === 1) return <ToolLine {...shown[0]} />;
+  const running = shown.some((s) => s.status === 'running');
+  const failed = shown.filter((s) => s.status === 'error' || (s.result ?? '').startsWith('{"error"')).length;
+  // While working, show the steps as they happen; afterwards fold them.
+  const expanded = open || (live && running);
+  return (
+    <div className={`cx-steps ${expanded ? 'open' : ''}`}>
+      <button type="button" className="cx-step-head" onClick={() => setOpen(!open)} aria-expanded={expanded}>
+        <span className={`cx-step-dot ${running ? 'run' : failed ? 'bad' : 'ok'}`} />
+        <span className="cx-step-label">
+          {running ? `Working · ${shown.length} steps` : `Used ${shown.length} tools`}
+          {failed ? <em> · {failed} failed</em> : null}
+        </span>
+        <Ico n="chevron" size={11} />
+      </button>
+      {expanded && (
+        <div className="cx-steps-list">
+          {shown.map((s) => (
+            <ToolLine key={s.id} {...s} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One step the agent took: a short line; click to see what it sent and got back. */
+function ToolLine({ name, args, result, status }: Step) {
+  const [open, setOpen] = useState(false);
+  if (SILENT.has(name)) return null;
+  let a: Record<string, unknown> = {};
   try {
     a = JSON.parse(args || '{}');
   } catch {
+    /* keep empty */
+  }
+  let r: unknown = result;
+  try {
+    r = result === undefined ? undefined : JSON.parse(result);
+  } catch {
     /* keep text */
   }
-  const short = typeof a === 'object' && a ? Object.entries(a as Record<string, unknown>).map(([k, v]) => `${k}: ${typeof v === 'string' ? (v.length > 40 ? `${v.slice(0, 40)}…` : v) : JSON.stringify(v)}`).join(', ') : String(a);
-  const failed = status === 'error' || (result ?? '').startsWith('{"error"');
-  const state = status === 'running' ? 'running' : status === 'pending' ? 'waiting for you' : failed ? 'failed' : result !== undefined ? 'done' : '';
+  const failed = status === 'error' || (!!r && typeof r === 'object' && 'error' in (r as Record<string, unknown>));
+  const waiting = status === 'pending' || (!!r && typeof r === 'object' && 'waiting' in (r as Record<string, unknown>));
+  const running = status === 'running';
+  const label = describeTool(name, a, !running);
   return (
-    <details className={`cx-toolcard ${failed ? 'bad' : ''}`}>
-      <summary>
-        <Ico n="braces" size={12} /> <b>{name}</b> <span className="cx-muted small cx-ell">{short}</span> {state && <Pill tone={failed ? 'bad' : state === 'done' ? 'ok' : 'info'}>{state}</Pill>}
-      </summary>
-      <pre className="cx-pre small">{JSON.stringify(a, null, 2)}</pre>
-      {result !== undefined && <pre className="cx-pre small">{(() => {
-        try {
-          return JSON.stringify(JSON.parse(result), null, 2);
-        } catch {
-          return result;
-        }
-      })()}</pre>}
-    </details>
+    <div className={`cx-step ${failed ? 'bad' : ''} ${open ? 'open' : ''}`}>
+      <button type="button" className="cx-step-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className={`cx-step-dot ${running ? 'run' : failed ? 'bad' : waiting ? 'wait' : 'ok'}`} />
+        <span className="cx-step-label">
+          {label}
+          {waiting && <em> · waiting for your confirmation</em>}
+          {failed && <em> · failed{typeof r === 'object' && r && 'error' in (r as Record<string, unknown>) ? `: ${String((r as Record<string, unknown>).error)}` : ''}</em>}
+        </span>
+        <Ico n="chevron" size={11} />
+      </button>
+      {open && (
+        <div className="cx-step-body">
+          <div className="cx-step-k">Sent</div>
+          <pre>{JSON.stringify(a, null, 2)}</pre>
+          {r !== undefined && (
+            <>
+              <div className="cx-step-k">Got back</div>
+              <pre>{typeof r === 'string' ? r : JSON.stringify(r, null, 2)}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

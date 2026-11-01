@@ -353,8 +353,12 @@ const routes: Record<string, Handler> = {
   },
   'POST agent/chats/:id/confirm': ({ params, body, req }) => agentStream(req, (emit, signal) => resolvePending(num(params[0]), String(body.pending ?? ''), body.approve === true, emit, signal)),
   'GET agent/chats/:id/undo': ({ params, url }) => ({ plan: undoPlan(num(params[0]), num(url.searchParams.get('turn'), 'turn'), url.searchParams.get('only') ? url.searchParams.get('only')!.split(',').map(Number) : undefined) }),
-  'POST agent/chats/:id/undo': ({ params, body }) =>
-    applyUndo(num(params[0]), num(body.turn ?? 0, 'turn'), { force: Array.isArray(body.force) ? (body.force as number[]).map(Number) : [], only: Array.isArray(body.only) ? (body.only as number[]).map(Number) : undefined }),
+  'POST agent/chats/:id/undo': ({ params, body }) => {
+    const r = applyUndo(num(params[0]), num(body.turn ?? 0, 'turn'), { force: Array.isArray(body.force) ? (body.force as number[]).map(Number) : [], only: Array.isArray(body.only) ? (body.only as number[]).map(Number) : undefined });
+    // Undo writes straight to the tables: tell open consoles so trees and pages drop what was undone.
+    if (r.done.length) publish({ source: 'agent', method: 'POST', path: `agent/chats/${params[0]}/undo` });
+    return r;
+  },
 
   // ---- admin sign-in ----
   'GET auth/sessions': () => ({ sessions: listSessions(), audit: recentAudit(30) }),
