@@ -10,7 +10,7 @@ import { ChatView, MSG_KINDS, type MsgKind, ResponseTail, countKinds } from '../
 import { Ico } from '../icons';
 import { Empty, Field, Loading, Note, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
-import { api, useStore, useUi } from '../store';
+import { adminFetch, api, useStore, useUi } from '../store';
 import type { LogEntry } from '../types';
 import { DecisionRow } from './guard';
 import { usePref } from '../prefs';
@@ -247,7 +247,7 @@ export function ActivityHome() {
     setBusy(true);
     try {
       const lab = labels === 'all' ? '' : labels === 'both' ? 'mistake,missed_attack' : labels;
-      const res = await fetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}${kq}`);
+      const res = await adminFetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}${kq}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Export failed (${res.status})`);
       const n = res.headers.get('x-row-count');
       const a = document.createElement('a');

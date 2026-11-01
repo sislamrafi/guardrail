@@ -14,7 +14,7 @@ import { Ico } from '../icons';
 import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Section, Seg, Switch, ms } from '../kit';
 import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
-import { api, useStore, useUi } from '../store';
+import { adminFetch, api, useStore, useUi } from '../store';
 import { useActions } from '../actions';
 import { ScopeFooter, ScopeLine, ScopeTabs } from '../scope-items';
 import type { Data, GroupC } from '../types';
@@ -351,7 +351,7 @@ export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Dat
     setLive({ running: null, done: [] });
     await ui.run(
       async () => {
-        const r = await fetch('/api/admin/guard/test-live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, groupId: gid, source, layers }) });
+        const r = await adminFetch('/api/admin/guard/test-live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, groupId: gid, source, layers }) });
         if (!r.ok || !r.body) throw new Error(`Request failed (${r.status})`);
         const reader = r.body.getReader();
         const dec = new TextDecoder();

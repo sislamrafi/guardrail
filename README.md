@@ -503,6 +503,7 @@ agent shows it and you can find the request in Activity.
 
 ## Security notes
 
+- **Console sign-in uses tokens.** The password from `.env` is checked only on the server. The console gets a 15-minute access token (kept in memory, sent as `Bearer`) and a rotating, httpOnly refresh cookie; reuse of an old refresh token signs that browser out. Five wrong passwords lock an address out. See [docs/security.md](docs/security.md).
 - **Change `GUARDRAIL_SECRET`** and set `GUARDRAIL_ADMIN_PASSWORD` on anything other than your own
   machine. Rotating the secret makes stored key secrets unreadable, so rotate the keys after you
   change it.
@@ -526,6 +527,7 @@ agent shows it and you can find the request in Activity.
 | [docs/caching.md](docs/caching.md) | Prefix vs suffix checks, provider pinning, cache breakpoints |
 | [docs/routing.md](docs/routing.md) | Router layers and decision questions that pick a model |
 | [docs/studio.md](docs/studio.md) | Scenarios, live debug, replay |
+| [docs/security.md](docs/security.md) | Console sign-in: access and refresh tokens, rotation, lockout, sessions |
 | [docs/mcp.md](docs/mcp.md) | MCP docs server: connecting Claude Code, Cline, Cursor; tools, resources, sharing |
 | [docs/api.md](docs/api.md) | Gateway and admin HTTP API |
 | [docs/cache-analysis-2026-11-01.md](docs/cache-analysis-2026-11-01.md) | A worked analysis of cache hits on real traffic |

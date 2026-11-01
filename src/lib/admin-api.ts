@@ -13,6 +13,7 @@ import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
 import { getDb } from './db';
+import { checkAdmin, listSessions, logoutEverywhere, recentAudit, revokeFamily } from './auth';
 import { probeFormat } from './adapters';
 import { planFor } from './studio-plan';
 import { createDoc, deleteDoc, docHistory, docsForKey, getDoc, listDocs, updateDoc } from './mcp-docs';
@@ -297,6 +298,11 @@ const routes: Record<string, Handler> = {
     deleteFile(id);
   },
 
+  // ---- admin sign-in ----
+  'GET auth/sessions': () => ({ sessions: listSessions(), audit: recentAudit(30) }),
+  'POST auth/sessions/:id/revoke': ({ params }) => revokeFamily(params[0], 'admin'),
+  'POST auth/logout-all': ({ req }) => logoutEverywhere({ ip: clientIp(req), ua: req.headers.get('user-agent') }),
+
   // ---- MCP docs ----
   'GET docs': () => {
     const groups = listGroups();
@@ -568,6 +574,9 @@ function match(method: string, parts: string[]) {
 }
 
 export async function dispatch(req: Request, parts: string[]): Promise<Response> {
+  // Checked again here (not only in the middleware): a signed-out or revoked sign-in is refused.
+  const auth = await checkAdmin(req);
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: 401 });
   const found = match(req.method, parts);
   if (!found) return Response.json({ error: 'Not found' }, { status: 404 });
   let body: Record<string, unknown> = {};

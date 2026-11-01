@@ -1,10 +1,10 @@
 'use client';
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '@/components/ui';
+import { adminFetch, api } from '@/components/ui';
 import type { Data, DocC, DocKeyC, FileC, GroupC, KeyC, ServerC, Summary } from './types';
 
-export { api };
+export { adminFetch, api };
 
 // ---------------------------------------------------------------- data
 

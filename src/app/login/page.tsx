@@ -9,8 +9,10 @@ export default function Login() {
   const [err, setErr] = useState('');
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
-    if (!res.ok) return setErr('Wrong password.');
+    // The password goes to the server only; it answers with a short-lived token and a refresh cookie.
+    const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }), credentials: 'same-origin' });
+    setPw('');
+    if (!res.ok) return setErr(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Wrong password.');
     const next = new URLSearchParams(window.location.search).get('next');
     window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
   };
@@ -24,7 +26,7 @@ export default function Login() {
         <p className="muted" style={{ margin: 0 }}>Sign in to the admin panel.</p>
         <label>
           <span className="lbl">Admin password</span>
-          <input className="inp" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus />
+          <input className="inp" type="password" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus />
         </label>
         {err && <div style={{ color: 'var(--bad)', fontSize: 13 }}>{err}</div>}
         <button className="btn pri" type="submit">Sign in</button>
