@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A tiny stand-in for a vLLM server, for local development and tests.
-// It speaks the parts of vLLM's API GuardRail uses:
+// It speaks the parts of vLLM's API Opsara uses:
 //   GET  /v1/models            model list
 //   POST /v1/chat/completions  chat (streams when asked); a "safeguard" model answers as a judge
 //   POST /v1/completions       legacy completions
@@ -79,7 +79,7 @@ const server = http.createServer(async (req, res) => {
   if (seenPrefixes.has(prefix)) hits += 1;
   seenPrefixes.add(prefix);
 
-  // After GuardRail's retry feedback, answer cleanly (tests the after-the-model retry loop).
+  // After Opsara's retry feedback, answer cleanly (tests the after-the-model retry loop).
   const fixed = /previous answer was rejected/i.test(text(messages.at(-1)?.content));
   const reply = body.model.includes('safeguard') ? judge(messages) : fixed ? 'Here is a safe answer that follows the rules.' : `Mock answer from ${body.model}. I received ${messages.length} message(s); the first starts with: ${text(messages[0]?.content).slice(0, 80).replace(/\s+/g, ' ')}; the last says: ${text(messages.at(-1)?.content).slice(0, 120).replace(/\s+/g, ' ')}`;
   const created = Math.floor(Date.now() / 1000);

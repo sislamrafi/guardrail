@@ -1,6 +1,6 @@
-// GuardRail Docs: an MCP server over Streamable HTTP at /mcp (stateless, JSON responses).
-// Agents authenticate with their GuardRail API key and see exactly the docs their key resolves to
-// (see mcp-docs.ts). Docs are exposed both as resources (guardrail://docs/<slug>) and as tools,
+// Opsara AI Docs: an MCP server over Streamable HTTP at /mcp (stateless, JSON responses).
+// Agents authenticate with their Opsara API key and see exactly the docs their key resolves to
+// (see mcp-docs.ts). Docs are exposed both as resources (opsara://docs/<slug>) and as tools,
 // because many agents (Cline, most IDE agents) only use tools.
 // Spec: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports
 import { clientIp, bearer } from './gateway';
@@ -12,10 +12,13 @@ import { newRequestId, writeLog, type Outcome, type Step } from './logs';
 import { type McpDoc, docSummary, docsForKey, searchDocs } from './mcp-docs';
 
 export const MCP_PATH = '/mcp';
-export const SERVER_INFO = { name: 'GuardRail Docs', title: 'GuardRail Docs', version: '1.0.0' };
+export const SERVER_INFO = { name: 'Opsara AI Docs', title: 'Opsara AI Docs', version: '1.0.0' };
 /** Newest first; we answer with the client's version when we know it. */
 export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const URI_PREFIX = 'guardrail://docs/';
+const URI_PREFIX = 'opsara://docs/';
+/** The scheme from before the rename; still accepted when reading. */
+const OLD_PREFIX = 'guardrail://docs/';
+const slugOfUri = (uri: string) => (uri.startsWith(URI_PREFIX) ? uri.slice(URI_PREFIX.length) : uri.startsWith(OLD_PREFIX) ? uri.slice(OLD_PREFIX.length) : null);
 export const docUri = (slug: string) => `${URI_PREFIX}${slug}`;
 
 // ---------------------------------------------------------------- tool registry
@@ -56,7 +59,7 @@ registerTool({
   name: 'list_docs',
   title: 'List team docs',
   description:
-    "List the documentation your team shared with you through GuardRail (runbooks, conventions, architecture notes, API guides). Call this first when you start a task in this codebase or when you're unsure how the team does something; then read the relevant docs with read_doc. Returns slug, title, description, tags and last update for each doc.",
+    "List the documentation your team shared with you through Opsara (runbooks, conventions, architecture notes, API guides). Call this first when you start a task in this codebase or when you're unsure how the team does something; then read the relevant docs with read_doc. Returns slug, title, description, tags and last update for each doc.",
   inputSchema: { type: 'object', properties: { tag: { type: 'string', description: 'Only docs with this tag.' } }, additionalProperties: false },
   annotations: { title: 'List team docs', ...READ_ONLY },
   run: ({ docs }, args) => {
@@ -75,7 +78,7 @@ registerTool({
   inputSchema: { type: 'object', properties: { slug: { type: 'string', description: 'The doc slug, e.g. "deploy-runbook".' } }, required: ['slug'], additionalProperties: false },
   annotations: { title: 'Read a team doc', ...READ_ONLY },
   run: (ctx, args) => {
-    const slug = String(args.slug ?? '').trim().replace(URI_PREFIX, '');
+    const slug = String(args.slug ?? '').trim().replace(URI_PREFIX, '').replace(OLD_PREFIX, '');
     const d = ctx.docs.find((x) => x.slug === slug);
     if (!d) return text(`No doc "${slug}" is shared with this key. Call list_docs to see the available slugs.`, undefined, true);
     ctx.touched.push(d.slug);
@@ -123,8 +126,8 @@ export class RpcError extends Error {
 
 const instructionsFor = (docs: McpDoc[]) =>
   docs.length
-    ? `GuardRail Docs serves ${docs.length} doc${docs.length === 1 ? '' : 's'} your team shared with this key: project conventions, runbooks and reference notes. Before working on something a doc may cover, call search_docs or list_docs, then read_doc, and follow the docs. Docs are also available as resources (${URI_PREFIX}<slug>).`
-    : 'GuardRail Docs: no docs are shared with this key yet. Ask your GuardRail admin to assign docs to your group or key.';
+    ? `Opsara AI Docs serves ${docs.length} doc${docs.length === 1 ? '' : 's'} your team shared with this key: project conventions, runbooks and reference notes. Before working on something a doc may cover, call search_docs or list_docs, then read_doc, and follow the docs. Docs are also available as resources (${URI_PREFIX}<slug>).`
+    : 'Opsara AI Docs: no docs are shared with this key yet. Ask your Opsara admin to assign docs to your group or key.';
 
 /** Which client is talking, from its last initialize (stateless transport, so remembered per key and address). */
 const g = globalThis as unknown as { __grMcpClients?: Map<string, string> };
@@ -175,7 +178,8 @@ export async function dispatch(msg: RpcRequest, key: ApiKey, info: CallInfo, who
       return { resourceTemplates: [{ uriTemplate: `${URI_PREFIX}{slug}`, name: 'doc', title: 'Team doc', description: 'A doc shared with you, by slug (see list_docs).', mimeType: 'text/markdown' }] };
     case 'resources/read': {
       const uri = String(p.uri ?? '');
-      const d = uri.startsWith(URI_PREFIX) ? docs.find((x) => x.slug === uri.slice(URI_PREFIX.length)) : undefined;
+      const slug = slugOfUri(uri);
+      const d = slug !== null ? docs.find((x) => x.slug === slug) : undefined;
       if (!d) throw new RpcError(-32002, 'Resource not found', { uri });
       info.slugs.push(d.slug);
       return { contents: [{ uri, mimeType: 'text/markdown', text: d.body }] };
@@ -229,7 +233,7 @@ export async function handleMcp(req: Request): Promise<Response> {
         stages: {},
       });
     } catch (e) {
-      console.error('GuardRail: could not log an MCP call:', e);
+      console.error('Opsara: could not log an MCP call:', e);
     }
   };
 
@@ -237,7 +241,7 @@ export async function handleMcp(req: Request): Promise<Response> {
   const found = lookupKey(bearer(req));
   if (!found.ok) {
     log('rejected', 401, found.reason, { key: found.key });
-    return json(rpcError(null, -32001, found.reason), 401, { 'WWW-Authenticate': 'Bearer realm="GuardRail"' });
+    return json(rpcError(null, -32001, found.reason), 401, { 'WWW-Authenticate': 'Bearer realm="Opsara"' });
   }
   const key = found.key;
   if (!ipAllowed(ip, key.ipAllow)) {
@@ -289,7 +293,7 @@ export async function handleMcp(req: Request): Promise<Response> {
       if (m.method !== 'ping') log(info.error ? 'error' : 'answered', 200, summarize(info), { key, info, client: clients.get(who) });
     } catch (e) {
       const err = e instanceof RpcError ? e : new RpcError(-32603, 'Internal error');
-      if (!(e instanceof RpcError)) console.error('GuardRail MCP:', e);
+      if (!(e instanceof RpcError)) console.error('Opsara MCP:', e);
       info.error = err.message;
       out.push(rpcError(m.id ?? null, err.code, err.message, err.data));
       log('error', 200, `${summarize(info)}: ${err.message}`, { key, info, client: clients.get(who) });

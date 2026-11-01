@@ -1,7 +1,7 @@
 # MCP docs server
 
-GuardRail serves your team's Markdown docs to coding agents over the
-[Model Context Protocol](https://modelcontextprotocol.io). Agents use the **same GuardRail API key**
+Opsara serves your team's Markdown docs to coding agents over the
+[Model Context Protocol](https://modelcontextprotocol.io). Agents use the **same Opsara API key**
 they already use for `/v1`, and each key sees exactly the docs shared with its group (inherited down
 the tree) or with the key itself.
 
@@ -27,14 +27,14 @@ fields that context files don't have: a slug for the URI, a description and tags
 
 The endpoint is `http://your-host:3000/mcp` (Streamable HTTP). Authenticate with
 `Authorization: Bearer <key>` or `x-api-key: <key>`. The **MCP docs** page shows ready-to-copy
-configs for your host. Replace `grk_live_YOUR_KEY_HERE` with the key's secret (**API keys ›
+configs for your host. Replace `ops_live_YOUR_KEY_HERE` with the key's secret (**API keys ›
 Reveal**).
 
 **Claude Code**
 
 ```bash
 claude mcp add --transport http guardrail http://your-host:3000/mcp \
-  --header "Authorization: Bearer grk_live_YOUR_KEY_HERE"
+  --header "Authorization: Bearer ops_live_YOUR_KEY_HERE"
 ```
 
 **Cline** (MCP Servers › Configure › `cline_mcp_settings.json`)
@@ -45,7 +45,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
     "guardrail": {
       "type": "streamableHttp",
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" },
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" },
       "disabled": false
     }
   }
@@ -59,7 +59,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
   "mcpServers": {
     "guardrail": {
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" }
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" }
     }
   }
 }
@@ -73,7 +73,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
     "guardrail": {
       "type": "http",
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" }
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" }
     }
   }
 }
@@ -83,7 +83,7 @@ Check it with curl:
 
 ```bash
 curl http://localhost:3000/mcp \
-  -H "Authorization: Bearer grk_live_YOUR_KEY_HERE" \
+  -H "Authorization: Bearer ops_live_YOUR_KEY_HERE" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_docs","arguments":{}}}'
@@ -91,7 +91,7 @@ curl http://localhost:3000/mcp \
 
 ## What agents get
 
-Server name **GuardRail Docs**. The `initialize` result includes instructions that say how many docs
+Server name **Opsara AI Docs**. The `initialize` result includes instructions that say how many docs
 the key has and when to use them.
 
 | Tool | Input | Returns |
@@ -105,9 +105,9 @@ use it.
 
 Resources, for clients that browse them:
 
-- `resources/list`: one resource per doc, `guardrail://docs/<slug>`, `text/markdown`.
+- `resources/list`: one resource per doc, `opsara://docs/<slug>`, `text/markdown`.
 - `resources/read`: the doc body.
-- `resources/templates/list`: `guardrail://docs/{slug}`.
+- `resources/templates/list`: `opsara://docs/{slug}`.
 
 `prompts/list` returns an empty list.
 

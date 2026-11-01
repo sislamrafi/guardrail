@@ -2,7 +2,7 @@
 
 ## Gateway (for agents)
 
-All gateway routes need `Authorization: Bearer grk_live_…` (or `x-api-key`).
+All gateway routes need `Authorization: Bearer ops_live_…` (or `x-api-key`).
 
 | Method | Path | Notes |
 | --- | --- | --- |

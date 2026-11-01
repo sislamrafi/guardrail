@@ -5,6 +5,7 @@
 // stored hashed on the server, rotated on every use) gets a new one; see auth.ts.
 // Format: "gra1.<base64url JSON payload>.<base64url HMAC-SHA256>".
 
+import { env } from './env';
 export const REFRESH_COOKIE = 'gr_refresh';
 /** Not a secret: only tells the middleware a browser has signed in, so pages can redirect to /login. */
 export const HINT_COOKIE = 'gr_in';
@@ -27,7 +28,7 @@ const g = globalThis as unknown as { __grAccessKey?: { secret: string; key: Prom
 
 /** The signing key, derived from GUARDRAIL_SECRET for this purpose only. */
 function accessKey(): Promise<CryptoKey> {
-  const secret = process.env.GUARDRAIL_SECRET || 'change-me';
+  const secret = env.secret() || 'change-me';
   if (g.__grAccessKey?.secret === secret) return g.__grAccessKey.key;
   const key = (async () => {
     const base = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);

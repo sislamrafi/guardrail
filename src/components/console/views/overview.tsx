@@ -72,7 +72,7 @@ export function OverviewPage() {
             <Stat label="Rejected" value={fmt(d.counts.rejected)} hint="Refused before any check: no or invalid key, address not allowed, revoked or expired key, rate limit" />
             <Stat label="False alarms corrected" value={fmt(d.counts.false_alarm)} tone={d.counts.false_alarm ? 'warn' : undefined} />
             <Stat label="Errors" value={fmt(d.counts.error)} tone={d.counts.error ? 'bad' : undefined} />
-            <Stat label="Guard overhead p95" value={ms(d.overheadP95)} hint="Time GuardRail adds before the model: checks, guard layers and context" />
+            <Stat label="Guard overhead p95" value={ms(d.overheadP95)} hint="Time Opsara adds before the model: checks, guard layers and context" />
             <Stat label="Guard layers p50" value={ms(d.guardP50)} hint="Time all guard layers take together on a typical request" />
           </div>
           <Section title="Requests" hint="Red is the share that was blocked.">

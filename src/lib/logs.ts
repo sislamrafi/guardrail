@@ -20,7 +20,7 @@ export interface ModelResponse {
   message: PromptMessage & { tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]; reasoning?: string };
   finish_reason?: string | null;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
-  /** The reply was GuardRail's blocked message, not the model's. */
+  /** The reply was Opsara's blocked message, not the model's. */
   blocked?: boolean;
   /** The upstream error text, when the model call failed. */
   error?: string;
@@ -76,7 +76,7 @@ export interface LogEntry {
   prompt_expired?: boolean;
   /** Each guard layer's result, in order (see pipeline.ts). */
   decisions?: LayerResult[] | null;
-  /** What GuardRail added to the request: context files, policy prompt, tokens, placement. */
+  /** What Opsara added to the request: context files, policy prompt, tokens, placement. */
   injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string; identity?: string } | null;
   /** Studio or replay traffic, kept out of normal lists and stats. */
   test?: boolean;
@@ -113,7 +113,7 @@ function maybePrune() {
   try {
     prunePrompts();
   } catch (err) {
-    console.error('GuardRail: pruning prompt files failed:', err);
+    console.error('Opsara: pruning prompt files failed:', err);
   }
 }
 

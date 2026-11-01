@@ -1,4 +1,4 @@
-// The GuardRail mark (public/brand/guardrail-logo-current.svg). Drawn in currentColor so it follows the theme.
+// The Opsara mark (public/brand/guardrail-logo-current.svg). Drawn in currentColor so it follows the theme.
 export function Logo({ size = 16, title }: { size?: number; title?: string }) {
   return (
     <svg viewBox="0 0 768 768" width={size} height={size} fill="currentColor" fillRule="evenodd" role={title ? 'img' : undefined} aria-hidden={title ? undefined : true} aria-label={title} style={{ flex: 'none' }}>

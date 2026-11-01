@@ -1,3 +1,4 @@
+import { env } from './env';
 import { estimateTokens, createFile, deleteFile, fileHistory, getFile, listFiles, updateFile } from './context';
 import { normalizeLayer } from './layers';
 import { runPipeline } from './pipeline';
@@ -611,8 +612,8 @@ const routes: Record<string, Handler> = {
       keys: listKeys().filter((k) => !k.revoked).length,
       guard: getSettings().guard.layers.some((l) => l.enabled),
       blockedToday: countByFilter(Date.now() - 86400_000).blocked,
-      name: process.env.GUARDRAIL_ADMIN_NAME || 'Admin',
-      authEnabled: !!process.env.GUARDRAIL_ADMIN_PASSWORD,
+      name: env.adminName(),
+      authEnabled: !!env.adminPassword(),
       weakSecret: weakSecret(),
     };
   },

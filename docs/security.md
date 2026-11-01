@@ -1,15 +1,15 @@
 # Console sign-in and security
 
-The console and its admin API are protected by `GUARDRAIL_ADMIN_PASSWORD` from `.env`. With no
+The console and its admin API are protected by `OPSARA_ADMIN_PASSWORD` from `.env`. With no
 password set the console is open, which is only meant for your own machine. The gateway (`/v1`) and
-the MCP server (`/mcp`) are separate: they use GuardRail API keys.
+the MCP server (`/mcp`) are separate: they use Opsara API keys.
 
 ## How sign-in works
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
-    participant S as GuardRail
+    participant S as Opsara
     B->>S: POST /api/auth/login {password}
     S->>S: scrypt + constant-time compare with .env (server only)
     S-->>B: access token (15 min, JSON) + refresh cookie (httpOnly, /api/auth, 30 days)
@@ -23,7 +23,7 @@ sequenceDiagram
 - **The password is only checked on the server.** It is hashed with scrypt (random salt per
   process) and compared in constant time. It never reaches the browser bundle.
 - **Access token.** `gra1.<payload>.<HMAC-SHA256>`, signed with a key derived from
-  `GUARDRAIL_SECRET`. It expires after 15 minutes and is kept **in memory only**: never in
+  `OPSARA_SECRET`. It expires after 15 minutes and is kept **in memory only**: never in
   `localStorage` or a readable cookie. Every admin API call sends it as `Authorization: Bearer`.
   That also makes the API immune to CSRF, because a cross-site page cannot add the header.
 - **Refresh token.** 32 random bytes, stored in the database only as a SHA-256 hash, sent as an
@@ -50,9 +50,9 @@ browser and **Sign out everywhere**, plus recent sign-in events.
 
 ## Recommendations
 
-- Set a long random `GUARDRAIL_SECRET`. It signs access tokens and encrypts stored secrets.
+- Set a long random `OPSARA_SECRET`. It signs access tokens and encrypts stored secrets.
   Changing it signs everyone out and makes stored key secrets unreadable (rotate the keys).
-- Set `GUARDRAIL_ADMIN_PASSWORD` to a long passphrase on anything but your own machine.
+- Set `OPSARA_ADMIN_PASSWORD` to a long passphrase on anything but your own machine.
 - Serve the console over https, so the refresh cookie is also marked `Secure`.
 - Behind a reverse proxy, turn on *trust proxy* so login limits and the audit log see the real
   client address.

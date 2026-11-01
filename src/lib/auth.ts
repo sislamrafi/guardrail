@@ -6,6 +6,7 @@
 //    is retired, a new one (same family) takes over. A retired token used again means it was stolen,
 //    so the whole family is revoked. Logout revokes the family too.
 //  - Refresh tokens are random, stored as SHA-256 hashes, and sent only as an httpOnly cookie.
+import { env } from './env';
 import crypto from 'crypto';
 import { getDb, now } from './db';
 import { REFRESH_COOKIE, HINT_COOKIE, signAccess, verifyAccess, timingSafeEqual, bearerOf } from './session';
@@ -14,7 +15,7 @@ export const REFRESH_TTL_MS = 30 * 86400_000;
 const MAX_FAILS = 5;
 const WINDOW_MS = 15 * 60_000;
 
-export const authEnabled = () => !!process.env.GUARDRAIL_ADMIN_PASSWORD;
+export const authEnabled = () => !!env.adminPassword();
 
 function ensureTables() {
   const db = getDb();
@@ -53,7 +54,7 @@ const g = globalThis as unknown as { __grPw?: { src: string; salt: Buffer; hash:
 
 /** Constant-time check against GUARDRAIL_ADMIN_PASSWORD, hashed once per process with a random salt. */
 export function passwordMatches(input: string): boolean {
-  const expected = process.env.GUARDRAIL_ADMIN_PASSWORD ?? '';
+  const expected = env.adminPassword();
   if (!expected) return false;
   if (g.__grPw?.src !== expected) {
     const salt = crypto.randomBytes(16);

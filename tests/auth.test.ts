@@ -35,6 +35,14 @@ describe('admin sign-in', () => {
     expect((await checkAdmin(new Request('http://localhost/api/admin/summary'))).ok).toBe(false);
   });
 
+  it('reads OPSARA_ADMIN_PASSWORD first, GUARDRAIL_ADMIN_PASSWORD as a fallback', () => {
+    process.env.OPSARA_ADMIN_PASSWORD = 'new name wins';
+    expect(passwordMatches('new name wins')).toBe(true);
+    expect(passwordMatches('correct horse battery staple')).toBe(false);
+    delete process.env.OPSARA_ADMIN_PASSWORD;
+    expect(passwordMatches('correct horse battery staple')).toBe(true);
+  });
+
   it('expires access tokens after 15 minutes', async () => {
     const { token } = await signAccess({ sid: 's', fam: 'f' }, Date.now() - 16 * 60_000);
     expect(await verifyAccess(token)).toBeNull();

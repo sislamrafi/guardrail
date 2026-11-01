@@ -173,7 +173,7 @@ function Workbench() {
       <header className="cx-title">
         <div className="cx-brand">
           <Logo size={18} />
-          <span>GuardRail</span>
+          <span>Opsara</span>
         </div>
         <div className="cx-title-center">
           <button type="button" className="cx-tbtn" title="Back (⌥⇧←)" aria-label="Back" onClick={() => history.back()}>
@@ -282,7 +282,7 @@ function Workbench() {
 
       <footer className="cx-status">
         <span className="cx-status-brand">
-          <Logo size={13} /> GuardRail
+          <Logo size={13} /> Opsara
         </span>
         <button type="button" onClick={() => nav.go('/servers')} title="Inference servers online">
           <span className={`cx-status-dot ${sum && sum.servers && sum.online === sum.servers ? 'ok' : sum?.servers ? 'warn' : ''}`} />

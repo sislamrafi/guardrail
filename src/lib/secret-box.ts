@@ -1,12 +1,13 @@
 // Encrypts API key secrets at rest so an admin can reveal them later.
 // AES-256-GCM with a key derived from GUARDRAIL_KEY_SECRET (or GUARDRAIL_SECRET).
 // Authentication never uses this: keys are still checked against their SHA-256 hash.
+import { env } from './env';
 import crypto from 'node:crypto';
 
 const DEFAULT = 'change-me';
 
 function masterSecret(): string {
-  return process.env.GUARDRAIL_KEY_SECRET || process.env.GUARDRAIL_SECRET || DEFAULT;
+  return env.keySecret() || env.secret() || DEFAULT;
 }
 
 /** True when secrets are encrypted with the shipped default and anyone with the source could decrypt them. */

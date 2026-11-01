@@ -70,7 +70,7 @@ describe('MCP docs: protocol', () => {
   it('initializes with server info, capabilities and instructions', async () => {
     const r = await call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0' } });
     expect(r.status).toBe(200);
-    expect(r.body.result).toMatchObject({ protocolVersion: '2025-06-18', serverInfo: { name: 'GuardRail Docs' }, capabilities: { tools: {}, resources: {} } });
+    expect(r.body.result).toMatchObject({ protocolVersion: '2025-06-18', serverInfo: { name: 'Opsara AI Docs' }, capabilities: { tools: {}, resources: {} } });
     expect(String(r.body.result!.instructions)).toContain('3 docs');
   });
 
@@ -106,10 +106,12 @@ describe('MCP docs: protocol', () => {
   it('serves docs as resources', async () => {
     const list = await call('resources/list');
     const uris = (list.body.result!.resources as { uri: string; mimeType: string }[]).map((r) => r.uri);
-    expect(uris).toContain('guardrail://docs/deploy-runbook');
+    expect(uris).toContain('opsara://docs/deploy-runbook');
+    // URIs from before the rename (guardrail://) still resolve.
     const read = await call('resources/read', { uri: 'guardrail://docs/react-style-guide' });
+    expect(((await call('resources/read', { uri: 'opsara://docs/react-style-guide' })).body.result!.contents as unknown[]).length).toBe(1);
     expect((read.body.result!.contents as { text: string; mimeType: string }[])[0]).toMatchObject({ mimeType: 'text/markdown' });
-    const missing = await call('resources/read', { uri: 'guardrail://docs/incident-notes' });
+    const missing = await call('resources/read', { uri: 'opsara://docs/incident-notes' });
     expect(missing.body.error!.code).toBe(-32002);
     const templates = await call('resources/templates/list');
     expect(templates.body.result!.resourceTemplates).toHaveLength(1);

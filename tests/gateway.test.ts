@@ -187,7 +187,7 @@ describe('gateway', () => {
       .filter((e) => e.startsWith('{'))
       .map((e) => JSON.parse(e).choices[0].delta.content ?? '')
       .join('');
-    expect(text).toContain('GuardRail stopped this request');
+    expect(text).toContain('Opsara stopped this request');
     const blocked = getLog(String(lastLog().id))!;
     expect(blocked.prompt).toHaveLength(3);
     expect(blocked.forwarded).toBeNull();
@@ -214,7 +214,7 @@ describe('gateway', () => {
     it('sends every request straight to check 2, which blocks an attack', async () => {
       both(false, true);
       const res = await chat(secret, { model: 'qwen3-coder-30b', messages: [attack] });
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       const log = lastLog();
       expect(log.outcome).toBe('blocked');
       expect(log.c1_status).toBe('off');
@@ -261,7 +261,7 @@ describe('gateway', () => {
 
     it('still checks everyone by default', async () => {
       const res = await chat(secret, { model: 'qwen3-coder-30b', messages: [attack] });
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       expect(lastLog().c1_status).toBe('flagged');
     });
 
@@ -277,7 +277,7 @@ describe('gateway', () => {
     it('lets check 2 judge everything for a group with only PIGuard off', async () => {
       const { secret: s } = keyIn('NoPiguard', { piguard: false });
       const res = await chat(s, { model: 'qwen3-coder-30b', messages: [attack] });
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       const log = lastLog();
       expect([log.c1_status, log.c2_status]).toEqual(['off', 'block']);
     });
@@ -285,7 +285,7 @@ describe('gateway', () => {
     it('follows the "if it fails" setting for a group with only check 2 off', async () => {
       const { secret: s } = keyIn('NoJudge', { oss: false });
       const res = await chat(s, { model: 'qwen3-coder-30b', messages: [attack] });
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       const log = lastLog();
       expect([log.outcome, log.c1_status, log.c2_status]).toEqual(['blocked', 'flagged', 'error']);
       expect(String(log.steps)).toContain('Check 2 · OSS judge is off for NoJudge');
@@ -295,7 +295,7 @@ describe('gateway', () => {
       const parent = keyIn('Bypassed', { piguard: false, oss: false });
       const child = keyIn('Reviewed', { piguard: true, oss: true }, parent.grp.id);
       const res = await chat(child.secret, { model: 'qwen3-coder-30b', messages: [attack] });
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       expect(lastLog().c1_status).toBe('flagged');
     });
   });
@@ -430,7 +430,7 @@ describe('gateway', () => {
     it('blocks when the retries are used up, and with 0 retries blocks at once', async () => {
       const out = normalizeLayer({ id: 'out', name: 'Answer check', type: 'patterns', stage: 'output', onFail: 'block' });
       const res = await ask([out], bad);
-      expect((await res.json()).choices[0].message.content).toContain('GuardRail stopped this request');
+      expect((await res.json()).choices[0].message.content).toContain('Opsara stopped this request');
       expect(lastLog().outcome).toBe('blocked');
     });
 

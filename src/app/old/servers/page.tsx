@@ -29,7 +29,7 @@ export default function ServersPage() {
 
   return (
     <>
-      <PageHead step="Step 1 of 5" title="Servers and models" sub="Paste a vLLM server address. GuardRail finds the models it serves on its own.">
+      <PageHead step="Step 1 of 5" title="Servers and models" sub="Paste a vLLM server address. Opsara finds the models it serves on its own.">
         <Link href="/old/groups" className="btn blk">
           Next: groups
         </Link>

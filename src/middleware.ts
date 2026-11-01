@@ -1,3 +1,4 @@
+import { env } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { HINT_COOKIE, bearerOf, verifyAccess } from '@/lib/session';
 
@@ -5,7 +6,7 @@ import { HINT_COOKIE, bearerOf, verifyAccess } from '@/lib/session';
 // checked here and again in Node (where revoked sessions are seen). Console pages hold no data; they
 // only redirect to /login when this browser has not signed in. /v1 and /mcp use API keys instead.
 export async function middleware(req: NextRequest) {
-  if (!process.env.GUARDRAIL_ADMIN_PASSWORD || req.nextUrl.pathname === '/mcp') return NextResponse.next();
+  if (!env.adminPassword() || req.nextUrl.pathname === '/mcp') return NextResponse.next();
   if (req.nextUrl.pathname.startsWith('/api/admin/')) {
     if (await verifyAccess(bearerOf(req.headers))) return NextResponse.next();
     return NextResponse.json({ error: 'Sign in first.' }, { status: 401 });

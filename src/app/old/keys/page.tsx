@@ -239,7 +239,7 @@ function CreateKey({ groups, look, onCreated }: { groups: GroupV[]; look: Lookup
     <section className="card" id="create">
       <div className="hd">
         <h2>Create a key</h2>
-        <span className="muted small">Shown once. GuardRail stores only a hash.</span>
+        <span className="muted small">Shown once. Opsara stores only a hash.</span>
       </div>
       <div className="row" style={{ gap: 24 }}>
         <div className="stack" style={{ flex: '3 1 420px', gap: 18, minWidth: 0 }}>

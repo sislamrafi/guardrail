@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { DEFAULT_THEME } from '@/components/console/theme-boot';
 
 export const metadata: Metadata = {
-  title: 'GuardRail AI',
+  title: 'Opsara AI',
   description: 'Security gateway and admin panel for vLLM backends',
   manifest: '/manifest.webmanifest',
   icons: {

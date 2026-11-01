@@ -89,12 +89,16 @@ describe('console agent', () => {
   });
 
   it('never puts secrets in the model context or the change log', async () => {
+    // A write tool that returns the whole key row (prefix included) must not leak it either.
+    const victim = createKey({ name: 'leak-check', owner: 'o', groupId: listGroups()[0].id });
+    const ev = await say(`[tool:revoke_key {"keyId":${victim.key.id},"restore":true}]`);
+    expect(JSON.stringify(ev)).not.toContain(victim.secret.slice(0, 13));
     await say('[tool:list_servers_and_models {}]');
     await say(`[tool:create_key {"name":"agent-key","owner":"a","groupId":${listGroups()[0].id}}]`);
     const stored = JSON.stringify(listMessages(chatId)) + JSON.stringify(listChanges(chatId));
     expect(stored).not.toContain('sk-test-SECRET');
-    expect(stored).not.toMatch(/grk_live_[A-Za-z0-9]{10}/);
-    expect(stored).not.toContain(listKeys()[0].prefix);
+    expect(stored).not.toMatch(/(grk|ops)_live_[A-Za-z0-9]{10}/);
+    for (const k of listKeys()) expect(stored).not.toContain(k.prefix);
     expect(stored).toContain('secret_reveal');
   });
 });

@@ -81,7 +81,7 @@ export function ChatView({ messages, marks, empty, tail, show }: { messages: Pro
           <div key={i} className={`cx-turn ${p.role === 'user' ? 'me' : ''}`}>
             <div className="cx-turn-head">
               <span>{p.role}</span>
-              {p.mark && <Pill tone="info">{p.mark === 'added' ? 'Added by GuardRail' : 'Changed by GuardRail'}</Pill>}
+              {p.mark && <Pill tone="info">{p.mark === 'added' ? 'Added by Opsara' : 'Changed by Opsara'}</Pill>}
             </div>
             <MdText text={p.text} />
           </div>

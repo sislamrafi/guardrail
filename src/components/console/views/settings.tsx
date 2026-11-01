@@ -157,7 +157,7 @@ function SplashSettings() {
     setGap(Number(local.get('cx-splash-gap-h')) || SPLASH_GAP_HOURS);
   }, []);
   return (
-    <Field label="Splash screen" hint={on ? `A 5–10 second GuardRail loading screen when the console opens after ${gap} hours or more away.` : 'Off in this browser.'}>
+    <Field label="Splash screen" hint={on ? `A 5–10 second Opsara loading screen when the console opens after ${gap} hours or more away.` : 'Off in this browser.'}>
       <div className="cx-form-row center">
         <Switch
           on={on}

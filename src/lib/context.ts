@@ -78,7 +78,7 @@ export function fileHistory(id: number) {
 }
 
 /**
- * The text GuardRail puts in front of a request. It must be byte-identical for every
+ * The text Opsara puts in front of a request. It must be byte-identical for every
  * request with the same settings so vLLM's prefix cache can reuse it.
  */
 export function buildContextBlock(policyPrompt: string, files: ContextFile[]): string {

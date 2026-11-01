@@ -423,7 +423,7 @@ export function LogDetail({ id }: { id: string }) {
       {tab === 'summary' && <Summary d={d} />}
       {tab === 'sent' && (
         <>
-          {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by GuardRail (context or redaction).</Note>}
+          {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by Opsara (context or redaction).</Note>}
           <ChatView messages={d.forwarded} marks={marks} show={show} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
         </>
       )}

@@ -42,7 +42,7 @@ export interface MessageRow {
 
 const MAX_STEPS = 12;
 
-const SYSTEM = `You are the GuardRail agent, built into the GuardRail console. GuardRail is a security gateway and agentic workspace for coding agents (Cline, Claude Code, Cursor):
+const SYSTEM = `You are the Opsara agent, built into the Opsara console. Opsara is a security gateway and agentic workspace for coding agents (Cline, Claude Code, Cursor):
 - Groups form a tree under a root; settings inherit down it (servers, models, context files, guard layers, MCP docs, rate limit, blocked reply). Sub-groups add to or override a parent's; context files and MCP docs can also be switched off ("excluded") lower down.
 - API keys belong to one group and get everything it resolves to, plus their own exceptions.
 - Context files are Markdown added to every request; MCP docs are Markdown that agents read on demand over MCP.
@@ -124,6 +124,19 @@ function modelMessages(chatId: number) {
     else out.push({ role: 'tool', tool_call_id: m.tool_call_id, content: m.content });
   }
   return out;
+}
+
+/**
+ * Strip anything secret-bearing from a tool result before the model (or the chat log) sees it, whatever
+ * the tool returned: key prefixes and hashes, encrypted secrets, server API keys, refresh hashes.
+ */
+const SECRET_FIELDS = /^(prefix|hash|secret|secret_enc|secretEnc|api_key|apiKey|refresh_hash|password|token|accessToken|refreshToken)$/i;
+export function redact(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(redact);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => !SECRET_FIELDS.test(k)).map(([k, x]) => [k, redact(x)]));
+  // A secret pasted into some text field still never goes out whole.
+  if (typeof v === 'string') return v.replace(/\b(ops|grk)_live_[A-Za-z0-9]{4,}/g, '$1_live_••••').replace(/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-••••');
+  return v;
 }
 
 const clip = (s: string, n = 8000) => (s.length > n ? `${s.slice(0, n)}… (cut, ${s.length} characters)` : s);
@@ -209,6 +222,7 @@ async function runTool(chatId: number, turn: number, call: { id: string; functio
     if (out.uiEffect) recordUiEffect(chatId, turn, tool.name, out.uiEffect.summary, out.uiEffect.effect, null);
     if (changes.length || out.uiEffect) emit({ type: 'changes', changes });
     const ui = out.ui ?? [];
+    out.result = redact(out.result);
     emit({ type: 'tool', id: call.id, name: tool.name, args, status: 'done', result: out.result });
     if (ui.length) emit({ type: 'ui', components: ui, toolCallId: call.id });
     return { content: clip(JSON.stringify(out.result ?? { ok: true })), ui };

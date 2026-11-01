@@ -630,7 +630,7 @@ export function AgentChat({ id }: { id: number | null }) {
       <div className="cx-agent-body" ref={scroller}>
         {err && <Note tone="bad">{err}</Note>}
         {!id && !busy && (
-          <Empty icon="agent" title="Ask the GuardRail agent">
+          <Empty icon="agent" title="Ask the Opsara agent">
             It can manage everything in this console: groups and keys, context files and MCP docs, guard layers, rules, servers and models, settings. Every change is logged on the right and can be undone. Deleting or revoking always asks you first; secrets never pass through it.
             <div className="cx-agent-tips">
               {['Show me the groups and how many keys each has', 'Create a group "Mobile QA" under Engineering', 'Compare the prices of text models on my servers', 'Write an MCP doc "Release checklist" and share it with Backend'].map((t) => (
@@ -707,7 +707,7 @@ export function AgentChat({ id }: { id: number | null }) {
           <textarea
             value={text}
             rows={2}
-            placeholder={pick ? 'Ask the agent to change or explain anything in GuardRail (Enter to send, Shift+Enter for a new line)' : 'Pick a model first'}
+            placeholder={pick ? 'Ask the agent to change or explain anything in Opsara (Enter to send, Shift+Enter for a new line)' : 'Pick a model first'}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

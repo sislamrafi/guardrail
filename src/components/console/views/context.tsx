@@ -43,7 +43,7 @@ export function ContextHome() {
             <b>The agent&apos;s own prompt and messages</b> <span className="cx-muted">from the client, unchanged</span>
           </li>
         </ol>
-        <Field label="Where GuardRail puts it">
+        <Field label="Where Opsara puts it">
           <Seg
             value={data.settings.contextPlacement}
             label="Placement"

@@ -1,3 +1,4 @@
+import { env } from './env';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -136,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_logs_outcome ON request_logs(outcome, ts);
 `;
 
 export function dbPath(): string {
-  return process.env.GUARDRAIL_DB || path.join(process.cwd(), 'data', 'guardrail.db');
+  return env.db() || path.join(process.cwd(), 'data', 'guardrail.db');
 }
 
 export function openDb(file = dbPath()): Database.Database {

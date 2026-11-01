@@ -382,7 +382,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
           const text = await up.text();
           steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
           finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
-          return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
+          return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id, 'x-opsara-request-id': id } });
         }
         const json = (await up.json()) as Record<string, unknown>;
         if (typeof json.provider === 'string') lastProvider.set(`${r.server.id}::${model}`, json.provider);
@@ -424,7 +424,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
         if (!check.block) {
           steps.push({ tone: flagged.length ? 'warn' : 'ok', head: `Answer #${attempt} checked: ${flagged.length ? `flagged by ${flagged.map((x) => x.name).join(', ')}` : 'passed'}`, ms: at(), text: `${outLayers.length} after-the-model layer(s) checked it before the client saw it.` });
           finish(outcome, 200, null, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
-          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-guardrail-checked': '1' } });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-opsara-request-id': id, 'x-guardrail-checked': '1' } });
         }
         const layer = outLayers.find((l) => l.name === check.block!.layer);
         const d = check.results.find((x) => x.action === 'block')?.decision;
@@ -441,7 +441,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
         if (layer?.onFail === 'retry' && layer.onExhausted === 'flag') {
           steps.push({ tone: 'warn', head: 'Retries used up: answer let through, flagged', ms: at(), text: check.block.reason });
           finish('false_alarm', 200, check.block.reason, { tokens_out: (json.usage as { completion_tokens?: number } | undefined)?.completion_tokens ?? null, response: resp });
-          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id } });
+          return stream ? sseFromJson(json, { requestId: id, kind: 'chat' }) : Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-opsara-request-id': id } });
         }
         return block(layer?.onFail === 'retry' ? `${check.block.reason} (still failing after ${layer.retries ?? 2} retries)` : check.block.reason, {});
       }
@@ -471,7 +471,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
         }
       },
     });
-    return new Response(out, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id } });
+    return new Response(out, { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id, 'x-opsara-request-id': id } });
   }
 
   emit?.({ type: 'model', attempt: 1, model });
@@ -500,7 +500,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       const text = await up.text();
       steps.push({ tone: 'bad', head: `${r.server.name} returned ${up.status}`, ms: at(), text: text.slice(0, 500) });
       finish('error', up.status, `Backend error ${up.status}`, { response: { message: { role: 'assistant', content: '' }, error: text.slice(0, 4000) } });
-      return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id } });
+      return new Response(text, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'x-guardrail-request-id': id, 'x-opsara-request-id': id } });
     }
     const label = outcome === 'false_alarm' ? 'Sent to the model (false alarm logged)' : 'Sent to the model';
     if (!stream || !up.body) {
@@ -509,7 +509,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
       steps.push({ tone: 'ok', head: `${label} · ${r.server.name}, answered`, ms: at(), text: `${json.usage?.completion_tokens ?? '?'} tokens.` });
       if (typeof (json as { provider?: unknown }).provider === 'string') lastProvider.set(`${r.server.id}::${model}`, (json as unknown as { provider: string }).provider);
       finish(outcome, 200, null, { tokens_out: json.usage?.completion_tokens ?? null, response: responseFromJson(json) });
-      return Response.json(json, { headers: { 'x-guardrail-request-id': id } });
+      return Response.json(json, { headers: { 'x-guardrail-request-id': id, 'x-opsara-request-id': id } });
     }
     // Stream straight through; count chunks as we go and finish the log at the end.
     finish(outcome, 200, null);
@@ -561,7 +561,7 @@ export async function handleCompletion(req: Request, kind: Kind, opts: GatewayOp
     });
     return new Response(out, {
       status: 200,
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id },
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'x-guardrail-request-id': id, 'x-opsara-request-id': id },
     });
   }
   const msg = `No server for ${model} is reachable right now.`;

@@ -32,7 +32,7 @@ When the retries are used up, **When retries run out** decides: `block` (default
 
 ### The retry message
 
-After a rejected answer, GuardRail sends the conversation again, followed by the rejected answer
+After a rejected answer, Opsara sends the conversation again, followed by the rejected answer
 and a user message built from **Retry prompt**:
 
 ```
@@ -46,7 +46,7 @@ the provider that just answered (see [caching.md](caching.md)).
 ## Streaming
 
 A streaming client can't be shown an answer that might still be rejected. So for requests with
-output layers, GuardRail:
+output layers, Opsara:
 
 1. Calls the model and collects the full answer, including its tool calls and reasoning.
 2. Runs the output layers, retrying if needed.

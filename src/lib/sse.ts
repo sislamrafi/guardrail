@@ -5,7 +5,7 @@
 export function blockedResponse(opts: { stream: boolean; model: string; text: string; requestId: string; kind: 'chat' | 'completions' }) {
   const created = Math.floor(Date.now() / 1000);
   const id = `chatcmpl-${opts.requestId}`;
-  const headers = { 'x-guardrail-request-id': opts.requestId, 'x-guardrail-blocked': '1' };
+  const headers = { 'x-guardrail-request-id': opts.requestId, 'x-opsara-request-id': opts.requestId, 'x-guardrail-blocked': '1', 'x-opsara-blocked': '1' };
 
   if (!opts.stream) {
     const body =
@@ -44,7 +44,7 @@ export function blockedResponse(opts: { stream: boolean; model: string; text: st
 
 /** OpenAI-shaped error body. */
 export function apiError(status: number, message: string, type: string, requestId: string, code?: string) {
-  return Response.json({ error: { message, type, code: code ?? null, param: null } }, { status, headers: { 'x-guardrail-request-id': requestId } });
+  return Response.json({ error: { message, type, code: code ?? null, param: null } }, { status, headers: { 'x-guardrail-request-id': requestId, 'x-opsara-request-id': requestId } });
 }
 
 /** Send a finished chat or completions answer as an SSE stream (for answers checked before the client saw them). */
@@ -69,5 +69,5 @@ export function sseFromJson(json: Record<string, unknown>, opts: { requestId: st
       ctl.close();
     },
   });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-guardrail-request-id': opts.requestId, 'x-guardrail-checked': '1' } });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'x-guardrail-request-id': opts.requestId, 'x-opsara-request-id': opts.requestId, 'x-guardrail-checked': '1' } });
 }
