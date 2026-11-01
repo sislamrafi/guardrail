@@ -16,7 +16,7 @@ import { DecisionRow } from './guard';
 import { usePref } from '../prefs';
 import { MdText } from '../md-text';
 
-type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number; mcp: number };
+type Counts = { all: number; blocked: number; rejected: number; false_alarm: number; clean: number; error: number; mcp: number };
 
 const FILTERS: [string, string, keyof Counts][] = [
   ['', 'All', 'all'],
@@ -24,6 +24,8 @@ const FILTERS: [string, string, keyof Counts][] = [
   ['false_alarm', 'False alarm', 'false_alarm'],
   ['error', 'Error', 'error'],
   ['blocked', 'Blocked', 'blocked'],
+  // Refused before any check: no or invalid key, address not allowed, revoked, rate limit.
+  ['rejected', 'Rejected', 'rejected'],
   // Doc reads by agents over MCP: no model, no guard layers.
   ['mcp', 'MCP', 'mcp'],
 ];

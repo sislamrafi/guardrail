@@ -169,7 +169,9 @@ export function getLog(id: string): LogEntry | undefined {
 }
 
 export const OUTCOME_FILTERS: Record<string, Outcome[]> = {
-  blocked: ['blocked', 'rejected'],
+  // Blocked: a guard layer or rule stopped a real key's request. Rejected: refused before that (no or bad key, IP, limit).
+  blocked: ['blocked'],
+  rejected: ['rejected'],
   false_alarm: ['false_alarm'],
   clean: ['answered', 'redacted'],
   error: ['error'],
@@ -254,6 +256,7 @@ export function countByFilter(since?: number, groups?: number[], test?: LogScope
   return {
     all: rows.reduce((a, r) => a + r.n, 0),
     blocked: sum(OUTCOME_FILTERS.blocked),
+    rejected: sum(OUTCOME_FILTERS.rejected),
     false_alarm: sum(OUTCOME_FILTERS.false_alarm),
     clean: sum(OUTCOME_FILTERS.clean),
     error: sum(OUTCOME_FILTERS.error),
@@ -315,7 +318,7 @@ export function overview(range = '24h', at = Date.now(), groups?: number[], key?
   for (const r of rows) {
     const i = Math.min(n - 1, Math.max(0, Math.floor((r.ts - first) / R.bucket)));
     req[i].total++;
-    if (r.outcome === 'blocked' || r.outcome === 'rejected') req[i].blocked++;
+    if (r.outcome === 'blocked') req[i].blocked++;
     const st = safeJson<Record<string, number>>(r.stages, {});
     let o = 0;
     let g = 0;
