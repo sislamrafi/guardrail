@@ -13,7 +13,7 @@ import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
 import { DocEditor, DocsHome, KeyMcpView } from './views/docs';
-import { AgentPage } from './views/agent';
+import { AgentPage, chatTitles } from './views/agent';
 import { GroupEditor, GroupsHome } from './views/groups';
 import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
@@ -267,7 +267,8 @@ function Workbench() {
         <main className="cx-editor">
           <Tabs data={data} onClose={closeTab} />
           <Breadcrumbs data={data} />
-          <div className="cx-pane" key={nav.path}>
+          {/* Each page gets a fresh pane, except the agent: its first message moves /agent to /agent/<id> mid-stream. */}
+          <div className="cx-pane" key={nav.view === 'agent' ? 'agent' : nav.path}>
             {error && !data ? <div className="cx-error-pane">{error}</div> : <Editor />}
           </div>
         </main>
@@ -350,7 +351,7 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
     case 'context':
       return { title: data?.files.find((f) => f.id === n)?.name ?? 'File', icon: 'file', cls: 'md' };
     case 'agent':
-      return { title: 'Agent chat', icon: 'agent' };
+      return { title: chatTitles.get(n) ?? 'Agent chat', icon: 'agent' };
     case 'docs':
       if (id.startsWith('k')) return { title: `${data?.keys.find((k) => k.id === Number(id.slice(1)))?.name ?? 'Key'} · MCP`, icon: 'key', cls: 'key' };
       return { title: data?.docs.find((d) => d.id === n)?.title ?? 'Doc', icon: 'file', cls: 'md' };

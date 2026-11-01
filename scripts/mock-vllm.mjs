@@ -101,7 +101,10 @@ const server = http.createServer(async (req, res) => {
         chunk({ tool_calls: [{ index: 0, function: { arguments: call.function.arguments } }] });
         chunk({}, 'tool_calls');
       } else {
-        for (const w of answer.match(/\S+\s*/g) ?? [answer]) chunk({ content: w });
+        for (const w of answer.match(/\S+\s*/g) ?? [answer]) {
+          chunk({ content: w });
+          await new Promise((r) => setTimeout(r, TOKEN_MS));
+        }
         chunk({}, 'stop');
       }
       res.end('data: [DONE]\n\n');

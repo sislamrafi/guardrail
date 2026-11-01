@@ -552,18 +552,33 @@ export function AgentChat({ id }: { id: number | null }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const { ref: scroller, unseen, jump } = useStickToBottom<HTMLDivElement>(!!data);
 
-  const load = useCallback(async () => {
-    if (!id) return setState(null);
+  // The chat on screen. A stream keeps writing into the chat it started for (liveFor), even while the
+  // URL changes from /agent to /agent/<new id>; switching to another chat just stops showing it.
+  const shown = useRef(id);
+  shown.current = id;
+  const [liveFor, setLiveFor] = useState<number | null>(null);
+  const fetchChat = useCallback(async (cid: number | null) => {
+    if (!cid) return setState(null);
     try {
-      setState(await api(`agent/chats/${id}`));
-      setErr(null);
+      const d = await api<{ chat: Chat; messages: Msg[]; changes: Change[] }>(`agent/chats/${cid}`);
+      if (shown.current === cid || (shown.current === null && cid === created.current)) {
+        setState(d);
+        setErr(null);
+        chatTitles.set(cid, d.chat.title);
+      }
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [id]);
+  }, []);
+  const load = useCallback(() => fetchChat(id), [fetchChat, id]);
+  // A chat this view just created: moving to its URL must not reset what is streaming into it.
+  const created = useRef<number | null>(null);
   useEffect(() => {
+    if (id !== null && id === created.current) return;
+    created.current = null;
+    setState(null);
     void load();
-  }, [load]);
+  }, [id, load]);
 
   const choose = async (p: Pick) => {
     setSaved(p);
@@ -575,6 +590,7 @@ export function AgentChat({ id }: { id: number | null }) {
 
   const run = async (path: string, body: unknown, chatId: number) => {
     setBusy(true);
+    setLiveFor(chatId);
     setLive({ tokens: '', tools: [], ui: [], error: null });
     const ac = new AbortController();
     abort.current = ac;
@@ -588,15 +604,17 @@ export function AgentChat({ id }: { id: number | null }) {
           setLive((l) => l && { ...l, ui: [...l.ui, ...e.components] });
         } else if (e.type === 'changes' || e.type === 'title') agentChanged();
         else if (e.type === 'error') setLive((l) => l && { ...l, error: e.message });
-        if (e.type === 'assistant' || e.type === 'turn') void load();
+        if (e.type === 'assistant' || e.type === 'turn') void fetchChat(chatId);
       }, ac.signal);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') ui.toast((e as Error).message, true);
     } finally {
+      // Whatever happened to the stream, show what the server stored.
       setBusy(false);
       abort.current = null;
-      await load();
+      await fetchChat(chatId);
       setLive(null);
+      setLiveFor(null);
       agentChanged();
     }
   };
@@ -609,6 +627,8 @@ export function AgentChat({ id }: { id: number | null }) {
     if (!chatId) {
       const c = await api<Chat>('agent/chats', { body: { model: pick.model, serverId: pick.serverId } });
       chatId = c.id;
+      created.current = c.id;
+      // Same tab, now pointing at the new chat; this view stays mounted and keeps the stream.
       nav.go(pathFor('agent', c.id), { replace: true });
     }
     setText('');
@@ -721,7 +741,7 @@ export function AgentChat({ id }: { id: number | null }) {
             ) : null}
           </div>
         ))}
-        {live && (
+        {live && (liveFor === id || (id === null && liveFor === created.current)) && (
           <div className="cx-aturn">
             <div className="cx-amsg bot">
               <ToolSteps steps={live.tools.map((t) => ({ id: t.id, name: t.name, args: JSON.stringify(t.args), result: t.result === undefined ? undefined : JSON.stringify(t.result), status: t.status }))} live />
@@ -1145,8 +1165,12 @@ function ChangeDetail({ c, onRevert }: { c: Change; onRevert: () => void }) {
   );
 }
 
+/** Chat titles for the editor tabs (filled as chats load). */
+export const chatTitles = new Map<number, string>();
+
 export function AgentPage(): ReactNode {
   const nav = useNav();
-  return <AgentChat key={nav.id ?? 'new'} id={nav.id ? Number(nav.id) : null} />;
+  // Not keyed by chat: the first message of a new chat moves the URL to /agent/<id> while it streams.
+  return <AgentChat id={nav.id ? Number(nav.id) : null} />;
 }
 
