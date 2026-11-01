@@ -161,6 +161,9 @@ function Workbench() {
   };
 
   const sum = data?.summary;
+  // The blocked badges count every group and key, so their link shows every group and key (not the picked one).
+  const rootId = data?.groups.find((g) => g.parentId === null)?.id;
+  const blockedHref = `/activity?filter=blocked${rootId ? `&group=${rootId}` : ''}`;
   const group = data?.groups.find((g) => g.id === nav.group) ?? data?.groups.find((g) => g.parentId === null);
 
   return (
@@ -182,7 +185,7 @@ function Workbench() {
             <span>Search files, groups, keys, servers and commands</span>
             <kbd>⌘P</kbd>
           </button>
-          <button type="button" className="cx-tbtn" title={`Blocked in the last 24 hours: ${sum?.blockedToday ?? 0}. Open in Activity.`} aria-label="Blocked requests" onClick={() => nav.go('/activity?filter=blocked')}>
+          <button type="button" className="cx-tbtn" title={`${sum?.blockedToday ?? 0} blocked or rejected in the last 24 hours (all groups and keys, not test traffic). Open in Activity.`} aria-label="Blocked requests" onClick={() => nav.go(blockedHref)}>
             <Ico n="blocked" />
             {!!sum?.blockedToday && <span className="cx-count">{sum.blockedToday > 99 ? '99+' : sum.blockedToday}</span>}
           </button>
@@ -286,7 +289,7 @@ function Workbench() {
         <button type="button" onClick={() => nav.go('/guard')}>
           <Ico n={sum?.guard ? 'guard' : 'shieldOff'} size={13} /> Guard {sum?.guard ? 'on' : 'off'}
         </button>
-        <button type="button" onClick={() => nav.go('/activity?filter=blocked')}>
+        <button type="button" title="Blocked or rejected in the last 24 hours, all groups and keys, not test traffic" onClick={() => nav.go(blockedHref)}>
           <Ico n="blocked" size={13} /> {sum?.blockedToday ?? 0} blocked today
         </button>
         <div className="cx-grow" />
