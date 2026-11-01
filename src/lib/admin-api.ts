@@ -13,6 +13,8 @@ import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
 import { getDb } from './db';
+import { agentModels, createChat, deleteChat, getChat, listChats, listMessages, resolvePending, sendMessage, updateChat, type AgentEvent } from './agent/run';
+import { applyUndo, listChanges, undoPlan } from './agent/changes';
 import { checkAdmin, listSessions, logoutEverywhere, recentAudit, revokeFamily } from './auth';
 import { probeFormat } from './adapters';
 import { planFor } from './studio-plan';
@@ -297,6 +299,27 @@ const routes: Record<string, Handler> = {
     }
     deleteFile(id);
   },
+
+  // ---- agent ----
+  'GET agent/models': () => ({ models: agentModels() }),
+  'GET agent/chats': ({ url }) => ({ chats: listChats(url.searchParams.get('q') ?? undefined) }),
+  'POST agent/chats': ({ body }) => createChat((body.model as string) || null, body.serverId ? num(body.serverId, 'server') : null),
+  'GET agent/chats/:id': ({ params }) => {
+    const chat = getChat(num(params[0]));
+    if (!chat) throw new HttpError(404, 'Chat not found.');
+    return { chat, messages: listMessages(chat.id), changes: listChanges(chat.id) };
+  },
+  'PATCH agent/chats/:id': ({ params, body }) => updateChat(num(params[0]), { title: body.title as string | undefined, model: body.model as string | undefined, serverId: body.serverId === undefined ? undefined : body.serverId === null ? null : num(body.serverId, 'server') }),
+  'DELETE agent/chats/:id': ({ params }) => deleteChat(num(params[0])),
+  'POST agent/chats/:id/send': ({ params, body, req }) => {
+    const text = String(body.text ?? '').trim();
+    if (!text) throw new Error('Type a message first.');
+    return agentStream(req, (emit, signal) => sendMessage(num(params[0]), text, emit, signal));
+  },
+  'POST agent/chats/:id/confirm': ({ params, body, req }) => agentStream(req, (emit, signal) => resolvePending(num(params[0]), String(body.pending ?? ''), body.approve === true, emit, signal)),
+  'GET agent/chats/:id/undo': ({ params, url }) => ({ plan: undoPlan(num(params[0]), num(url.searchParams.get('turn'), 'turn'), url.searchParams.get('only') ? url.searchParams.get('only')!.split(',').map(Number) : undefined) }),
+  'POST agent/chats/:id/undo': ({ params, body }) =>
+    applyUndo(num(params[0]), num(body.turn ?? 0, 'turn'), { force: Array.isArray(body.force) ? (body.force as number[]).map(Number) : [], only: Array.isArray(body.only) ? (body.only as number[]).map(Number) : undefined }),
 
   // ---- admin sign-in ----
   'GET auth/sessions': () => ({ sessions: listSessions(), audit: recentAudit(30) }),
@@ -610,4 +633,52 @@ async function guardTest(body: Record<string, unknown>, onLayer?: Parameters<typ
   const segmentsFor = (scan: { user: boolean; tool: boolean }) => segments.filter((x) => (x.source === 'user message' ? scan.user : scan.tool));
   const pipe = await runPipeline({ segments, layers, resolution, escalate: null, unresolvedFlag: s.guard.unresolvedFlag, serverOf: (id) => getServer(id), metaOf: modelMeta, segmentsFor, onLayer });
   return { ...pipe, redact: pipe.redact.length, layers: layers.map((l) => ({ id: l.id, name: l.name })) };
+}
+
+/**
+ * Call an admin route from inside the server (the agent's tools). The caller is already signed in;
+ * this runs the same handler a console request would, with the same checks on its input.
+ */
+export async function invoke<T = unknown>(method: string, path: string, body: Record<string, unknown> = {}): Promise<T> {
+  const [p, q] = path.split('?');
+  const found = match(method, p.split('/').filter(Boolean));
+  if (!found) throw new HttpError(404, `No such action: ${method} ${p}`);
+  const url = new URL(`http://internal/api/admin/${p}${q ? `?${q}` : ''}`);
+  const out = await found.h({ params: found.params, body, url, req: new Request(url, { method }) });
+  if (out instanceof Response) return (await out.json().catch(() => ({}))) as T;
+  return (out ?? { ok: true }) as T;
+}
+
+/** Stream agent events as server-sent events; the client stopping the request stops the agent. */
+function agentStream(req: Request, run: (emit: (e: AgentEvent) => void, signal: AbortSignal) => Promise<void>) {
+  const enc = new TextEncoder();
+  const ac = new AbortController();
+  req.signal?.addEventListener('abort', () => ac.abort());
+  const stream = new ReadableStream<Uint8Array>({
+    async start(c) {
+      const send = (o: unknown) => {
+        try {
+          c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+        } catch {
+          /* client gone */
+        }
+      };
+      try {
+        await run(send, ac.signal);
+      } catch (e) {
+        send({ type: 'error', message: errMsg(e) });
+      } finally {
+        send({ type: 'done' });
+        try {
+          c.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+    cancel() {
+      ac.abort();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
 }

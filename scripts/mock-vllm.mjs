@@ -84,6 +84,31 @@ const server = http.createServer(async (req, res) => {
   const reply = body.model.includes('safeguard') ? judge(messages) : fixed ? 'Here is a safe answer that follows the rules.' : `Mock answer from ${body.model}. I received ${messages.length} message(s); the first starts with: ${text(messages[0]?.content).slice(0, 80).replace(/\s+/g, ' ')}; the last says: ${text(messages.at(-1)?.content).slice(0, 120).replace(/\s+/g, ' ')}`;
   const created = Math.floor(Date.now() / 1000);
   const id = `cmpl-mock-${Date.now()}`;
+
+  // Scripted tool calling (for the console agent): a user message "[tool:name {json args}]" makes the
+  // model call that tool; after the tool answers, it replies "Done: …" with the result.
+  if (chat && Array.isArray(body.tools)) {
+    const last = messages.at(-1);
+    const m = last?.role === 'user' ? /^\[tool:(\w+)\s*(\{[\s\S]*\})?\]$/.exec(text(last.content).trim()) : null;
+    const call = m ? { id: `call_${Date.now()}`, type: 'function', function: { name: m[1], arguments: m[2] ?? '{}' } } : null;
+    const answer = last?.role === 'tool' ? `Done: ${text(last.content).slice(0, 200)}` : call ? '' : `Mock agent here. I received: ${text(last?.content).slice(0, 120)}`;
+    if (body.stream) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+      chunk({ role: 'assistant', content: '' });
+      if (call) {
+        chunk({ tool_calls: [{ index: 0, id: call.id, type: 'function', function: { name: call.function.name, arguments: '' } }] });
+        chunk({ tool_calls: [{ index: 0, function: { arguments: call.function.arguments } }] });
+        chunk({}, 'tool_calls');
+      } else {
+        for (const w of answer.match(/\S+\s*/g) ?? [answer]) chunk({ content: w });
+        chunk({}, 'stop');
+      }
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    return send(res, 200, { id, object: 'chat.completion', created, model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: answer || null, ...(call ? { tool_calls: [call] } : {}) }, finish_reason: call ? 'tool_calls' : 'stop' }] });
+  }
   const words = reply.match(/\S+\s*/g) ?? [reply];
 
   if (body.stream) {
