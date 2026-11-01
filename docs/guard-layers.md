@@ -9,6 +9,8 @@ After authentication (key, IP, schema, model access, rate limit, custom rules)  
   2. layer
   …
 Add context, call the model                                                      ← fixed
+  after-the-model layers (check the answer, can retry)
+Return the answer to the client                                                  ← fixed
 ```
 
 Layers are edited on the **Guard checks** page. Each group can switch any layer on or off for
@@ -18,7 +20,7 @@ itself and its sub-groups ("same as parent / on / off"), like every other group 
 
 | Field | Meaning |
 | --- | --- |
-| Type | `classifier` (a scoring model), `judge` (an LLM with a system prompt), `patterns` (built-in injection patterns, no model), `redactor` (built-in secrets and PII redactor, no model). |
+| Type | `classifier` (a scoring model), `judge` (an LLM with a system prompt), `patterns` (built-in injection patterns, no model), `redactor` (built-in secrets and PII redactor, no model), `router` (a decision model picks the model; see [routing.md](routing.md)). |
 | Model, server | Any model on any server, on or off for clients. Decision and text models are listed first. |
 | Adapter | How to read the model's answer (below). `auto` picks one from the model name. |
 | Prompt, block when, allow when | The judge's system prompt and optional extra guidance. Groups can append lines. |
@@ -27,6 +29,10 @@ itself and its sub-groups ("same as parent / on / off"), like every other group 
 | When it says no | `block` stops the request with the blocked reply. `flag` passes it on as flagged to later layers. `redact` replaces the matches with `[REDACTED]` and continues. |
 | If it fails | `allow`, `block`, or (for scoring layers) fall back to the built-in patterns. |
 | Time limit | Per call. |
+| When it runs | `input` (before the model, default) or `output` (checks the answer; see [after-model-checks.md](after-model-checks.md)). Output layers add **retry**, **Retries**, **When retries run out**, **Retry prompt** and **Only tool calls**. |
+| Where the check goes | `prefix` (layer prompt, then the content) or `suffix` (the request exactly as the model gets it, then the question). With **Use the request's model**, the check shares the model call's prompt cache; see [caching.md](caching.md). |
+| What this layer reads | New user message, new tool results, the agent's system prompt. Empty uses the global default on the Guard checks page. |
+| Decision question | For Decisions-API models: a yes/no, choice or score question, and what each answer does. |
 
 A request still flagged when the pipeline ends is decided by **Flag nobody cleared** (block or allow).
 A flag that a later layer clears is logged as a **false alarm**.

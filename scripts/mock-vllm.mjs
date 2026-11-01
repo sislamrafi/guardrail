@@ -9,6 +9,8 @@
 //
 // Usage: node scripts/mock-vllm.mjs [port] [model,model,...]
 import http from 'node:http';
+// Delay between streamed words (ms); raise it to watch streaming, e.g. MOCK_TOKEN_MS=120.
+const TOKEN_MS = Number(process.env.MOCK_TOKEN_MS) || 5;
 
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 const models = (process.argv[3] ?? process.env.MODELS ?? 'qwen3-coder-30b,gpt-oss-120b').split(',').filter(Boolean);
@@ -90,7 +92,7 @@ const server = http.createServer(async (req, res) => {
     if (chat) chunk({ id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
     for (const w of words) {
       chunk(chat ? { id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: { content: w }, finish_reason: null }] } : { id, object: 'text_completion', created, model: body.model, choices: [{ index: 0, text: w, finish_reason: null }] });
-      await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, TOKEN_MS));
     }
     chunk(chat ? { id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } : { id, object: 'text_completion', created, model: body.model, choices: [{ index: 0, text: '', finish_reason: 'stop' }] });
     res.end('data: [DONE]\n\n');

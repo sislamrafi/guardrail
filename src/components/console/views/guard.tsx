@@ -171,6 +171,28 @@ export function GuardPage() {
   const group = data.groups.find((x) => x.id === nav.group) ?? data.groups.find((x) => x.parentId === null)!;
   const dirty = JSON.stringify({ scan: g.scan, reply: g.reply, unresolvedFlag: g.unresolvedFlag }) !== JSON.stringify({ scan: data.settings.guard.scan, reply: data.settings.guard.reply, unresolvedFlag: data.settings.guard.unresolvedFlag });
   const save = () => ui.run(() => api('settings', { method: 'PATCH', body: { guard: { scan: g.scan, reply: g.reply, unresolvedFlag: g.unresolvedFlag } } }), 'Guard settings saved');
+  // One pipeline row: before-the-model layers above "call the model", after-the-model layers below it.
+  const step = (l: GuardLayer, i: number) => {
+    const st = layerState(l, group, data.groups);
+    return (
+      <li key={l.id} className={st.on ? '' : 'off'}>
+        <button type="button" className="cx-pipe-step" onClick={() => nav.go(pathFor('guard', l.id))}>
+          <span className="cx-layer-n">{i + 1}</span>
+          <b>{l.name}</b>
+          <span className="cx-muted">
+            {LAYER_TYPES[l.type]}
+            {l.model ? ` · ${l.model}` : ''}
+          </span>
+          <span className="grow" />
+          {l.scope === 'flagged' && l.stage !== 'output' && <Pill>if flagged</Pill>}
+          {l.type === 'router' ? <Pill tone="info">Picks the model</Pill> : <Pill tone={l.onFail === 'block' ? 'bad' : l.onFail === 'redact' ? 'warn' : 'info'}>{l.onFail === 'retry' ? `Ask the model to fix it (×${l.retries ?? 2})` : ON_FAIL[l.onFail]}</Pill>}
+          <Pill tone={st.on ? 'ok' : ''} title={`From ${st.from}`}>
+            {st.on ? 'On' : 'Off'} for {group.name}
+          </Pill>
+        </button>
+      </li>
+    );
+  };
   return (
     <Page
       icon="guard"
@@ -195,30 +217,16 @@ export function GuardPage() {
           <li className="anchor">
             <Ico n="key" size={14} /> <b>After authentication</b> <span className="cx-muted">key, IP, schema, model access, rate limit, custom rules</span>
           </li>
-          {g.layers.map((l, i) => {
-            const st = layerState(l, group, data.groups);
-            return (
-              <li key={l.id} className={st.on ? '' : 'off'}>
-                <button type="button" className="cx-pipe-step" onClick={() => nav.go(pathFor('guard', l.id))}>
-                  <span className="cx-layer-n">{i + 1}</span>
-                  <b>{l.name}</b>
-                  <span className="cx-muted">
-                    {LAYER_TYPES[l.type]}
-                    {l.model ? ` · ${l.model}` : ''}
-                  </span>
-                  <span className="grow" />
-                  {l.scope === 'flagged' && <Pill>if flagged</Pill>}
-                  <Pill tone={l.onFail === 'block' ? 'bad' : l.onFail === 'redact' ? 'warn' : 'info'}>{ON_FAIL[l.onFail]}</Pill>
-                  <Pill tone={st.on ? 'ok' : ''} title={`From ${st.from}`}>
-                    {st.on ? 'On' : 'Off'} for {group.name}
-                  </Pill>
-                </button>
-              </li>
-            );
-          })}
+          {g.layers.map((l, i) => (l.stage === 'output' ? null : step(l, i)))}
           <li className="anchor">
             <Ico n="send" size={14} /> <b>Add context, call the model</b>
           </li>
+          {g.layers.map((l, i) => (l.stage === 'output' ? step(l, i) : null))}
+          {g.layers.some((l) => l.stage === 'output') && (
+            <li className="anchor">
+              <Ico n="forward" size={14} /> <b>Return the answer to the client</b> <span className="cx-muted">after the checks above pass</span>
+            </li>
+          )}
         </ol>
       </Section>
       <div className="cx-cols">
