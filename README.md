@@ -1,6 +1,6 @@
 # Opsara AI
 
-[![GitHub stars](https://img.shields.io/github/stars/sislamrafi/guardrail?style=social)](https://github.com/sislamrafi/guardrail/stargazers) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/sislamrafi/opsara?style=social)](https://github.com/sislamrafi/opsara/stargazers) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **Control how your company uses AI: secure every request, keep proprietary information in, and run
 your team's coding agents from one place, including by chatting with an agent of its own.**
@@ -8,7 +8,7 @@ your team's coding agents from one place, including by chatting with an agent of
 *Formerly **GuardRail**. The old names still work: `GUARDRAIL_*` environment variables,
 `grk_live_…` API keys and `guardrail://` MCP links.*
 
-> ⭐ **If Opsara is useful to you or your company, please [star it on GitHub](https://github.com/sislamrafi/guardrail).**
+> ⭐ **If Opsara is useful to you or your company, please [star it on GitHub](https://github.com/sislamrafi/opsara).**
 > It helps other teams find it and keeps the project going.
 
 Opsara sits between coding agents (Cline, Claude Code, Cursor, any OpenAI-compatible client) and
@@ -482,8 +482,8 @@ More detail is in [docs/architecture.md](docs/architecture.md).
 Requirements: Node.js 20 or later. `better-sqlite3` builds a native module on install.
 
 ```bash
-git clone https://github.com/sislamrafi/guardrail.git
-cd guardrail
+git clone https://github.com/sislamrafi/opsara.git
+cd opsara
 npm install
 cp .env.example .env
 ```
@@ -654,7 +654,7 @@ classifier, judge and decision endpoints. To watch streaming in the console, slo
 
 ## Support the project
 
-- ⭐ **[Star Opsara on GitHub](https://github.com/sislamrafi/guardrail)**. It is the simplest way to
+- ⭐ **[Star Opsara on GitHub](https://github.com/sislamrafi/opsara)**. It is the simplest way to
   help.
 - Using Opsara at your company? Open an issue and say hello: it helps decide what comes next.
 - Found a bug or want a feature (custom MCP tools are next)? Issues and pull requests are welcome.
