@@ -10,6 +10,7 @@ import { ActivityList } from './views/activity';
 import { LayersPanel } from './views/guard';
 import { ContextPanel } from './views/context';
 import { McpPanel } from './views/docs';
+import { AgentChangeLog } from './views/agent';
 
 /** The secondary sidebar: stats for the open file, or for the selected group. */
 export function Details({ width }: { width: number }) {
@@ -22,8 +23,9 @@ export function Details({ width }: { width: number }) {
   const group = data.groups.find((g) => g.id === gid) ?? root;
   const scenario = nav.view === 'studio' && nav.id ? Number(nav.id) : null;
   // Each section shows what applies to the group or key picked in the explorer.
-  const head: Partial<Record<string, string>> = { docs: 'MCP ACCESS', guard: 'GUARD LAYERS', activity: 'REQUESTS', context: 'CONTEXT FILES' };
+  const head: Partial<Record<string, string>> = { agent: 'CHANGES IN THIS CHAT', docs: 'MCP ACCESS', guard: 'GUARD LAYERS', activity: 'REQUESTS', context: 'CONTEXT FILES' };
   const body =
+    nav.view === 'agent' ? <AgentChangeLog /> :
     nav.view === 'docs' ? <McpPanel data={data} /> :
     nav.view === 'activity' ? <ActivityList /> :
     nav.view === 'guard' ? <LayersPanel data={data} /> :

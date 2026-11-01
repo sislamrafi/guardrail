@@ -13,6 +13,7 @@ import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
 import { DocEditor, DocsHome, KeyMcpView } from './views/docs';
+import { AgentPage } from './views/agent';
 import { GroupEditor, GroupsHome } from './views/groups';
 import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
@@ -33,6 +34,7 @@ const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
   { view: 'docs', label: 'MCP docs', icon: 'mcp' },
+  { view: 'agent', label: 'Agent', icon: 'agent' },
 ];
 // Bottom of the activity bar, above Account and Settings.
 const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
@@ -40,8 +42,8 @@ const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
   { view: 'studio', label: 'Studio', icon: 'studio', title: 'Studio: send test requests' },
   { view: 'schemas', label: 'Schemas', icon: 'braces', title: 'Schemas' },
 ];
-const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', schemas: 'braces', studio: 'studio', settings: 'settings' };
-const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
+const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', agent: 'agent', schemas: 'braces', studio: 'studio', settings: 'settings' };
+const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', agent: 'Agent', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
 
 /** The whole console. Mounted once by the (console) layout, so it survives navigation. */
 export function ConsoleApp() {
@@ -347,6 +349,8 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
   switch (view) {
     case 'context':
       return { title: data?.files.find((f) => f.id === n)?.name ?? 'File', icon: 'file', cls: 'md' };
+    case 'agent':
+      return { title: 'Agent chat', icon: 'agent' };
     case 'docs':
       if (id.startsWith('k')) return { title: `${data?.keys.find((k) => k.id === Number(id.slice(1)))?.name ?? 'Key'} · MCP`, icon: 'key', cls: 'key' };
       return { title: data?.docs.find((d) => d.id === n)?.title ?? 'Doc', icon: 'file', cls: 'md' };
@@ -565,6 +569,8 @@ function Editor(): ReactNode {
       return id ? <ContextFileEditor id={n} /> : <ContextHome />;
     case 'rules':
       return id ? <RuleEditor id={id === 'new' ? 'new' : n} /> : <RulesHome />;
+    case 'agent':
+      return <AgentPage />;
     case 'docs':
       return id?.startsWith('k') ? <KeyMcpView id={Number(id.slice(1))} /> : id ? <DocEditor id={n} /> : <DocsHome />;
     case 'schemas':

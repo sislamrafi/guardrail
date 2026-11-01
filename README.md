@@ -274,6 +274,19 @@ context size and price. Chips narrow it by type.
 
 ![Model picker](docs/screenshots/model-picker.jpg)
 
+### Console agent
+
+The **Agent** section is a chat that runs the whole console with a model from your own servers:
+- It creates and edits groups, keys, context files, MCP docs, guard layers, rules, servers and
+  settings, and changes the console's theme.
+- It shows tables, charts, choices and forms in the chat.
+- The left side lists your chats. The right side logs every change it made, field by field.
+- **Undo to here** on any message reverts everything from that point. Files and docs come back as
+  new versions, and anything changed since is flagged as a conflict.
+- Deleting, revoking and rotating wait for your **Confirm**. Secrets never pass through the model:
+  server keys go through a secure field, and key secrets are revealed to you only.
+- Every open console view updates live when anything changes. See [docs/agent.md](docs/agent.md).
+
 ### MCP docs server
 
 GuardRail is also an MCP server at `/mcp` (Streamable HTTP). Agents connect with the same API key and
@@ -527,6 +540,7 @@ agent shows it and you can find the request in Activity.
 | [docs/caching.md](docs/caching.md) | Prefix vs suffix checks, provider pinning, cache breakpoints |
 | [docs/routing.md](docs/routing.md) | Router layers and decision questions that pick a model |
 | [docs/studio.md](docs/studio.md) | Scenarios, live debug, replay |
+| [docs/agent.md](docs/agent.md) | The console agent: tools, confirm, change log, undo, live updates |
 | [docs/security.md](docs/security.md) | Console sign-in: access and refresh tokens, rotation, lockout, sessions |
 | [docs/mcp.md](docs/mcp.md) | MCP docs server: connecting Claude Code, Cline, Cursor; tools, resources, sharing |
 | [docs/api.md](docs/api.md) | Gateway and admin HTTP API |

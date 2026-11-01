@@ -9,7 +9,7 @@ import type { AppSettings } from '@/lib/settings';
 export type { ModelKind, Scenario };
 export type { GroupSettings, LimitView, LogEntry, Resolution, Rule, SettingKey, AppSettings };
 
-export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'docs', 'schemas', 'studio', 'settings'] as const;
+export const VIEWS = ['overview', 'activity', 'guard', 'servers', 'groups', 'keys', 'context', 'rules', 'docs', 'agent', 'schemas', 'studio', 'settings'] as const;
 export type View = (typeof VIEWS)[number];
 
 export interface GroupC {
