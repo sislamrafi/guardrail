@@ -69,4 +69,4 @@ Each attempt is logged separately: *Answer check · answer #1* (rejected, with r
 *answer #2*, and so on. The Summary tab shows the verdict, latency, cost and cache hits of each
 attempt. The Session tab shows the final reply.
 
-![After-the-model layer editor](screenshots/guard-after-model.png)
+![After-the-model layer editor](screenshots/guard-after-model.jpg)

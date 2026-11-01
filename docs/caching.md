@@ -59,4 +59,4 @@ Short prompts (under about 1,024 tokens) aren't cached by most providers at all.
 sessions are usually well above that. For a worked example on real traffic, see
 [cache-analysis-2026-11-01.md](cache-analysis-2026-11-01.md).
 
-![Suffix layer and cache warning](screenshots/guard-suffix-layer.png)
+![Suffix layer and cache warning](screenshots/guard-suffix-layer.jpg)

@@ -1,26 +1,31 @@
 # GuardRail AI
 
-**A security gateway and admin console for coding agents.** GuardRail sits between agents such as
-Cline, Claude Code and Cursor and your LLM servers (vLLM, OpenRouter, any OpenAI-compatible API).
-Every request is authenticated, checked by a pipeline of guard models you configure, given your
-team's project context, routed to the right model, and logged in full. The model's answer can be
-checked as well before the agent sees it.
+**A security gateway and an agentic workspace for coding teams.** GuardRail sits between agents
+such as Cline, Claude Code and Cursor and your LLM servers (vLLM, OpenRouter, any OpenAI-compatible
+API). It does two jobs with one API key per person or bot:
 
-Agents only need a base URL and a key. There is no SDK, no plugin and no change to the agent. The
-same key also connects them to **GuardRail Docs**, an MCP server that serves your team's runbooks and
-conventions on demand.
+- **Guards every request.** Each request is authenticated, checked by a pipeline of guard models you
+  configure, given your team's context, routed to the right model and logged in full. The model's
+  answer can be checked too, before the agent sees it.
+- **Runs the team's agents.** Through its MCP server, agents discover the work, runbooks and
+  conventions you assigned to their team or to them personally. Each request says who is calling,
+  and you can see what every agent did. GuardRail becomes a light project-management layer for a
+  company's agents.
 
-![Overview dashboard](docs/screenshots/overview.png)
+Agents only need a base URL and a key. There is no SDK, no plugin and no change to the agent.
+
+![Overview dashboard](docs/screenshots/overview.jpg)
 
 ## Contents
 
 - [Why GuardRail](#why-guardrail)
 - [Use cases](#use-cases)
+- [Agentic project management with MCP](#agentic-project-management-with-mcp)
+- [What's new](#whats-new)
 - [Features](#features)
 - [How a request flows](#how-a-request-flows)
 - [Quick start](#quick-start)
 - [Connect a client](#connect-a-client)
-- [MCP docs server](#mcp-docs-server)
 - [Configuration](#configuration)
 - [Security notes](#security-notes)
 - [Documentation](#documentation)
@@ -45,6 +50,10 @@ GuardRail puts one controlled point in front of the models:
   why, what was sent to the model, and the full reply. You can replay it, label it or export it.
 - **Cheaper and faster.** Checks that reuse the model's prompt cache, a router that sends easy
   requests to small models, and sticky providers on OpenRouter.
+- **A shared brain for the team's agents.** Tasks, specs, runbooks and conventions live in GuardRail
+  as MCP docs, assigned per team or per person. Agents pull what they need when they need it.
+- **One place to manage it all.** Pick a group or a key on the left. Every section then shows what
+  applies to it, own or inherited, and lets you switch any of it on or off for that group or key.
 
 ## Use cases
 
@@ -55,28 +64,124 @@ GuardRail puts one controlled point in front of the models:
 | **Per-team policies** | Engineering, QA, contractors and CI bots each get their own models, context files, layers and rate limits through the group tree. A key can carry its own exceptions. |
 | **Cost and latency control** | A router layer asks a decision model how hard a request is and sends it to the matching model. Suffix checks share the prompt cache with the real call, so a check over a long conversation costs a fraction of the tokens. |
 | **Fine-tuning and evaluation datasets** | Label requests in Activity (*correct block*, *false alarm*, *missed attack*…), then export a date range as JSONL with the prompt, every layer's decision and the reply. |
+| **Agentic project management** | Write today's tasks, specs and who-does-what as MCP docs and assign them to a team (group) or a person (key). Each agent asks "what's my task?", reads its assignment over MCP and works on it locally. The caller line tells the model who it works for, and Activity shows what each agent did. |
 | **Shared team knowledge for agents** | Runbooks, API guides and conventions as MCP docs. Each agent reads only what its group or key may see, only when it needs it, so nothing is added to every prompt. |
+| **Onboarding people and agents** | A new key inherits its team's context files, guard layers and docs straight away. Exceptions for one person (an extra doc, a layer off, a file left out) are a switch in the right panel. |
 | **Debugging agents** | Activity shows the whole turn: what the agent sent, the context added, every check with its timing and answer, the model's reply and its tool calls. Studio replays scenarios live and shows each step as it happens. |
 
+## Agentic project management with MCP
+
+The MCP docs server turns GuardRail into a coordination layer for a company's coding agents:
+
+1. **Admins write runtime docs** in the console: today's tasks, specs, runbooks, conventions,
+   who-does-what. These are Markdown files with a title, slug, tags and a description that agents
+   read to decide what to open.
+2. **They assign them** to a team (a group, inherited by its sub-groups) or to one person or agent
+   (a key). An inherited doc can be switched off for one sub-team or key.
+3. **Agents discover their assignments** over MCP with the same API key they use for the model
+   (`list_docs`, `search_docs`, `read_doc`, or `guardrail://docs/<slug>` resources).
+4. **The model knows who it works for.** The caller line (`Request from: mina (API key: mina-vscode)`)
+   goes first in the context, followed by the team's context files.
+5. **Every step is guarded and logged.** The agent's model calls pass the team's guard layers. Its
+   MCP calls and model calls appear in Activity, filtered by team or by key.
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant GR as GuardRail
+    participant Agent as Agent (Claude Code / Cline / Cursor)
+    participant LLM as Model
+    Admin->>GR: Write "tasks" doc, share with group frontend
+    Agent->>GR: MCP list_docs (key mina-vscode)
+    GR-->>Agent: tasks — "to see what your task is today"
+    Agent->>GR: MCP read_doc("tasks")
+    GR-->>Agent: "mina: build the pricing page…"
+    Agent->>GR: POST /v1/chat/completions (works on the task locally)
+    GR->>GR: key, IP, rules, guard layers, add caller line + context
+    GR->>LLM: guarded request
+    LLM-->>GR: answer (checked after the model)
+    GR-->>Agent: answer
+    Note over GR: Activity: MCP calls and model calls for mina-vscode
+```
+
+**Example.** An admin creates a `tasks` doc ("mina builds the pricing page; tom adds the export
+API") and shares it with the `Frontend` group. In Claude Code on Mina's laptop, connected with the
+`mina-vscode` key, Mina asks *"what's my task today?"*. The agent calls `list_docs`, reads `tasks`,
+and starts on the page. Every model call it makes goes through Frontend's guard layers, carries
+Frontend's context files and the caller line, and shows up in Activity under `mina-vscode`.
+
+**Planned:** custom MCP tools, so agents can also *write back*: update a task's status, post a
+progress note, or ask for a review. Tools already live in a registry
+(`registerTool` in `src/lib/mcp.ts`). The console shows them as *coming later*.
+
+![MCP docs for a key](docs/screenshots/mcp-key-view.jpg)
+
+## What's new
+
+Added since the previous README:
+
+- **GuardRail Docs (MCP server)** at `/mcp`:
+  - docs assigned per group or key, with list, search (BM25) and read tools and resources;
+  - copy-paste setup for Claude Code, Cline, Cursor and VS Code;
+  - **Test as a key**, a per-key MCP view, an MCP access switch per key, and MCP calls in Activity.
+- **One groups-and-keys explorer** in every section. A right panel shows what applies to the
+  picked group or key, with **Active / All** tabs, an on/off switch on every row, a short source
+  tag (*Own*, *Key*, *↳ group*, *Off here*) and a small, hideable footer with counts.
+- **Per-key overrides and exclusions.** Context files, MCP docs and guard layers can be switched
+  off for a sub-group or a single key ("Off here"). Sub-groups inherit that, and a sub-group can
+  add an item back. The gateway, the MCP server and Studio's planned view all apply it.
+- **Blocked vs Rejected.** *Blocked* means a guard layer or rule stopped a real key's request.
+  *Rejected* means refused before any check (no or invalid key, IP not allowed, revoked or expired,
+  rate limit). Badges count Blocked only and open Activity for all groups. An empty filtered list
+  says what is hidden and offers "Show all".
+- **Caller identity line, checks after the model with retries, suffix (cache-sharing) checks, the
+  router layer, decision models, live Studio and tester progress**: see Features below.
+
 ## Features
+
+### The groups-and-keys workspace
+
+Every section that works on a group or a key (Overview, Activity, Groups, API keys, Guard checks,
+Context files, MCP docs) shows the same tree on the left: groups, and each group's API keys under
+it. Pick one, and it stays picked as you move between sections. The right sidebar opens and shows
+what applies to it in that section:
+
+- **Active** lists what is in effect, in order. **All** is the whole library with search.
+- Every row has an on/off switch and a short tag: *Own*, *Key* (this key only), *↳ group*
+  (inherited from that group) or *Off here*.
+- Switching off an own item removes it. Switching off an inherited one leaves it out for this
+  group and its sub-groups, or for this key only.
+- **New** and **Upload .md** create the item straight into the picked group or key. You can also
+  drag an item from the list onto any group or key in the tree.
+- Click a name to open it in the middle.
+
+| Context files for a key | Everything, with switches |
+| --- | --- |
+| ![Active context files](docs/screenshots/context-scope.jpg) | ![All context files](docs/screenshots/context-all.jpg) |
+
+![Guard layers for a key](docs/screenshots/guard-scope.jpg)
 
 ### Groups and inheritance
 
 Groups form a tree under **Everyone**. Each setting (servers, models, context files, guard layers,
-layer options, blocked reply, rate limit) is inherited, added to (`add`) or replaced (`override`).
+layer options, blocked reply, rate limit, MCP docs) is inherited, added to (`add`) or replaced
+(`override`). Context files and MCP docs can also be *excluded* lower down. A key's own settings
+are applied last, as "This key".
 The **Effective** tab shows the result and which group contributed each value.
 
-![Effective rules for a group](docs/screenshots/groups.png)
+![Effective rules for a group](docs/screenshots/groups.jpg)
 
 Each group can switch any guard layer on or off for itself and its sub-groups, and add lines to a
 judge's prompt or a decision model's policy.
 
-![Guard layers for a group](docs/screenshots/group-guard-layers.png)
+![Guard layers for a group](docs/screenshots/group-guard-layers.jpg)
 
 ### API keys
 
-- A key belongs to one group and gets everything that group resolves to, plus its own exceptions
-  (an extra context file, an extra model, a different rate limit).
+- A key belongs to one group and gets everything that group resolves to, plus its own exceptions:
+  an extra context file or MCP doc, an inherited one switched off, a guard layer on or off for
+  this key only, an extra model, or a different rate limit.
+- **MCP access** switch per key (on by default).
 - **IP binding.** Single addresses or CIDR ranges. A request from anywhere else gets a 403. The real
   socket address is used, so a client cannot fake it with `X-Forwarded-For`.
 - **Reveal, copy and rotate.** Secrets are stored encrypted, so an admin can reveal one later.
@@ -85,7 +190,7 @@ judge's prompt or a decision model's policy.
   `Request from: mina (API key: mina-vscode)`. The line is the same on every request, so prompt
   caching still works. You can turn it off for each key.
 
-![API key with caller identity](docs/screenshots/keys.png)
+![API key with caller identity](docs/screenshots/keys.jpg)
 
 ### Context files with versions
 
@@ -93,7 +198,7 @@ Markdown files (coding standards, security policy, repo layout…) are attached 
 to every request in order, wrapped in `<project_context>` tags at the top of the system prompt.
 Every save is a new version you can view and restore.
 
-![Context file editor](docs/screenshots/context-files.png)
+![Context file editor](docs/screenshots/context-files.jpg)
 
 ### Dynamic guard layers
 
@@ -101,7 +206,7 @@ The **Guard checks** page is the pipeline. It shows the fixed authentication ste
 run before the model, "Add context, call the model", the layers that check the answer, and "Return
 the answer to the client".
 
-![Guard pipeline](docs/screenshots/guard.png)
+![Guard pipeline](docs/screenshots/guard.jpg)
 
 Layer types:
 
@@ -126,7 +231,7 @@ list and switches the editor to a **decision question**: yes/no, choice or score
 instructions and criteria, and map each answer to allow, block or flag. Presets cover injection,
 safety and tool-call approval, and saved questions can be reused across layers.
 
-![Decision layer editor](docs/screenshots/guard-decision-layer.png)
+![Decision layer editor](docs/screenshots/guard-decision-layer.jpg)
 
 #### Custom mapping adapter
 
@@ -145,7 +250,7 @@ provider's prompt cache. In our tests on a 2,500-token conversation, 92% of each
 something will stop the cache from hitting, such as a different model, a short time limit or a
 redactor earlier in the pipeline.
 
-![Suffix layer with cache warning](docs/screenshots/guard-suffix-layer.png)
+![Suffix layer with cache warning](docs/screenshots/guard-suffix-layer.jpg)
 
 #### Checks after the model, with retries
 
@@ -154,7 +259,7 @@ can send it back to the model with the reason as feedback, up to N times, and th
 it through flagged. Streaming clients receive keep-alives while they wait, then the checked answer
 as a normal stream. See [docs/after-model-checks.md](docs/after-model-checks.md).
 
-![After-the-model layer](docs/screenshots/guard-after-model.png)
+![After-the-model layer](docs/screenshots/guard-after-model.jpg)
 
 #### Router layer
 
@@ -167,51 +272,63 @@ fallback model or the client's own choice. See [docs/routing.md](docs/routing.md
 Every model field opens a searchable, sortable table of all models on all servers, with type,
 context size and price. Chips narrow it by type.
 
-![Model picker](docs/screenshots/model-picker.png)
+![Model picker](docs/screenshots/model-picker.jpg)
 
 ### MCP docs server
 
-GuardRail is also an MCP server at `/mcp`. Agents connect with the same API key and get the docs
-shared with their group (inherited) or their key. They can list, search and read them with the
-`list_docs`, `search_docs` and `read_doc` tools, or as `guardrail://docs/<slug>` resources.
+GuardRail is also an MCP server at `/mcp` (Streamable HTTP). Agents connect with the same API key and
+get the docs shared with their group (inherited) or their key. They use the `list_docs`,
+`search_docs` and `read_doc` tools, or the `guardrail://docs/<slug>` resources. See
+[Agentic project management with MCP](#agentic-project-management-with-mcp) for how teams use it.
 
-- **Explorer.** Create docs, upload `.md` files, and drag a doc onto a group to share it.
-- **Doc editor.** Markdown with preview, autosave, versions, tags, and a **Who can see this** panel
-  for groups and single keys.
-- **MCP docs page.** Copy-paste setup for Claude Code, Cline, Cursor and VS Code, what each key
-  sees, and **Test as a key**.
-- **Access.** The same key checks as `/v1` (revoked, expired, IP binding, rate limit), plus an MCP
-  access switch per key.
-- **Activity.** MCP calls are logged under their own **MCP** filter.
+- **Right panel.** Pick a group or key. *Active* shows the docs it can read, *All* lets you switch
+  any doc on or off for it, and **New doc** / **Upload .md** create straight into it.
+- **Doc editor.** Markdown with preview, autosave, versions, tags, a description for agents, and a
+  **Who can see this** panel.
+- **Key view.** Click a key to see the docs it reads and why, run **Test as a key**
+  (`list_docs`, `search_docs`, `read_doc`, `resources/list`) and see its recent MCP calls.
+- **MCP docs page.** Endpoint and copy-paste setup for Claude Code, Cline, Cursor and VS Code, and
+  what each key sees.
+- **Access.** The same key checks as `/v1` (revoked, expired, IP binding, rate limit), plus the
+  per-key MCP access switch.
+- **Activity.** MCP calls are logged under their own **MCP** filter with tool, docs touched, size,
+  latency and client name.
 
 ```bash
 claude mcp add --transport http guardrail http://your-host:3000/mcp \
   --header "Authorization: Bearer grk_live_YOUR_KEY_HERE"
 ```
 
-![MCP docs](docs/screenshots/mcp-docs.png)
+![MCP docs](docs/screenshots/mcp-docs.jpg)
 
-![MCP doc editor](docs/screenshots/mcp-doc-editor.png)
+![MCP doc editor](docs/screenshots/mcp-doc-editor.jpg)
 
 See [docs/mcp.md](docs/mcp.md) for Cline, Cursor and VS Code configs and the protocol details.
 
 ### Activity
 
 Every request is shown with its key, person, group, model, outcome and timing. Filters and search
-cover all of them.
+cover all of them, and the list follows the group or key picked on the left.
 
-![Activity log](docs/screenshots/activity.png)
+- **Filters:** Clean, False alarm, Error, **Blocked** (a guard layer or rule stopped a real key's
+  request), **Rejected** (refused before any check: no or invalid key, IP not allowed, revoked or
+  expired key, rate limit) and **MCP** (doc reads by agents).
+- **Badges** in the title bar and status bar count Blocked requests from the last 24 hours, for
+  all groups (not test traffic). Clicking one opens that list. If the current group or key hides
+  matching requests, the list says how many and offers **Show all**.
+
+![Activity log](docs/screenshots/activity.jpg)
 
 - **Summary.** Each step and layer with its verdict, score, reason, latency, cost and prompt-cache
   hits (and the provider that served it).
 
-  ![Activity summary](docs/screenshots/activity-summary.png)
+  ![Activity summary](docs/screenshots/activity-summary.jpg)
 
 - **Session.** The conversation as the model saw it, with the context that was added, and *this
   turn's response*: the assistant's reply, reasoning and tool calls. Chips filter the view to user,
   assistant, tool calls or tool results. Markdown is rendered everywhere.
 
-  ![Activity session view](docs/screenshots/activity-session.png)
+  ![Activity session view](docs/screenshots/activity-session.jpg)
 
 - **Replay** sends a logged request through the gateway again, with today's settings.
 - **Labels** mark a decision as correct, a false alarm or a missed attack.
@@ -225,9 +342,9 @@ the right-hand panel shows each step live: who is asking, the group settings tha
 rules, every guard layer with its answer, the context added, and the model's reply. See
 [docs/studio.md](docs/studio.md).
 
-![Studio live run](docs/screenshots/studio-live.png)
+![Studio live run](docs/screenshots/studio-live.jpg)
 
-![Studio request debug](docs/screenshots/studio-debug.png)
+![Studio request debug](docs/screenshots/studio-debug.jpg)
 
 ### Servers and model discovery
 
@@ -237,35 +354,23 @@ structured-output support from the server where available. New models start hidd
 discovery misses can be added by ID. Server API keys are encrypted and never sent to the browser.
 The console only shows that a key is saved.
 
-![Servers](docs/screenshots/servers.png)
+![Servers](docs/screenshots/servers.jpg)
 
 ### The console
 
-- **One groups-and-keys explorer** on the left in every section that works on a group or key
-  (Overview, Activity, Groups, API keys, Guard checks, Context files, MCP docs). Pick a group or a
-  key; it stays picked as you move between sections.
-- **The right panel shows what applies to it** in that section:
-  - Context files and MCP docs list each item as **Own**, **This key** or **via <group>**.
-    - Switch an inherited item **off here** for the group (and its sub-groups) or for one key.
-    - Add items from the library, or drag a library item onto a group or key.
-    - **New** and **Upload .md** assign the new item to the picked group or key.
-  - Guard checks has per-group and per-key layer switches.
-  - Activity lists that group's or key's requests.
-- **Click an item to open it in the middle.**
-
-- A VS Code-style layout: an activity bar, a tree for each section, editor tabs, a details panel
-  on the right, a status bar and a command palette (`⌘P`).
+- A VS Code-style layout: an activity bar, the groups-and-keys explorer, editor tabs, the
+  right panel, a status bar and a command palette (`⌘P`).
 - Autosave: forms save 5 seconds after you stop typing.
-- The console remembers per-item tabs, panel sizes and views.
+- The console remembers the picked group or key, panel tabs, panel sizes and views.
 - Themes: Off-white (default), Light and Dark. After a long break, a short splash screen shows.
-- Only one item is selected at a time in every tree. Double-click a group to rename it. Adding a
-  group under a selected group makes a child group.
+- Only one item is selected at a time. Right-click a group or key for new, rename, revoke and
+  delete. Drag a key or group to move it. Double-click a group to rename it.
 
 | Dark theme | Splash |
 | --- | --- |
-| ![Dark overview](docs/screenshots/dark-overview.png) | ![Splash screen](docs/screenshots/splash.png) |
+| ![Dark overview](docs/screenshots/dark-overview.jpg) | ![Splash screen](docs/screenshots/splash.jpg) |
 
-![Studio in the dark theme](docs/screenshots/dark-studio.png)
+![Studio in the dark theme](docs/screenshots/dark-studio.jpg)
 
 The previous admin panel is still available at **`/old`** while the new console settles. It works
 on the same database.
@@ -292,6 +397,11 @@ flowchart TD
     I -->|retries used up| BR
     S --> L[(Activity log:<br/>prompt, layers, reply)]
     BR --> L
+    A -->|POST /mcp<br/>same key| M[MCP docs server<br/>key, IP, MCP access, rate limit]
+    M -->|401 / 403 / 429| X1
+    M --> MD[Docs for the key's group chain<br/>+ key's own, minus exclusions]
+    MD -->|list · search · read| A
+    M --> L
 ```
 
 More detail is in [docs/architecture.md](docs/architecture.md).
