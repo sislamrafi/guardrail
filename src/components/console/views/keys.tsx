@@ -317,7 +317,7 @@ export function KeyNew() {
   };
 
   return (
-    <Page icon="keys" title="New API key" sub="The key is shown once. GuardRail stores only its hash.">
+    <Page icon="keys" title="New API key" sub="The key is shown once. Opsara stores only its hash.">
       {made && (
         <div className="cx-secret-box" role="status">
           <div className="cx-form-row center">

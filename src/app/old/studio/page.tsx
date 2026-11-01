@@ -90,7 +90,7 @@ export default function StudioPage() {
 
   return (
     <>
-      <PageHead title="Studio" sub="Send a request the way an agent would, then see every step GuardRail took, the context it added and what came back." />
+      <PageHead title="Studio" sub="Send a request the way an agent would, then see every step Opsara took, the context it added and what came back." />
       <div className="content">
         {!data ? (
           <Loading error={error} />
@@ -127,7 +127,7 @@ export default function StudioPage() {
               {pasted && (
                 <label>
                   <span className="lbl">API key</span>
-                  <input className="inp mono" value={secret} placeholder="grk_live_…" onChange={(e) => setSecret(e.target.value)} autoComplete="off" />
+                  <input className="inp mono" value={secret} placeholder="ops_live_…" onChange={(e) => setSecret(e.target.value)} autoComplete="off" />
                 </label>
               )}
               {key && <div className="muted small">Acts as this key without its secret: same group rules, limits and logging. Logged with the address &quot;Studio&quot;.</div>}

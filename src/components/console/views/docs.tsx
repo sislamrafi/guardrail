@@ -15,7 +15,7 @@ import { ScopeItems, scopeItems } from '../scope-items';
 
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n} B`);
 const bytes = (s: string) => new TextEncoder().encode(s).length;
-const PLACEHOLDER = 'grk_live_YOUR_KEY_HERE';
+const PLACEHOLDER = 'ops_live_YOUR_KEY_HERE';
 
 /** Groups that give a doc to a group: itself or any group above it. */
 function sharedVia(d: DocC, g: GroupC, groups: GroupC[]): GroupC | null {
@@ -52,7 +52,7 @@ export function DocsHome() {
   const cfg = connectConfig(client, url);
   const withAccess = data.docKeys.filter((k) => k.mcp && !k.revoked);
   return (
-    <Page icon="mcp" title="MCP docs" sub="Markdown docs that agents read on demand through GuardRail's MCP server, with their own API key. Share a doc with a group (sub-groups inherit it) or with one key. Unlike context files, docs are never added to prompts.">
+    <Page icon="mcp" title="MCP docs" sub="Markdown docs that agents read on demand through Opsara's MCP server, with their own API key. Share a doc with a group (sub-groups inherit it) or with one key. Unlike context files, docs are never added to prompts.">
       <div className="cx-stats wide">
         <Stat label="Docs" value={data.docs.length} />
         <Stat label="Keys with MCP access" value={`${withAccess.length} / ${data.docKeys.length}`} />
@@ -60,7 +60,7 @@ export function DocsHome() {
         <Stat label="Not shared" value={data.docs.filter((d) => !d.reach).length} hint="Docs no key can read yet" />
       </div>
 
-      <Section title="Connect an agent" hint="Streamable HTTP. Agents sign in with their GuardRail API key, the same one they use for /v1. Replace the placeholder with the key's secret (API keys › Reveal).">
+      <Section title="Connect an agent" hint="Streamable HTTP. Agents sign in with their Opsara API key, the same one they use for /v1. Replace the placeholder with the key's secret (API keys › Reveal).">
         <Field label="Endpoint">
           <div className="cx-form-row center nowrap">
             <input className="cx-input mono grow" readOnly value={url} aria-label="MCP endpoint" />
@@ -93,7 +93,7 @@ export function DocsHome() {
         </div>
       </Section>
 
-      <Section title="Tools agents get" hint="Read-only. Docs are also exposed as MCP resources (guardrail://docs/<slug>) for clients that browse resources.">
+      <Section title="Tools agents get" hint="Read-only. Docs are also exposed as MCP resources (opsara://docs/<slug>) for clients that browse resources.">
         <div className="cx-table-wrap">
           <table className="cx-table">
             <tbody>
@@ -315,6 +315,11 @@ function DocFile({ d, data }: { d: DocC; data: Data }) {
   const path = pathFor('docs', d.id);
   const text = nav.drafts[path] ?? d.body;
   const dirty = nav.drafts[path] !== undefined && nav.drafts[path] !== d.body;
+  // Someone else (another tab, the agent) saved a new version while this one has unsaved text.
+  const draftBase = useRef<number | null>(null);
+  if (!dirty) draftBase.current = null;
+  else draftBase.current ??= d.version;
+  const changedElsewhere = dirty && draftBase.current !== null && draftBase.current !== d.version;
   const [preview, setPreview] = usePreview(d.id);
   const [panel, setPanel] = usePref<'share' | 'history' | null>('docs.panel', 'share');
   const [meta, setMeta] = useState<Meta>(() => metaOf(d));
@@ -387,7 +392,7 @@ function DocFile({ d, data }: { d: DocC; data: Data }) {
         <Field label="Title">
           <input className="cx-input" value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} />
         </Field>
-        <Field label="Slug" hint={`guardrail://docs/${meta.slug || '…'}`}>
+        <Field label="Slug" hint={`opsara://docs/${meta.slug || '…'}`}>
           <input className="cx-input mono" value={meta.slug} onChange={(e) => setMeta({ ...meta, slug: e.target.value })} />
         </Field>
         <Field label="Tags" hint="Comma separated">
@@ -397,6 +402,11 @@ function DocFile({ d, data }: { d: DocC; data: Data }) {
           <input className="cx-input" value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} placeholder="How we deploy to production, step by step" />
         </Field>
       </div>
+      {changedElsewhere && (
+        <Note tone="warn">
+          {d.title} was changed elsewhere (now v{d.version}) while you were editing. Your text is kept; <b>Discard changes</b> to load the new version, or save to replace it.
+        </Note>
+      )}
       <div className="cx-file-body">
         {preview ? (
           <article className="cx-md" onClick={copyCode} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />

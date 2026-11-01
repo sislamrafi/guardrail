@@ -10,13 +10,13 @@ import { ChatView, MSG_KINDS, type MsgKind, ResponseTail, countKinds } from '../
 import { Ico } from '../icons';
 import { Empty, Field, Loading, Note, Page, Pill, Section, Seg, Stat, clock, fmt, ms } from '../kit';
 import { pathFor, useNav } from '../nav';
-import { api, useStore, useUi } from '../store';
+import { adminFetch, api, useStore, useUi } from '../store';
 import type { LogEntry } from '../types';
 import { DecisionRow } from './guard';
 import { usePref } from '../prefs';
 import { MdText } from '../md-text';
 
-type Counts = { all: number; blocked: number; false_alarm: number; clean: number; error: number; mcp: number };
+type Counts = { all: number; blocked: number; rejected: number; false_alarm: number; clean: number; error: number; mcp: number };
 
 const FILTERS: [string, string, keyof Counts][] = [
   ['', 'All', 'all'],
@@ -24,6 +24,8 @@ const FILTERS: [string, string, keyof Counts][] = [
   ['false_alarm', 'False alarm', 'false_alarm'],
   ['error', 'Error', 'error'],
   ['blocked', 'Blocked', 'blocked'],
+  // Refused before any check: no or invalid key, address not allowed, revoked, rate limit.
+  ['rejected', 'Rejected', 'rejected'],
   // Doc reads by agents over MCP: no model, no guard layers.
   ['mcp', 'MCP', 'mcp'],
 ];
@@ -80,6 +82,10 @@ export function ActivityList() {
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = usePref('activity.live', true);
   const [test, setTest] = usePref('activity.test', false);
+  const { data } = useStore();
+  const root = data?.groups.find((g) => g.parentId === null);
+  const scoped = !!nav.key || (!!nav.group && nav.group !== root?.id);
+  const [hidden, setHidden] = useState<{ scope: number; test: number } | null>(null);
   useEffect(() => {
     const t = setTimeout(() => setQuery(q), 250);
     return () => clearTimeout(t);
@@ -90,10 +96,19 @@ export function ActivityList() {
       setRows(r.rows);
       setCounts(r.counts);
       setErr(null);
+      // Nothing here: are matching requests hidden by the picked group/key, or by the Test switch?
+      if (!r.rows.length && !query) {
+        const [all, other] = await Promise.all([
+          api<{ counts: Counts }>(`logs?filter=${filter}&limit=1${test ? '&test=only' : ''}`),
+          api<{ counts: Counts }>(`logs?filter=${filter}&limit=1${nav.group ? `&group=${nav.group}` : ''}${nav.key ? `&key=${nav.key}` : ''}${test ? '' : '&test=only'}`),
+        ]);
+        const pick = (c: Counts) => c[(FILTERS.find(([v]) => v === filter)?.[2] ?? 'all') as keyof Counts] ?? 0;
+        setHidden({ scope: scoped ? pick(all.counts) : 0, test: pick(other.counts) });
+      } else setHidden(null);
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [filter, query, nav.group, nav.key, test]);
+  }, [filter, query, nav.group, nav.key, test, scoped]);
   useEffect(() => {
     void load();
     if (!live) return;
@@ -125,7 +140,25 @@ export function ActivityList() {
         {!rows ? (
           <Loading error={err} />
         ) : rows.length === 0 ? (
-          <div className="cx-details-empty">No requests here yet.</div>
+          <div className="cx-details-empty">
+            {q ? 'No request matches the search.' : `No ${filter ? (FILTERS.find(([v]) => v === filter)?.[1] ?? '').toLowerCase() + ' ' : ''}requests ${nav.key ? 'from this key' : scoped ? 'in this group' : ''} yet.`}
+            {!!hidden?.scope && (
+              <p>
+                {hidden.scope} matching request{hidden.scope === 1 ? ' is' : 's are'} outside this view (other groups or keys, or sent with no valid key).{' '}
+                <button type="button" className="cx-link" onClick={() => root && nav.setScope({ group: root.id })}>
+                  Show all
+                </button>
+              </p>
+            )}
+            {!!hidden?.test && (
+              <p>
+                {hidden.test} {test ? 'real' : 'test (Studio or replay)'} request{hidden.test === 1 ? '' : 's'} here.{' '}
+                <button type="button" className="cx-link" onClick={() => setTest(!test)}>
+                  {test ? 'Show real traffic' : 'Show test traffic'}
+                </button>
+              </p>
+            )}
+          </div>
         ) : (
           <table className="cx-atable">
             <thead>
@@ -214,7 +247,7 @@ export function ActivityHome() {
     setBusy(true);
     try {
       const lab = labels === 'all' ? '' : labels === 'both' ? 'mistake,missed_attack' : labels;
-      const res = await fetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}${kq}`);
+      const res = await adminFetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}${kq}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Export failed (${res.status})`);
       const n = res.headers.get('x-row-count');
       const a = document.createElement('a');
@@ -390,7 +423,7 @@ export function LogDetail({ id }: { id: string }) {
       {tab === 'summary' && <Summary d={d} />}
       {tab === 'sent' && (
         <>
-          {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by GuardRail (context or redaction).</Note>}
+          {d.forwarded && marks.some(Boolean) && <Note>Highlighted messages were added or changed by Opsara (context or redaction).</Note>}
           <ChatView messages={d.forwarded} marks={marks} show={show} empty={d.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
         </>
       )}

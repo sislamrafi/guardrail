@@ -1,3 +1,4 @@
+import { env } from './env';
 import fs from 'fs';
 import path from 'path';
 import type { LogEntry, ModelResponse, PromptMessage, Step } from './logs';
@@ -9,12 +10,12 @@ import type { LogEntry, ModelResponse, PromptMessage, Step } from './logs';
  */
 
 export function promptsDir(): string {
-  return process.env.GUARDRAIL_PROMPTS_DIR || path.join(process.cwd(), 'data', 'prompts');
+  return env.promptsDir() || path.join(process.cwd(), 'data', 'prompts');
 }
 
 /** How long prompt files are kept. The log rows themselves stay. */
 export function retentionDays(): number {
-  const n = Number(process.env.GUARDRAIL_PROMPT_RETENTION_DAYS);
+  const n = Number(env.promptRetentionDays());
   return Number.isFinite(n) && n > 0 ? n : 20;
 }
 
@@ -95,7 +96,7 @@ export function renderPromptFile(e: FileEntry): string {
     '',
     e.response ? block('json response', JSON.stringify(e.response, null, 2)) : 'No reply was recorded.',
     '',
-    '## What GuardRail did',
+    '## What Opsara did',
     '',
     steps.length ? steps.join('\n') : 'No steps were recorded.',
     '',
@@ -112,7 +113,7 @@ export function writePromptFile(e: FileEntry, rel = relPathFor(e.id, e.ts)): str
     return rel;
   } catch (err) {
     // A full or read-only disk must never fail the request itself.
-    console.error(`GuardRail: could not write prompt file ${full}:`, err);
+    console.error(`Opsara: could not write prompt file ${full}:`, err);
     return null;
   }
 }

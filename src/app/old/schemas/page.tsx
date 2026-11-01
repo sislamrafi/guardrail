@@ -41,7 +41,7 @@ export default function SchemasPage() {
 
   return (
     <>
-      <PageHead title="Schemas" sub="Every request is scored against the API formats GuardRail knows. The best match is logged with each request.">
+      <PageHead title="Schemas" sub="Every request is scored against the API formats Opsara knows. The best match is logged with each request.">
         {data && (
           <div className="seg" role="group" aria-label="Schema policy">
             <button type="button" className={data.policy === 'strict' ? 'on' : ''} onClick={() => setPolicy('strict')}>Strict</button>

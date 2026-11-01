@@ -2,17 +2,58 @@
 
 import { createContext, type CSSProperties, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
+// ---------------------------------------------------------------- admin access token
+// Kept in memory only (never in storage). Refreshed from the httpOnly refresh cookie a minute before
+// it expires, or after a 401. One refresh at a time.
+let access: { token: string | null; exp: number } | null = null;
+let refreshing: Promise<boolean> | null = null;
+
+async function refreshAccess(): Promise<boolean> {
+  refreshing ??= (async () => {
+    try {
+      const r = await fetch('/api/auth/refresh', { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+      if (!r.ok) return false;
+      const j = (await r.json()) as { accessToken?: string; expiresAt?: number; open?: boolean };
+      access = j.open ? { token: null, exp: Infinity } : { token: j.accessToken ?? null, exp: j.expiresAt ?? 0 };
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setTimeout(() => (refreshing = null), 0);
+    }
+  })();
+  return refreshing;
+}
+
+/** Remember a token just issued by /api/auth/login (same page, no reload). */
+export function setAccessToken(token: string | null, exp: number) {
+  access = { token, exp };
+}
+
+function toLogin(): never {
+  window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+  throw new Error('Sign in first.');
+}
+
+/** fetch() for the admin API: adds the access token, refreshes it when needed, retries once after a 401. */
+export async function adminFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (!access || access.exp - 60_000 < Date.now()) await refreshAccess();
+  const go = () => fetch(url, { ...init, cache: 'no-store', headers: { ...(init.headers as Record<string, string> | undefined), ...(access?.token ? { Authorization: `Bearer ${access.token}` } : {}) } });
+  let res = await go();
+  if (res.status === 401) {
+    if (!(await refreshAccess())) toLogin();
+    res = await go();
+    if (res.status === 401) toLogin();
+  }
+  return res;
+}
+
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
-  const res = await fetch(`/api/admin/${path}`, {
+  const res = await adminFetch(`/api/admin/${path}`, {
     method: opts.method ?? (opts.body === undefined ? 'GET' : 'POST'),
     headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    cache: 'no-store',
   });
-  if (res.status === 401) {
-    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
-    throw new Error('Sign in first.');
-  }
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
   return json;

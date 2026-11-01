@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { getDb, openDb, setDb } from '@/lib/db';
 import { listGroups } from '@/lib/groups';
-import { createKey, lookupKey, revealKey, rotateKey } from '@/lib/keys';
+import { createKey, hashKey, lookupKey, revealKey, rotateKey } from '@/lib/keys';
 import { open, seal } from '@/lib/secret-box';
 
 beforeAll(() => setDb(openDb(':memory:')));
@@ -24,6 +24,16 @@ describe('key secrets at rest', () => {
     expect(open(box)).toBeNull();
     if (before === undefined) delete process.env.GUARDRAIL_KEY_SECRET;
     else process.env.GUARDRAIL_KEY_SECRET = before;
+  });
+
+  it('issues new keys with the Opsara prefix and still accepts old GuardRail keys', () => {
+    const root = listGroups()[0];
+    const { secret } = createKey({ name: 'new', owner: 'o', groupId: root.id });
+    expect(secret.startsWith('ops_live_')).toBe(true);
+    // A key issued before the rename: lookup is by hash, so its prefix doesn't matter.
+    const old = 'grk_live_' + 'A'.repeat(32);
+    getDb().prepare("INSERT INTO api_keys (name, owner, group_id, prefix, hash, exceptions, created_at) VALUES ('old', 'o', ?, ?, ?, '{}', 0)").run(root.id, old.slice(0, 13), hashKey(old));
+    expect(lookupKey(old).ok).toBe(true);
   });
 
   it('reveals a new key and rotates it', () => {

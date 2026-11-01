@@ -54,7 +54,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <header className="topbar">
             <Link href="/old" className="brand">
               <Logo size={26} />
-              <b>GuardRail AI</b>
+              <b>Opsara AI</b>
               <span className="chip">gateway</span>
             </Link>
             <div className="wrap" style={{ gap: 12 }}>

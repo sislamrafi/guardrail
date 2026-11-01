@@ -50,7 +50,7 @@ export function SchemasPage() {
       { reload: false },
     );
   return (
-    <Page icon="braces" title="Schemas" sub="Every request is scored against the API formats GuardRail knows. The best match is logged with each request.">
+    <Page icon="braces" title="Schemas" sub="Every request is scored against the API formats Opsara knows. The best match is logged with each request.">
       <section id="sec-policy">
         <Section title="Schema policy">
           <Seg value={policy} label="Schema policy" onChange={(p) => void ui.run(() => api('settings', { method: 'PATCH', body: { schemaPolicy: p } }), 'Schema policy saved')} options={[['strict', 'Strict'], ['accept_known', 'Log only']]} />

@@ -1,7 +1,7 @@
 # Guard layers and decision models
 
 Every request that passes authentication goes through an ordered list of **guard layers** before
-GuardRail adds context and calls the model:
+Opsara adds context and calls the model:
 
 ```
 After authentication (key, IP, schema, model access, rate limit, custom rules)   ← fixed
@@ -97,7 +97,7 @@ case (`unsafe, 1, true => block`). A value no rule names gets *Any other value* 
 verdict but a score, a score at or above the layer threshold blocks (*Score means* can flip that for
 models where low is unsafe). *Category names* turns codes into names (`S1 = Violent crimes`).
 
-**Testing.** Paste an answer from the model next to the mapping to see how GuardRail reads it as you
+**Testing.** Paste an answer from the model next to the mapping to see how Opsara reads it as you
 type. An answer the mapping can't read is never a crash: the decision comes back with an error and the
 layer's "if it fails" setting decides, as for every adapter.
 

@@ -10,7 +10,7 @@ export function normalizeIp(ip: string): string {
 
 /**
  * The caller's address. server.mjs puts the socket address in x-guardrail-peer, replacing anything
- * a client sent, so that is the default. Only with `trustProxy` on (GuardRail behind your own
+ * a client sent, so that is the default. Only with `trustProxy` on (Opsara behind your own
  * reverse proxy) do we believe X-Forwarded-For's first entry, which the proxy reports as the client.
  * Without server.mjs (plain `next dev`) we fall back to X-Forwarded-For's last entry.
  */

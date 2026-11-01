@@ -25,7 +25,7 @@ const extras = (m: PromptMessage) => Object.fromEntries(Object.entries(m).filter
 export type Mark = 'added' | 'changed';
 
 /**
- * Which messages GuardRail added or changed on the way to the model,
+ * Which messages Opsara added or changed on the way to the model,
  * by comparing what was sent with what the client sent.
  */
 export function diffMarks(sent: PromptMessage[], original: PromptMessage[] | null | undefined): (Mark | null)[] {
@@ -78,7 +78,7 @@ function Message({ m, n, mark }: { m: PromptMessage; n: number; mark: Mark | nul
           <span className="mono muted">{n}.</span>
           <span className={`pill ${ROLE_CLS[role] ?? ''}`}>{role}</span>
           {typeof m.name === 'string' && <span className="mono muted">{m.name}</span>}
-          {mark && <span className="pill info">{mark === 'added' ? 'Added by GuardRail' : 'Changed by GuardRail'}</span>}
+          {mark && <span className="pill info">{mark === 'added' ? 'Added by Opsara' : 'Changed by Opsara'}</span>}
         </span>
         <span className="mono muted" style={{ whiteSpace: 'nowrap' }}>{fmt(text.length)} chars</span>
       </div>

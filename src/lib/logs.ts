@@ -20,7 +20,7 @@ export interface ModelResponse {
   message: PromptMessage & { tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]; reasoning?: string };
   finish_reason?: string | null;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
-  /** The reply was GuardRail's blocked message, not the model's. */
+  /** The reply was Opsara's blocked message, not the model's. */
   blocked?: boolean;
   /** The upstream error text, when the model call failed. */
   error?: string;
@@ -76,7 +76,7 @@ export interface LogEntry {
   prompt_expired?: boolean;
   /** Each guard layer's result, in order (see pipeline.ts). */
   decisions?: LayerResult[] | null;
-  /** What GuardRail added to the request: context files, policy prompt, tokens, placement. */
+  /** What Opsara added to the request: context files, policy prompt, tokens, placement. */
   injected?: { files: { name: string; tokens: number }[]; policy: boolean; tokens: number; placement: string; identity?: string } | null;
   /** Studio or replay traffic, kept out of normal lists and stats. */
   test?: boolean;
@@ -113,7 +113,7 @@ function maybePrune() {
   try {
     prunePrompts();
   } catch (err) {
-    console.error('GuardRail: pruning prompt files failed:', err);
+    console.error('Opsara: pruning prompt files failed:', err);
   }
 }
 
@@ -169,7 +169,9 @@ export function getLog(id: string): LogEntry | undefined {
 }
 
 export const OUTCOME_FILTERS: Record<string, Outcome[]> = {
-  blocked: ['blocked', 'rejected'],
+  // Blocked: a guard layer or rule stopped a real key's request. Rejected: refused before that (no or bad key, IP, limit).
+  blocked: ['blocked'],
+  rejected: ['rejected'],
   false_alarm: ['false_alarm'],
   clean: ['answered', 'redacted'],
   error: ['error'],
@@ -254,6 +256,7 @@ export function countByFilter(since?: number, groups?: number[], test?: LogScope
   return {
     all: rows.reduce((a, r) => a + r.n, 0),
     blocked: sum(OUTCOME_FILTERS.blocked),
+    rejected: sum(OUTCOME_FILTERS.rejected),
     false_alarm: sum(OUTCOME_FILTERS.false_alarm),
     clean: sum(OUTCOME_FILTERS.clean),
     error: sum(OUTCOME_FILTERS.error),
@@ -315,7 +318,7 @@ export function overview(range = '24h', at = Date.now(), groups?: number[], key?
   for (const r of rows) {
     const i = Math.min(n - 1, Math.max(0, Math.floor((r.ts - first) / R.bucket)));
     req[i].total++;
-    if (r.outcome === 'blocked' || r.outcome === 'rejected') req[i].blocked++;
+    if (r.outcome === 'blocked') req[i].blocked++;
     const st = safeJson<Record<string, number>>(r.stages, {});
     let o = 0;
     let g = 0;

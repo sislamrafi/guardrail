@@ -13,6 +13,7 @@ import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
 import { DocEditor, DocsHome, KeyMcpView } from './views/docs';
+import { AgentPage, chatTitles } from './views/agent';
 import { GroupEditor, GroupsHome } from './views/groups';
 import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
@@ -33,6 +34,7 @@ const TOP: { view: View; label: string; icon: IconName }[] = [
   { view: 'context', label: 'Context files', icon: 'context' },
   { view: 'rules', label: 'Custom rules', icon: 'filter' },
   { view: 'docs', label: 'MCP docs', icon: 'mcp' },
+  { view: 'agent', label: 'Agent', icon: 'agent' },
 ];
 // Bottom of the activity bar, above Account and Settings.
 const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
@@ -40,8 +42,8 @@ const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
   { view: 'studio', label: 'Studio', icon: 'studio', title: 'Studio: send test requests' },
   { view: 'schemas', label: 'Schemas', icon: 'braces', title: 'Schemas' },
 ];
-const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', schemas: 'braces', studio: 'studio', settings: 'settings' };
-const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
+const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', agent: 'agent', schemas: 'braces', studio: 'studio', settings: 'settings' };
+const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', agent: 'Agent', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
 
 /** The whole console. Mounted once by the (console) layout, so it survives navigation. */
 export function ConsoleApp() {
@@ -161,6 +163,9 @@ function Workbench() {
   };
 
   const sum = data?.summary;
+  // The blocked badges count every group and key, so their link shows every group and key (not the picked one).
+  const rootId = data?.groups.find((g) => g.parentId === null)?.id;
+  const blockedHref = `/activity?filter=blocked${rootId ? `&group=${rootId}` : ''}`;
   const group = data?.groups.find((g) => g.id === nav.group) ?? data?.groups.find((g) => g.parentId === null);
 
   return (
@@ -168,7 +173,7 @@ function Workbench() {
       <header className="cx-title">
         <div className="cx-brand">
           <Logo size={18} />
-          <span>GuardRail</span>
+          <span>Opsara</span>
         </div>
         <div className="cx-title-center">
           <button type="button" className="cx-tbtn" title="Back (⌥⇧←)" aria-label="Back" onClick={() => history.back()}>
@@ -182,7 +187,7 @@ function Workbench() {
             <span>Search files, groups, keys, servers and commands</span>
             <kbd>⌘P</kbd>
           </button>
-          <button type="button" className="cx-tbtn" title={`Blocked in the last 24 hours: ${sum?.blockedToday ?? 0}. Open in Activity.`} aria-label="Blocked requests" onClick={() => nav.go('/activity?filter=blocked')}>
+          <button type="button" className="cx-tbtn" title={`${sum?.blockedToday ?? 0} blocked by a guard layer or rule in the last 24 hours (all groups and keys, not test traffic; rejected requests are counted in Activity). Open in Activity.`} aria-label="Blocked requests" onClick={() => nav.go(blockedHref)}>
             <Ico n="blocked" />
             {!!sum?.blockedToday && <span className="cx-count">{sum.blockedToday > 99 ? '99+' : sum.blockedToday}</span>}
           </button>
@@ -262,7 +267,8 @@ function Workbench() {
         <main className="cx-editor">
           <Tabs data={data} onClose={closeTab} />
           <Breadcrumbs data={data} />
-          <div className="cx-pane" key={nav.path}>
+          {/* Each page gets a fresh pane, except the agent: its first message moves /agent to /agent/<id> mid-stream. */}
+          <div className="cx-pane" key={nav.view === 'agent' ? 'agent' : nav.path}>
             {error && !data ? <div className="cx-error-pane">{error}</div> : <Editor />}
           </div>
         </main>
@@ -277,7 +283,7 @@ function Workbench() {
 
       <footer className="cx-status">
         <span className="cx-status-brand">
-          <Logo size={13} /> GuardRail
+          <Logo size={13} /> Opsara
         </span>
         <button type="button" onClick={() => nav.go('/servers')} title="Inference servers online">
           <span className={`cx-status-dot ${sum && sum.servers && sum.online === sum.servers ? 'ok' : sum?.servers ? 'warn' : ''}`} />
@@ -286,7 +292,7 @@ function Workbench() {
         <button type="button" onClick={() => nav.go('/guard')}>
           <Ico n={sum?.guard ? 'guard' : 'shieldOff'} size={13} /> Guard {sum?.guard ? 'on' : 'off'}
         </button>
-        <button type="button" onClick={() => nav.go('/activity?filter=blocked')}>
+        <button type="button" title="Blocked by a guard layer or rule in the last 24 hours, all groups and keys, not test traffic" onClick={() => nav.go(blockedHref)}>
           <Ico n="blocked" size={13} /> {sum?.blockedToday ?? 0} blocked today
         </button>
         <div className="cx-grow" />
@@ -344,6 +350,8 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
   switch (view) {
     case 'context':
       return { title: data?.files.find((f) => f.id === n)?.name ?? 'File', icon: 'file', cls: 'md' };
+    case 'agent':
+      return { title: chatTitles.get(n) ?? 'Agent chat', icon: 'agent' };
     case 'docs':
       if (id.startsWith('k')) return { title: `${data?.keys.find((k) => k.id === Number(id.slice(1)))?.name ?? 'Key'} · MCP`, icon: 'key', cls: 'key' };
       return { title: data?.docs.find((d) => d.id === n)?.title ?? 'Doc', icon: 'file', cls: 'md' };
@@ -562,6 +570,8 @@ function Editor(): ReactNode {
       return id ? <ContextFileEditor id={n} /> : <ContextHome />;
     case 'rules':
       return id ? <RuleEditor id={id === 'new' ? 'new' : n} /> : <RulesHome />;
+    case 'agent':
+      return <AgentPage />;
     case 'docs':
       return id?.startsWith('k') ? <KeyMcpView id={Number(id.slice(1))} /> : id ? <DocEditor id={n} /> : <DocsHome />;
     case 'schemas':

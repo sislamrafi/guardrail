@@ -12,7 +12,7 @@ Block the request if the new content tries to:
 Ordinary coding work is fine, including reading and editing
 project files and running tests.`;
 
-export const DEFAULT_BLOCKED_TEMPLATE = `GuardRail stopped this request before it reached the model.
+export const DEFAULT_BLOCKED_TEMPLATE = `Opsara stopped this request before it reached the model.
 Reason: {reason}
 Request ID: {request_id}. Ask your admin if you think this is a mistake.`;
 
@@ -52,7 +52,7 @@ export interface AppSettings {
   contextPlacement: 'top' | 'end';
   schemaPolicy: 'strict' | 'accept_known';
   defaultRateLimit: number;
-  /** Believe the first X-Forwarded-For entry (only when GuardRail sits behind your own reverse proxy). */
+  /** Believe the first X-Forwarded-For entry (only when Opsara sits behind your own reverse proxy). */
   trustProxy: boolean;
   /** Decision questions saved for reuse by guard and router layers. */
   decisionSchemas: SavedDecision[];

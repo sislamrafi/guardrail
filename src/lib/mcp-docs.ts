@@ -1,6 +1,6 @@
 // Docs served to agents over MCP. Unlike context files (pushed into every prompt), MCP docs are
-// pulled on demand: an agent lists, searches and reads them with its GuardRail key. Each doc has a
-// slug for its URI (guardrail://docs/<slug>), a description and tags so agents can tell when to read it.
+// pulled on demand: an agent lists, searches and reads them with its Opsara key. Each doc has a
+// slug for its URI (opsara://docs/<slug>), a description and tags so agents can tell when to read it.
 // Who sees a doc is the group setting "mcp_docs" (inherited, add/override) plus a key's own exceptions.
 import { getDb, now } from './db';
 import { type Group, listGroups, resolveGroup } from './groups';

@@ -222,7 +222,7 @@ function Check1Card({ g, setG, servers, onAdd }: { g: GuardSettings; setG: (g: G
         <label className="chk"><input type="checkbox" checked={g.scan.tool} onChange={(e) => set({ scan: { ...g.scan, tool: e.target.checked } })} /> New tool results (files, web pages, command output)</label>
         <label className="chk"><input type="checkbox" checked={g.scan.system} onChange={(e) => set({ scan: { ...g.scan, system: e.target.checked } })} /> The agent&apos;s own system prompt</label>
       </div>
-      <div className="note">PIGuard is a small classifier, so it has no system prompt. You tune it with the score above, per group if needed. If its server is down, GuardRail falls back to the built-in patterns instead of letting traffic through unscanned.</div>
+      <div className="note">PIGuard is a small classifier, so it has no system prompt. You tune it with the score above, per group if needed. If its server is down, Opsara falls back to the built-in patterns instead of letting traffic through unscanned.</div>
     </section>
   );
 }

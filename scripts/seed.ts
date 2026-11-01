@@ -69,7 +69,7 @@ setGroupSetting(qaG.id, 'layer_opts', { mode: 'override', value: { judge: { prom
 
 const ci = createGroup({ name: 'CI bots', parentId: root.id, description: 'Automated runners, high rate limit.' });
 setGroupSetting(ci.id, 'rate_limit', { mode: 'override', value: 600 });
-setGroupSetting(ci.id, 'blocked_reply', { mode: 'override', value: '{"error": "blocked by GuardRail", "reason": "{reason}", "request_id": "{request_id}"}' });
+setGroupSetting(ci.id, 'blocked_reply', { mode: 'override', value: '{"error": "blocked by Opsara", "reason": "{reason}", "request_id": "{request_id}"}' });
 
 updateSettings({
   guard: {

@@ -44,7 +44,7 @@ export interface ApiKey {
   mcp: boolean;
 }
 
-/** The caller line GuardRail puts first in the context, or '' when the key has it off. Byte-stable per key. */
+/** The caller line Opsara puts first in the context, or '' when the key has it off. Byte-stable per key. */
 export function identityLine(k: Pick<ApiKey, 'name' | 'owner' | 'identity'>): string {
   const who = k.identity.owner && k.owner.trim() ? k.owner.trim() : '';
   const key = k.identity.key && k.name.trim() ? k.name.trim() : '';
@@ -60,7 +60,8 @@ export function generateSecret(): string {
   const bytes = crypto.randomBytes(32);
   let s = '';
   for (const b of bytes) s += ALPHABET[b % ALPHABET.length];
-  return `grk_live_${s}`;
+  // New keys use the Opsara prefix; keys issued as grk_live_… (GuardRail) keep working: lookup is by hash.
+  return `ops_live_${s}`;
 }
 
 export const hashKey = (secret: string) => crypto.createHash('sha256').update(secret).digest('hex');

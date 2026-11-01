@@ -22,5 +22,5 @@ const server = createServer((req, res) => {
 });
 if (upgrade) server.on('upgrade', (req, socket, head) => upgrade(req, socket, head));
 server.listen(port, hostname, () => {
-  console.log(`  ▲ GuardRail ${dev ? 'dev' : 'production'} server on http://localhost:${port} (listening on ${hostname})`);
+  console.log(`  ▲ Opsara ${dev ? 'dev' : 'production'} server on http://localhost:${port} (listening on ${hostname})`);
 });

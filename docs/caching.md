@@ -2,10 +2,10 @@
 
 Coding agents send long, growing conversations: a large system prompt, tool definitions, file
 contents, and every earlier turn. Providers can cache a prompt prefix they have already seen, which
-makes it much cheaper and faster to read. GuardRail is built so that its own additions, and its
+makes it much cheaper and faster to read. Opsara is built so that its own additions, and its
 checks, keep that prefix stable.
 
-## What GuardRail keeps stable
+## What Opsara keeps stable
 
 - **Context goes at the top.** The caller line, the policy prompt and the context files are placed
   at the top of the first system message, in a fixed order. Nothing in them changes per request (no
@@ -14,7 +14,7 @@ checks, keep that prefix stable.
 - **One serializer.** The message list the model gets is built by one function
   (`forwardMessages` in `src/lib/gateway.ts`). Suffix checks use the same function, so their
   prefix is byte-for-byte identical to the real call.
-- **Cache breakpoints.** Anthropic and Gemini models only cache from explicit breakpoints. GuardRail
+- **Cache breakpoints.** Anthropic and Gemini models only cache from explicit breakpoints. Opsara
   marks the end of the shared part (`cache_control`) for those models.
 
 ## Prefix vs suffix checks
@@ -42,7 +42,7 @@ It also shows the layer's measured hit rate (`GET /api/admin/guard/cache/:id`).
 
 ## OpenRouter: sticky providers
 
-OpenRouter serves many models on several providers, each with its own cache. GuardRail remembers
+OpenRouter serves many models on several providers, each with its own cache. Opsara remembers
 the provider that last served each model, and asks for it (`provider.order`) on suffix checks and
 on the model call after a suffix check. After-the-model retries are pinned to the provider that
 just answered. The memory survives dev-server reloads.
@@ -59,4 +59,4 @@ Short prompts (under about 1,024 tokens) aren't cached by most providers at all.
 sessions are usually well above that. For a worked example on real traffic, see
 [cache-analysis-2026-11-01.md](cache-analysis-2026-11-01.md).
 
-![Suffix layer and cache warning](screenshots/guard-suffix-layer.png)
+![Suffix layer and cache warning](screenshots/guard-suffix-layer.jpg)

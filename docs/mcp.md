@@ -1,14 +1,14 @@
 # MCP docs server
 
-GuardRail serves your team's Markdown docs to coding agents over the
-[Model Context Protocol](https://modelcontextprotocol.io). Agents use the **same GuardRail API key**
+Opsara serves your team's Markdown docs to coding agents over the
+[Model Context Protocol](https://modelcontextprotocol.io). Agents use the **same Opsara API key**
 they already use for `/v1`, and each key sees exactly the docs shared with its group (inherited down
 the tree) or with the key itself.
 
 Use it for runbooks, conventions, architecture notes, API guides and onboarding: anything an agent
 should *look up when relevant* rather than carry in every prompt.
 
-![MCP docs](screenshots/mcp-docs.png)
+![MCP docs](screenshots/mcp-docs.jpg)
 
 ## MCP docs vs context files
 
@@ -27,14 +27,14 @@ fields that context files don't have: a slug for the URI, a description and tags
 
 The endpoint is `http://your-host:3000/mcp` (Streamable HTTP). Authenticate with
 `Authorization: Bearer <key>` or `x-api-key: <key>`. The **MCP docs** page shows ready-to-copy
-configs for your host. Replace `grk_live_YOUR_KEY_HERE` with the key's secret (**API keys ›
+configs for your host. Replace `ops_live_YOUR_KEY_HERE` with the key's secret (**API keys ›
 Reveal**).
 
 **Claude Code**
 
 ```bash
 claude mcp add --transport http guardrail http://your-host:3000/mcp \
-  --header "Authorization: Bearer grk_live_YOUR_KEY_HERE"
+  --header "Authorization: Bearer ops_live_YOUR_KEY_HERE"
 ```
 
 **Cline** (MCP Servers › Configure › `cline_mcp_settings.json`)
@@ -45,7 +45,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
     "guardrail": {
       "type": "streamableHttp",
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" },
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" },
       "disabled": false
     }
   }
@@ -59,7 +59,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
   "mcpServers": {
     "guardrail": {
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" }
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" }
     }
   }
 }
@@ -73,7 +73,7 @@ claude mcp add --transport http guardrail http://your-host:3000/mcp \
     "guardrail": {
       "type": "http",
       "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer grk_live_YOUR_KEY_HERE" }
+      "headers": { "Authorization": "Bearer ops_live_YOUR_KEY_HERE" }
     }
   }
 }
@@ -83,7 +83,7 @@ Check it with curl:
 
 ```bash
 curl http://localhost:3000/mcp \
-  -H "Authorization: Bearer grk_live_YOUR_KEY_HERE" \
+  -H "Authorization: Bearer ops_live_YOUR_KEY_HERE" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_docs","arguments":{}}}'
@@ -91,7 +91,7 @@ curl http://localhost:3000/mcp \
 
 ## What agents get
 
-Server name **GuardRail Docs**. The `initialize` result includes instructions that say how many docs
+Server name **Opsara AI Docs**. The `initialize` result includes instructions that say how many docs
 the key has and when to use them.
 
 | Tool | Input | Returns |
@@ -105,41 +105,63 @@ use it.
 
 Resources, for clients that browse them:
 
-- `resources/list`: one resource per doc, `guardrail://docs/<slug>`, `text/markdown`.
+- `resources/list`: one resource per doc, `opsara://docs/<slug>`, `text/markdown`.
 - `resources/read`: the doc body.
-- `resources/templates/list`: `guardrail://docs/{slug}`.
+- `resources/templates/list`: `opsara://docs/{slug}`.
 
 `prompts/list` returns an empty list.
 
 ## Sharing docs
 
-- **Groups.** Drag a doc onto a group in the explorer, or tick the group in the doc's **Who can see
-  this** panel. Sub-groups inherit it. A group can also *replace* its parent's list with its own
-  (`override`), for example to give contractors no docs.
-- **Keys.** Tick a key in **Who can see this** to give that key a doc on top of its group's. This is
-  stored as the key's own exception (`mcp_docs`, mode `add`).
-- **MCP access.** Each key has an **MCP access** switch on its page (on by default). With it off,
-  `/mcp` refuses the key with a 403.
+Pick a group or a key in the **Groups & keys** explorer on the left. The right panel (**MCP access**)
+has two tabs:
 
-The **What each key sees** table on the MCP docs page shows each key's effective list. **Test as a
-key** runs `list_docs`, `search_docs`, `read_doc` or `resources/list` as any key and shows exactly
-what its agent would get.
+- **Active**: the docs it can read, in order, each with a short tag: *Own* (shared with this
+  group), *Key* (this key only), *↳ group* (inherited from that group) or *Off here*.
+- **All**: every doc, with search.
 
-## The explorer and the MCP access panel
+Every row has an on/off switch:
 
-The MCP docs explorer shows the group tree with each group's own docs **and its API keys**. Keys
-with MCP access off, or revoked, are dimmed. Selecting a group or a key opens the right sidebar
-(**MCP access**) for it:
+- On shares the doc with the picked group (sub-groups inherit it) or with the key only.
+- Off on an own doc stops sharing it. Off on an inherited doc **excludes** it here: the group and
+  its sub-groups (or just the key) no longer see it. Sub-groups inherit the exclusion and can add
+  the doc back.
+- **New doc** and **Upload .md** create the doc straight into the picked group or key. You can also
+  drag a doc from the list onto any group or key in the tree.
 
-- every doc it can read, marked **Own** (shared with this group), **This key** (shared with this
-  key only) or **Inherited · <group>** (change it on that group);
-- quick actions: share a doc with the group or key, or stop sharing an own doc;
-- for a key: its MCP access switch and **Test as this key**;
-- for a group: its keys, with how many docs each one sees.
+Under the hood this is the `mcp_docs` group setting (`add` / `override`, plus `exclude: [ids]`) and
+the key's own `mcp_docs` exception, applied last.
 
-Clicking a doc opens it in the editor. Clicking a key opens its MCP view in the middle: the docs it
-can read and why, a **Test as a key** runner, and its recent MCP calls from Activity, with a link to
-the full key page.
+The small footer shows counts (docs readable, own, inherited, off). For a key, it also holds the
+**MCP access** switch (on by default; off makes `/mcp` refuse the key with a 403) and **Test as this
+key**.
+
+Clicking a key in the explorer, or **Test as this key**, opens the key's MCP view in the middle:
+
+- the docs it reads and why;
+- a **Test as a key** runner (`list_docs`, `search_docs`, `read_doc`, `resources/list`, exactly as
+  its agent would see them);
+- its recent MCP calls from Activity.
+
+The doc editor's **Who can see this** panel does the same from the doc's side.
+
+![MCP docs for a key](screenshots/mcp-key-view.jpg)
+
+## Agentic project management
+
+Because docs are assigned per team and per person, and agents read them on demand, MCP docs work as
+a light task and knowledge board for a company's agents:
+
+- **Write runtime docs**: today's tasks, specs, who-does-what, runbooks, conventions. The
+  *description* tells agents when to open a doc ("to see what your task is today").
+- **Assign them** to a team (group) or a person or agent (key), and switch inherited ones off where
+  they don't apply.
+- **The agent asks** "what's my task today?" and calls `list_docs` / `search_docs`, then
+  `read_doc`. The caller line (`Request from: <owner> (API key: <name>)`) tells the model who it
+  works for.
+- **Watch it in Activity.** MCP reads and the agent's guarded model calls are logged per key.
+
+Planned: custom tools so agents can write back (update a task's status, add a progress note).
 
 ## Editing
 
@@ -150,7 +172,7 @@ preview. Upload `.md` files from the explorer: each becomes a doc, shared with t
 The **description** is what agents read to decide whether to open a doc, so write it for them:
 "How we ship to production, step by step, and how to roll back".
 
-![Doc editor](screenshots/mcp-doc-editor.png)
+![Doc editor](screenshots/mcp-doc-editor.jpg)
 
 ## Security and limits
 
@@ -185,7 +207,7 @@ Each entry records the key, person, group, IP, method and tool (`tools/call:read
 touched, the response size, the latency and the client name from `initialize` (for example
 `claude-code 2.1`). No model is involved, so no guard layers run.
 
-## Custom tools (later)
+## Custom tools (planned)
 
 Tools live in a registry (`registerTool` in `src/lib/mcp.ts`). The three doc tools are built-ins.
 Custom tools you define in the console will be added to the same registry later.

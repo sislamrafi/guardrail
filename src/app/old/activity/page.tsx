@@ -270,7 +270,7 @@ function Detail({ d, onFeedback }: { d: LogEntry; onFeedback: () => void }) {
           </>
         ) : (
           <>
-            {prompts.forwarded && sentMarks.some(Boolean) && <div className="muted small">Highlighted messages were added or changed by GuardRail (context injection or redaction).</div>}
+            {prompts.forwarded && sentMarks.some(Boolean) && <div className="muted small">Highlighted messages were added or changed by Opsara (context injection or redaction).</div>}
             <PromptView messages={prompts.forwarded} marks={sentMarks} empty={prompts.prompt_expired ? EXPIRED : 'Nothing was sent to the model: the request was rejected or blocked first.'} />
             <PromptFile d={prompts} />
           </>

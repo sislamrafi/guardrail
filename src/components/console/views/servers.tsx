@@ -48,7 +48,7 @@ export function ServersHome() {
     <Page
       icon="servers"
       title="Servers and models"
-      sub="vLLM or any OpenAI-compatible server. GuardRail finds the models each one serves; turn on the ones clients may use."
+      sub="vLLM or any OpenAI-compatible server. Opsara finds the models each one serves; turn on the ones clients may use."
       actions={
         <button type="button" className="cx-btn pri" onClick={() => nav.go('/servers/new')}>
           <Ico n="plus" size={14} /> Add server
@@ -366,7 +366,7 @@ export function AddServer({ onSaved }: { onSaved?: (s: { id: number; name: strin
 
 export function ServerNew() {
   return (
-    <Page icon="servers" title="Add a server" sub="Paste a vLLM or OpenAI-compatible address. GuardRail lists the models it serves.">
+    <Page icon="servers" title="Add a server" sub="Paste a vLLM or OpenAI-compatible address. Opsara lists the models it serves.">
       <AddServer />
     </Page>
   );

@@ -6,6 +6,7 @@ import { Ico, type IconName } from './icons';
 import { pathFor, subtree, useNav } from './nav';
 import { api, useStore, useUi } from './store';
 import { Tree, type TreeNode, useExpanded } from './tree';
+import { AgentSide } from './views/agent';
 import type { Data, GroupC, KeyC, View } from './types';
 
 type Creating = { kind: 'group' | 'file'; parent: number | null } | null;
@@ -20,6 +21,7 @@ const LABEL: Record<View, string> = {
   context: 'Context files',
   rules: 'Custom rules',
   docs: 'MCP docs',
+  agent: 'Agent',
   schemas: 'Schemas',
   studio: 'Studio',
   settings: 'Settings',
@@ -49,6 +51,7 @@ export function Sidebar({ width }: { width: number }) {
   else if (view === 'servers') body = <ServersSide data={data} />;
   else if (view === 'rules') body = <RulesSide data={data} />;
   else if (view === 'studio') body = <StudioSide data={data} />;
+  else if (view === 'agent') body = <AgentSide />;
   else if (view === 'schemas' || view === 'settings') body = <OutlineSide view={view} />;
   else body = <GroupsSide data={data} />;
   return (

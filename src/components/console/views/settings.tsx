@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { SaveState, useAutoSave, useAutoSavePrefs, useQuietSave } from '../autosave';
 import { Ico } from '../icons';
 import { useChatMarkdown } from '../md-text';
-import { Field, Loading, Page, Section, Seg, Switch } from '../kit';
+import { Field, Loading, Page, Section, Seg, Switch, ago, clock } from '../kit';
 import { useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import { resetUiPrefs, usePref } from '../prefs';
@@ -125,6 +125,7 @@ export function SettingsPage() {
             </Link>
           </div>
         </Section>
+        {data.summary.authEnabled && <Sessions />}
       </section>
     </Page>
   );
@@ -156,7 +157,7 @@ function SplashSettings() {
     setGap(Number(local.get('cx-splash-gap-h')) || SPLASH_GAP_HOURS);
   }, []);
   return (
-    <Field label="Splash screen" hint={on ? `A 5–10 second GuardRail loading screen when the console opens after ${gap} hours or more away.` : 'Off in this browser.'}>
+    <Field label="Splash screen" hint={on ? `A 5–10 second Opsara loading screen when the console opens after ${gap} hours or more away.` : 'Off in this browser.'}>
       <div className="cx-form-row center">
         <Switch
           on={on}
@@ -248,5 +249,85 @@ function ReopenTabsSetting() {
     <Field label="Reopen tabs after a reload" hint={on ? 'A reload brings back the editor tabs you had open.' : 'A reload starts with only the page in the address bar open.'}>
       <Switch on={on} label="Reopen tabs after a reload" onChange={setOn} />
     </Field>
+  );
+}
+
+/** Signed-in browsers and recent sign-in events, with sign out per browser or everywhere. */
+function Sessions() {
+  const ui = useUi();
+  const [d, setD] = useState<{ sessions: { family: string; started: number; last_used: number; expires: number; ip: string | null; ua: string | null; revoked: number }[]; audit: { ts: number; event: string; ip: string | null }[] } | null>(null);
+  const load = () => api<NonNullable<typeof d>>('auth/sessions').then(setD, () => setD(null));
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const browser = (ua: string | null) => (ua ? (/(Firefox|Edg|Chrome|Safari)\/[\d.]+/.exec(ua)?.[0] ?? ua.slice(0, 40)) : 'unknown');
+  return (
+    <Section
+      title="Signed-in browsers"
+      hint="Each sign-in gets a 15-minute access token, renewed from a refresh cookie that changes on every use. A reused old cookie ends that sign-in everywhere."
+      actions={
+        <button
+          type="button"
+          className="cx-btn sm"
+          onClick={async () => {
+            if (!(await ui.confirm({ title: 'Sign out everywhere?', body: 'Every browser, this one included, has to sign in again.', ok: 'Sign out everywhere', danger: true }))) return;
+            await ui.run(() => api('auth/logout-all', { body: {} }), 'Signed out everywhere');
+            window.location.href = '/login';
+          }}
+        >
+          Sign out everywhere
+        </button>
+      }
+    >
+      {!d ? (
+        <Loading />
+      ) : (
+        <div className="cx-table-wrap">
+          <table className="cx-table">
+            <thead>
+              <tr>
+                <th>Browser</th>
+                <th>IP</th>
+                <th>Signed in</th>
+                <th>Last used</th>
+                <th>State</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {d.sessions.map((x) => (
+                <tr key={x.family} className={x.revoked ? 'cx-dim' : ''}>
+                  <td>{browser(x.ua)}</td>
+                  <td className="mono">{x.ip ?? '–'}</td>
+                  <td className="cx-muted">{ago(x.started)}</td>
+                  <td className="cx-muted">{ago(x.last_used)}</td>
+                  <td>{x.revoked ? 'Signed out' : x.expires < Date.now() ? 'Expired' : 'Active'}</td>
+                  <td>
+                    {!x.revoked && x.expires > Date.now() && (
+                      <button type="button" className="cx-btn sm" onClick={() => void ui.run(() => api(`auth/sessions/${x.family}/revoke`, { body: {} }), 'Signed out').then(load)}>
+                        Sign out
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {d && d.audit.length > 0 && (
+        <details className="cx-more">
+          <summary>Recent sign-in events</summary>
+          <ul className="cx-plainlist small">
+            {d.audit.map((a, i) => (
+              <li key={i}>
+                {clock(a.ts)} · {a.event.replace(/_/g, ' ')} · {a.ip ?? '–'}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </Section>
   );
 }

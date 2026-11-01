@@ -6,7 +6,7 @@ import type { ScenarioSettings } from '@/lib/studio';
 import type { Plan } from '@/lib/studio-plan';
 import { Loading, Note, Pill, Seg, fmt, fmtTokens, ms } from './kit';
 import { writePref } from './prefs';
-import { api, useStore } from './store';
+import { adminFetch, api, useStore } from './store';
 import type { LogEntry } from './types';
 import { OUTCOME, Timeline } from './views/activity';
 import { ACTION_LABEL, ACTION_TONE } from './views/guard';
@@ -97,7 +97,7 @@ export function applyLive(s: LiveState, e: LiveEvent): LiveState {
 
 /** Send a Studio message through the live endpoint: events as they happen, then the final result. */
 export async function sendLive<T>(body: unknown, onEvent: (e: LiveEvent) => void): Promise<T> {
-  const res = await fetch('/api/admin/studio/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
+  const res = await adminFetch('/api/admin/studio/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
   if (!res.ok || !res.body) {
     const j = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || `Request failed (${res.status})`);

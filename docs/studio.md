@@ -4,7 +4,7 @@ Studio is a chat test bench inside the console. Every message goes through the *
 (auth, rules, guard layers, context, the model, after-the-model checks), exactly like a client
 request, so what you see is what an agent would get.
 
-![Studio live run](screenshots/studio-live.png)
+![Studio live run](screenshots/studio-live.jpg)
 
 ## Scenarios
 
@@ -41,7 +41,7 @@ Before you send anything, **Planned** shows what *will* apply: the key, IP handl
 servers, models, context files with their token counts, layer switches, custom rules and the
 blocked-reply template. **Last turn** shows what actually happened on the latest message.
 
-![Studio request debug](screenshots/studio-debug.png)
+![Studio request debug](screenshots/studio-debug.jpg)
 
 ## Notes
 

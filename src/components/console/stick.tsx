@@ -6,9 +6,10 @@ import { Ico } from './icons';
 /**
  * Keep a scroll box at the bottom while its content grows (streamed text, live steps, Markdown
  * re-rendering), as long as the viewer is at or near the bottom. Scrolling up stops following and
- * marks new output as unseen; jump() goes back down and follows again.
+ * marks new output as unseen; jump() goes back down and follows again. Pass `ready` when the scroll
+ * box only appears later (after loading), so it is picked up then.
  */
-export function useStickToBottom<T extends HTMLElement>() {
+export function useStickToBottom<T extends HTMLElement>(ready: unknown = true) {
   const ref = useRef<T>(null);
   const following = useRef(true);
   const [unseen, setUnseen] = useState(false);
@@ -46,7 +47,7 @@ export function useStickToBottom<T extends HTMLElement>() {
       ro.disconnect();
       mo.disconnect();
     };
-  }, [toBottom]);
+  }, [toBottom, ready]);
   return { ref, unseen, jump };
 }
 
@@ -55,7 +56,7 @@ export function NewOutput({ show, onClick }: { show: boolean; onClick: () => voi
   if (!show) return null;
   return (
     <button type="button" className="cx-newout" onClick={onClick}>
-      <Ico n="chevron" size={12} /> New output
+      <Ico n="chevron" size={12} /> Jump to latest
     </button>
   );
 }

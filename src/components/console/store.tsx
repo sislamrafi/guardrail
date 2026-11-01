@@ -1,10 +1,10 @@
 'use client';
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '@/components/ui';
+import { adminFetch, api } from '@/components/ui';
 import type { Data, DocC, DocKeyC, FileC, GroupC, KeyC, ServerC, Summary } from './types';
 
-export { api };
+export { adminFetch, api };
 
 // ---------------------------------------------------------------- data
 
@@ -49,6 +49,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Keep counts and server status fresh while the console is open.
     const t = setInterval(() => document.visibilityState === 'visible' && void reload(), 30000);
     return () => clearInterval(t);
+  }, [reload]);
+
+  // Live updates: the server announces every change (from this console, another tab, or the agent).
+  // Views refresh a moment later; components with their own data listen for "cx-changed".
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const changed = (detail: unknown) => {
+      window.dispatchEvent(new CustomEvent('cx-changed', { detail }));
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void reload(), 350);
+    };
+    const ac = new AbortController();
+    (async () => {
+      while (live) {
+        try {
+          const res = await adminFetch('/api/admin/events', { signal: ac.signal });
+          const reader = res.body?.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          while (reader && live) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() ?? '';
+            for (const p of parts) {
+              const line = p.split('\n').find((l) => l.startsWith('data:'));
+              if (line) changed(JSON.parse(line.slice(5)));
+            }
+          }
+        } catch {
+          /* dropped: reconnect below */
+        }
+        if (live) await new Promise((r) => setTimeout(r, 2000));
+      }
+    })();
+    return () => {
+      live = false;
+      ac.abort();
+      if (timer) clearTimeout(timer);
+    };
   }, [reload]);
 
   const patch = useCallback((fn: (d: Data) => Data) => setData((d) => (d ? fn(d) : d)), []);

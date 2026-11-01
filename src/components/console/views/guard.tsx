@@ -14,7 +14,7 @@ import { Ico } from '../icons';
 import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, Section, Seg, Switch, ms } from '../kit';
 import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
-import { api, useStore, useUi } from '../store';
+import { adminFetch, api, useStore, useUi } from '../store';
 import { useActions } from '../actions';
 import { ScopeFooter, ScopeLine, ScopeTabs } from '../scope-items';
 import type { Data, GroupC } from '../types';
@@ -351,7 +351,7 @@ export function Tester({ data, layers, title = 'Try the pipeline' }: { data: Dat
     setLive({ running: null, done: [] });
     await ui.run(
       async () => {
-        const r = await fetch('/api/admin/guard/test-live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, groupId: gid, source, layers }) });
+        const r = await adminFetch('/api/admin/guard/test-live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, groupId: gid, source, layers }) });
         if (!r.ok || !r.body) throw new Error(`Request failed (${r.status})`);
         const reader = r.body.getReader();
         const dec = new TextDecoder();
@@ -641,7 +641,7 @@ function LayerForm({ data, index }: { data: Data; index: number }) {
       {needsModel && usesPrompt && (
         <Section
           title="System prompt"
-          hint={fmt === 'json_judge' ? 'Groups can add lines to it. GuardRail appends the answer format it expects.' : 'Groups can add lines to it.'}
+          hint={fmt === 'json_judge' ? 'Groups can add lines to it. Opsara appends the answer format it expects.' : 'Groups can add lines to it.'}
           actions={<IconBtn icon={preview ? 'code' : 'preview'} label={preview ? 'Edit as text' : 'Show rendered Markdown'} active={preview} onClick={() => setPreview(!preview)} />}
         >
           {preview ? <article className="cx-md boxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(l.prompt || '_Empty_') }} /> : <textarea className="cx-input mono" rows={14} value={l.prompt} onChange={(e) => set({ prompt: e.target.value })} placeholder="You review requests sent to a coding assistant. Block the request if…" />}
@@ -894,7 +894,7 @@ function MappingEditor({ l, set }: { l: GuardLayer; set: (p: Partial<GuardLayer>
           <textarea className="cx-input mono" rows={5} value={sample} onChange={(e) => setSample(e.target.value)} />
         </Field>
         <div>
-          <span className="cx-field-label">How GuardRail reads it</span>
+          <span className="cx-field-label">How Opsara reads it</span>
           {parsed ? (
             <div className="cx-form">
               <div className="cx-form-row center">
@@ -1103,7 +1103,7 @@ function PlacementField({ l, set, data, index }: { l: GuardLayer; set: (p: Parti
   if (suffix) {
     if (!l.sameModel) warnings.push(`It checks with ${l.model || 'its own model'}. The cache is only shared when the check and the request use the same model on the same server; turn on "Use the request's model" for that.`);
     const hosted = l.sameModel ? data.servers.some((x) => !isLocal(x.url)) : !!server && !isLocal(server.url);
-    if (hosted) warnings.push('On hosted APIs caching is up to the provider: OpenAI, DeepSeek and similar cache long prompts automatically, and GuardRail adds a cache breakpoint for Anthropic and Gemini models. OpenRouter may send the check and the request to different providers, which misses the cache.');
+    if (hosted) warnings.push('On hosted APIs caching is up to the provider: OpenAI, DeepSeek and similar cache long prompts automatically, and Opsara adds a cache breakpoint for Anthropic and Gemini models. OpenRouter may send the check and the request to different providers, which misses the cache.');
     if (layers.slice(0, index).some((x) => x.type === 'redactor' || x.onFail === 'redact')) warnings.push('A layer before this one can redact text. When it does, the request the model gets differs from what this layer checked, so the cache misses.');
     if (layers.some((x) => x.type === 'router')) warnings.push('A router layer may switch the request to another model; the check and the call then use different models.');
     warnings.push('Providers only cache prompts above a minimum size (often 1,024 tokens), so short conversations will not hit.');

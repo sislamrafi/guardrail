@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A tiny stand-in for a vLLM server, for local development and tests.
-// It speaks the parts of vLLM's API GuardRail uses:
+// It speaks the parts of vLLM's API Opsara uses:
 //   GET  /v1/models            model list
 //   POST /v1/chat/completions  chat (streams when asked); a "safeguard" model answers as a judge
 //   POST /v1/completions       legacy completions
@@ -79,11 +79,39 @@ const server = http.createServer(async (req, res) => {
   if (seenPrefixes.has(prefix)) hits += 1;
   seenPrefixes.add(prefix);
 
-  // After GuardRail's retry feedback, answer cleanly (tests the after-the-model retry loop).
+  // After Opsara's retry feedback, answer cleanly (tests the after-the-model retry loop).
   const fixed = /previous answer was rejected/i.test(text(messages.at(-1)?.content));
   const reply = body.model.includes('safeguard') ? judge(messages) : fixed ? 'Here is a safe answer that follows the rules.' : `Mock answer from ${body.model}. I received ${messages.length} message(s); the first starts with: ${text(messages[0]?.content).slice(0, 80).replace(/\s+/g, ' ')}; the last says: ${text(messages.at(-1)?.content).slice(0, 120).replace(/\s+/g, ' ')}`;
   const created = Math.floor(Date.now() / 1000);
   const id = `cmpl-mock-${Date.now()}`;
+
+  // Scripted tool calling (for the console agent): a user message "[tool:name {json args}]" makes the
+  // model call that tool; after the tool answers, it replies "Done: …" with the result.
+  if (chat && Array.isArray(body.tools)) {
+    const last = messages.at(-1);
+    const m = last?.role === 'user' ? /^\[tool:(\w+)\s*(\{[\s\S]*\})?\]$/.exec(text(last.content).trim()) : null;
+    const call = m ? { id: `call_${Date.now()}`, type: 'function', function: { name: m[1], arguments: m[2] ?? '{}' } } : null;
+    const answer = last?.role === 'tool' ? `Done: ${text(last.content).slice(0, 200)}` : call ? '' : `Mock agent here. I received: ${text(last?.content).slice(0, 120)}`;
+    if (body.stream) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+      chunk({ role: 'assistant', content: '' });
+      if (call) {
+        chunk({ tool_calls: [{ index: 0, id: call.id, type: 'function', function: { name: call.function.name, arguments: '' } }] });
+        chunk({ tool_calls: [{ index: 0, function: { arguments: call.function.arguments } }] });
+        chunk({}, 'tool_calls');
+      } else {
+        for (const w of answer.match(/\S+\s*/g) ?? [answer]) {
+          chunk({ content: w });
+          await new Promise((r) => setTimeout(r, TOKEN_MS));
+        }
+        chunk({}, 'stop');
+      }
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    return send(res, 200, { id, object: 'chat.completion', created, model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: answer || null, ...(call ? { tool_calls: [call] } : {}) }, finish_reason: call ? 'tool_calls' : 'stop' }] });
+  }
   const words = reply.match(/\S+\s*/g) ?? [reply];
 
   if (body.stream) {

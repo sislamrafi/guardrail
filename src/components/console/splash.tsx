@@ -37,12 +37,12 @@ export function Splash() {
     };
   }, [run]);
   return (
-    <div key={run} className="cx-splash" role="status" aria-label="Loading GuardRail AI">
+    <div key={run} className="cx-splash" role="status" aria-label="Loading Opsara AI">
       <div className="cx-splash-mark">
         <span className="cx-splash-glow" />
         <Logo size={96} />
       </div>
-      <div className="cx-splash-name">GuardRail AI</div>
+      <div className="cx-splash-name">Opsara AI</div>
       <div className="cx-splash-tag">Security gateway for agentic coding</div>
       <div className="cx-splash-bar">
         <i />

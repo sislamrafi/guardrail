@@ -1,18 +1,23 @@
-import { SESSION_COOKIE, sessionToken, timingSafeEqual } from '@/lib/session';
+import { authEnabled, clearCookies, login, sameOrigin, sessionCookies } from '@/lib/auth';
+import { clientIp } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
+// The password is only ever checked here, on the server. A match returns a short-lived access token
+// (kept in memory by the console) and sets the httpOnly refresh cookie.
 export async function POST(req: Request) {
-  const expected = process.env.GUARDRAIL_ADMIN_PASSWORD;
-  if (!expected) return Response.json({ ok: true });
-  const { password } = (await req.json().catch(() => ({}))) as { password?: string };
-  if (!password || !timingSafeEqual(await sessionToken(password), await sessionToken(expected))) {
-    return Response.json({ error: 'Wrong password.' }, { status: 401 });
+  if (!authEnabled()) return Response.json({ ok: true, open: true });
+  if (!sameOrigin(req)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
+  const { password } = (await req.json().catch(() => ({}))) as { password?: unknown };
+  const meta = { ip: clientIp(req), ua: req.headers.get('user-agent') };
+  const r = await login(typeof password === 'string' ? password : '', meta);
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  if (!r.ok) {
+    if (r.retryAfter) headers.set('Retry-After', String(r.retryAfter));
+    for (const c of clearCookies(req)) headers.append('Set-Cookie', c);
+    return Response.json({ error: r.error }, { status: r.status, headers });
   }
-  const token = await sessionToken(expected);
-  const secure = new URL(req.url).protocol === 'https:' ? '; Secure' : '';
-  return Response.json(
-    { ok: true },
-    { headers: { 'Set-Cookie': `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${60 * 60 * 12}${secure}` } },
-  );
+  for (const c of sessionCookies(req, r.issued.refreshToken)) headers.append('Set-Cookie', c);
+  return Response.json({ ok: true, accessToken: r.issued.accessToken, expiresAt: r.issued.expiresAt }, { headers });
 }
