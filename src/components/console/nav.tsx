@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { parsePath, pathFor } from './paths';
 import type { View } from './types';
 import { readPref, writePref } from './prefs';
@@ -56,6 +56,11 @@ export function NavProvider({ children }: { children: ReactNode }) {
     }
   });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  // Where we are (or are heading): several closes in a row (Close all) must see each other's moves.
+  const pathRef = useRef(pathname);
+  pathRef.current = pathname;
 
   // Every path you visit becomes (or focuses) a tab.
   useEffect(() => {
@@ -86,19 +91,24 @@ export function NavProvider({ children }: { children: ReactNode }) {
 
   const closeTab = useCallback(
     (p: string) => {
-      setTabs((t) => {
-        const i = t.indexOf(p);
-        const next = t.filter((x) => x !== p);
-        if (p === pathname) router.push(withGroup(next[Math.max(0, i - 1)] ?? '/', group));
-        return next;
-      });
+      // Work out the next tabs first, then navigate: updaters must not have side effects.
+      const t = tabsRef.current;
+      const i = t.indexOf(p);
+      const next = t.filter((x) => x !== p);
+      tabsRef.current = next;
+      setTabs(next);
+      if (p === pathRef.current) {
+        const dest = next[Math.max(0, i - 1)] ?? '/';
+        pathRef.current = dest;
+        router.push(withGroup(dest, group));
+      }
       setDrafts((d) => {
         const n = { ...d };
         delete n[p];
         return n;
       });
     },
-    [pathname, router, group, withGroup],
+    [router, group, withGroup],
   );
   const closeOthers = useCallback(
     (p: string) => {

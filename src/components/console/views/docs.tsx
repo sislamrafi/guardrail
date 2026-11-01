@@ -598,66 +598,55 @@ function StatusChip({ st, keyName }: { st: Status; keyName?: string }) {
   return <Pill title={st.from ? `Inherited from ${st.from.path}; change it there` : 'Inherited'}>{st.from ? `via ${st.from.name}` : 'Inherited'}</Pill>;
 }
 
-/** Right sidebar on MCP docs: what the picked group or key can read, with quick share and remove. */
+/** Right sidebar on MCP docs: what the picked group or key can read; MCP switch and test in the footer. */
 export function McpPanel({ data }: { data: Data }) {
   const t = useTarget(data);
   const nav = useNav();
   const act = useActions();
   if (!t) return null;
   const { key, group } = t;
-  const { list } = scopeItems(data, 'mcp_docs', group, key);
-  const docs = list.map((x) => data.docs.find((d) => d.id === x.id)).filter((d): d is DocC => !!d);
   const q = key ? `?group=${group.id}&key=${key.id}` : `?group=${group.id}`;
-  const reach = data.docKeys.filter((k) => !k.revoked && k.mcp && data.groups.some((g) => g.id === k.groupId && (g.id === group.id || g.path.startsWith(`${group.path} `))));
-  const ownCount = list.filter((x) => x.st.kind !== 'inherited').length;
+  const { list, off } = scopeItems(data, 'mcp_docs', group, key);
+  const own = list.filter((x) => x.st.kind !== 'inherited').length;
+  const inGroup = data.keys.filter((k) => k.groupId === group.id);
+  const withMcp = data.docKeys.filter((k) => !k.revoked && k.mcp && data.groups.some((g) => g.id === k.groupId && (g.id === group.id || g.path.startsWith(`${group.path} `))));
+  const readable = key && (!key.mcp || key.revoked) ? 0 : list.length;
+  const footer = `${readable} doc${readable === 1 ? '' : 's'} readable · ${own} own · ${list.length - own} inherited${off.length ? ` · ${off.length} off` : ''}${key ? ` · MCP ${key.mcp ? 'on' : 'off'}` : ` · ${withMcp.length} key${withMcp.length === 1 ? '' : 's'} with MCP`}`;
   return (
-    <div className="cx-details">
-      <button type="button" className="cx-details-title" onClick={() => nav.go(key ? `${pathFor('docs', `k${key.id}`)}?group=${key.groupId}&key=${key.id}` : pathFor('groups', group.id))} title={key ? 'Open its MCP view' : 'Open group settings'}>
-        <Ico n={key ? 'key' : 'folder'} /> {key ? key.name : group.name}
-      </button>
-      <p className="cx-details-sub">{key ? `${key.owner} · ${group.path}` : group.path}</p>
-      {key && (
-        <div className="cx-form-row center nowrap cx-mcp-switch">
-          <Switch on={key.mcp} label="MCP access" onChange={(v) => void act.setKeyMcp(key, v)} />
-          <span className="small">{key.revoked ? 'Key revoked' : key.mcp ? 'MCP access on' : 'MCP access off: /mcp refuses this key'}</span>
-        </div>
-      )}
-      <div className="cx-stats">
-        <Stat label="Docs it can read" value={key && (!key.mcp || key.revoked) ? 0 : docs.length} />
-        <Stat label="Own / inherited" value={`${ownCount} / ${list.length - ownCount}`} />
-        {!key && <Stat label="Keys with MCP" value={reach.length} hint="Active keys in this group and its sub-groups with MCP access on" />}
-        {key && <Stat label="Size" value={size(docs.reduce((a, d) => a + bytes(d.body), 0))} />}
-      </div>
-      <ScopeItems
-        data={data}
-        kind="mcp_docs"
-        g={group}
-        keyRow={key}
-        noun={{ one: 'doc', many: 'docs' }}
-        items={data.docs.map((d) => ({ id: d.id, name: d.title, meta: d.slug, title: `${d.title} · ${d.slug}${d.description ? ` · ${d.description}` : ''}` }))}
-        open={(id) => nav.go(`${pathFor('docs', id)}${q}`)}
-      />
-      {key ? (
-        <button type="button" className="cx-btn sm cx-mcp-test" onClick={() => nav.go(`${pathFor('docs', `k${key.id}`)}?group=${key.groupId}&key=${key.id}`)}>
-          <Ico n="studio" size={13} /> Test as this key
-        </button>
-      ) : (
-        <>
-          <div className="cx-details-sec">KEYS HERE · {data.keys.filter((k) => k.groupId === group.id).length}</div>
-          {data.keys
-            .filter((k) => k.groupId === group.id)
-            .map((k) => (
-              <button key={k.id} type="button" className={`cx-li ${!k.mcp || k.revoked ? 'cx-dim' : ''}`} onClick={() => nav.go(`${pathFor('docs', `k${k.id}`)}?group=${k.groupId}&key=${k.id}`)}>
-                <span className="cx-ico key">
-                  <Ico n="key" size={14} />
-                </span>
-                <span className="cx-label">{k.name}</span>
-                <span className="cx-meta">{k.revoked ? 'revoked' : k.mcp ? `${data.docKeys.find((x) => x.id === k.id)?.docs.length ?? 0} docs` : 'MCP off'}</span>
-              </button>
+    <ScopeItems
+      data={data}
+      kind="mcp_docs"
+      g={group}
+      keyRow={key}
+      noun={{ one: 'doc', many: 'docs' }}
+      footer={footer}
+      items={data.docs.map((d) => ({ id: d.id, name: d.title, meta: d.slug, title: `${d.title} · ${d.slug}${d.description ? ` · ${d.description}` : ''}` }))}
+      open={(id) => nav.go(`${pathFor('docs', id)}${q}`)}
+      footerExtra={
+        key ? (
+          <div className="cx-pfoot-row">
+            <Switch on={key.mcp} label="MCP access" onChange={(v) => void act.setKeyMcp(key, v)} />
+            <span>MCP access</span>
+            <span className="grow" />
+            <button type="button" className="cx-btn sm" onClick={() => nav.go(`${pathFor('docs', `k${key.id}`)}?group=${key.groupId}&key=${key.id}`)}>
+              Test as this key
+            </button>
+          </div>
+        ) : inGroup.length ? (
+          <div className="cx-pfoot-row small">
+            Keys here:{' '}
+            {inGroup.map((k, i) => (
+              <span key={k.id}>
+                {i ? ', ' : ''}
+                <button type="button" className="cx-link" onClick={() => nav.setScope({ group: k.groupId, key: k.id })}>
+                  {k.name}
+                </button>
+              </span>
             ))}
-        </>
-      )}
-    </div>
+          </div>
+        ) : null
+      }
+    />
   );
 }
 

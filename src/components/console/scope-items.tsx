@@ -1,22 +1,22 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { useActions } from './actions';
-import { Ico } from './icons';
-import { Pill, Switch } from './kit';
+import { Ico, type IconName } from './icons';
+import { Switch } from './kit';
 import { useNav } from './nav';
+import { usePref } from './prefs';
 import { api, useUi } from './store';
 import { setTreeDrag } from './tree';
 import type { Data, GroupC, KeyC } from './types';
 
-// The right panel's two parts for Context files and MCP docs, for the group or key picked on the left:
-//   1. what applies to it, in order: own items, items from this key only, inherited ones (each can be
-//      switched off here; sub-groups inherit that) and the ones switched off here (switch back on);
-//   2. the library: every file or doc, to add to it (or drag onto a group or key in the tree).
+// The right panel for Context files and MCP docs, for the group or key picked on the left:
+//   a scope line (name and path), two tabs (what is active for it / everything) with an on/off switch
+//   on every row, and a small footer with counts that can be hidden.
 
 export type Kind = 'context' | 'mcp_docs';
 type Item = { id: number; name: string; meta: string; title: string };
-type Status = { kind: 'own' | 'key' | 'inherited' | 'off'; from?: GroupC };
+export type Status = { kind: 'own' | 'key' | 'inherited' | 'off'; from?: GroupC };
 
 const chainUp = (g: GroupC, groups: GroupC[]) => {
   const out: GroupC[] = [];
@@ -41,14 +41,71 @@ export function scopeItems(data: Data, kind: Kind, g: GroupC, key: KeyC | null):
   return { list, off };
 }
 
-function StatusPill({ st }: { st: Status }) {
-  if (st.kind === 'own') return <Pill tone="ok">Own</Pill>;
-  if (st.kind === 'key') return <Pill tone="info">This key</Pill>;
-  if (st.kind === 'off') return <Pill tone="warn">Off here</Pill>;
-  return <Pill title={st.from ? `Inherited from ${st.from.path}` : 'Inherited'}>{st.from ? `via ${st.from.name}` : 'Inherited'}</Pill>;
+/** Short source tag: Own, Key, ↳ dev, Off here. */
+export function SourceTag({ st }: { st?: Status }) {
+  if (!st) return null;
+  const [text, cls, title] =
+    st.kind === 'own' ? ['Own', 'own', 'Set on this group'] : st.kind === 'key' ? ['Key', 'key', 'Set on this key only'] : st.kind === 'off' ? ['Off here', 'off', 'Inherited, switched off here'] : [`↳ ${st.from?.name ?? 'parent'}`, '', st.from ? `Inherited from ${st.from.path}` : 'Inherited'];
+  return (
+    <span className={`cx-src ${cls}`} title={title}>
+      {text}
+    </span>
+  );
 }
 
-export function ScopeItems({ data, kind, g, keyRow, items, open, noun }: { data: Data; kind: Kind; g: GroupC; keyRow: KeyC | null; items: Item[]; open: (id: number) => void; noun: { one: string; many: string } }) {
+/** Scope line at the top of a right panel: icon, name, and the group path. */
+export function ScopeLine({ g, keyRow, title }: { g: GroupC; keyRow: KeyC | null; title?: string }) {
+  return (
+    <div className="cx-scope-line" title={title}>
+      <b>
+        <Ico n={keyRow ? 'key' : 'folder'} size={14} /> {keyRow ? keyRow.name : g.name}
+      </b>
+      <span>{keyRow ? `${g.path.replace(/ › /g, ' > ')} > ${keyRow.name}` : g.path.replace(/ › /g, ' > ')}</span>
+    </div>
+  );
+}
+
+/** Tabs right under the scope line, remembered per section. */
+export function ScopeTabs<T extends string>({ id, tabs, children }: { id: string; tabs: [T, string][]; children: (tab: T) => ReactNode }) {
+  const [tab, setTab] = usePref<T>(`panel.tab.${id}`, tabs[0][0]);
+  const cur = tabs.some(([t]) => t === tab) ? tab : tabs[0][0];
+  return (
+    <>
+      <div className="cx-ptabs" role="tablist">
+        {tabs.map(([t, label]) => (
+          <button key={t} type="button" role="tab" aria-selected={cur === t} className={cur === t ? 'on' : ''} onClick={() => setTab(t)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="cx-ptab-body">{children(cur)}</div>
+    </>
+  );
+}
+
+/** A small footer with counts (and extras), hideable. */
+export function ScopeFooter({ id, text, children }: { id: string; text: string; children?: ReactNode }) {
+  const [open, setOpen] = usePref(`panel.foot.${id}`, true);
+  return (
+    <div className={`cx-pfoot ${open ? '' : 'closed'}`}>
+      <button type="button" className="cx-pfoot-head" aria-expanded={open} onClick={() => setOpen(!open)} title={open ? 'Hide' : 'Show'}>
+        <Ico n="chevron" size={11} /> <span>{text}</span>
+      </button>
+      {open && children && <div className="cx-pfoot-body">{children}</div>}
+    </div>
+  );
+}
+
+/** Small icon buttons for a tab header. */
+export function ToolBtn({ icon, label, onClick }: { icon: IconName; label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="cx-tool" title={label} aria-label={label} onClick={onClick}>
+      <Ico n={icon} size={14} />
+    </button>
+  );
+}
+
+export function ScopeItems({ data, kind, g, keyRow, items, open, noun, footer, footerExtra }: { data: Data; kind: Kind; g: GroupC; keyRow: KeyC | null; items: Item[]; open: (id: number) => void; noun: { one: string; many: string }; footer: string; footerExtra?: ReactNode }) {
   const act = useActions();
   const ui = useUi();
   const nav = useNav();
@@ -57,38 +114,18 @@ export function ScopeItems({ data, kind, g, keyRow, items, open, noun }: { data:
   const { list, off } = scopeItems(data, kind, g, keyRow);
   const who = keyRow ? keyRow.name : g.name;
   const scope = { group: g, key: keyRow };
-  const add = (id: number) =>
-    kind === 'context' ? (keyRow ? act.setKeyFile(keyRow, id, true) : act.attach(id, g.id)) : keyRow ? act.setKeyDoc(keyRow, id, true) : act.shareDoc(id, g.id);
-  const remove = (id: number) =>
-    kind === 'context' ? (keyRow ? act.setKeyFile(keyRow, id, false) : act.detach(id, g.id)) : keyRow ? act.setKeyDoc(keyRow, id, false) : act.unshareDoc(id, g.id);
-  const create = () => (kind === 'context' ? act.createFile('new-file', g.id, keyRow) : act.createDoc('New doc', keyRow ? null : g.id, undefined, keyRow));
-  const byId = (id: number) => items.find((x) => x.id === id);
-  const row = (id: number, st: Status) => {
-    const it = byId(id);
-    if (!it) return null;
-    const canOff = st.kind === 'inherited' && (keyRow || g.parentId !== null);
-    return (
-      <div key={`${st.kind}-${id}`} className={`cx-li ${nav.id === String(id) ? 'on' : ''} ${st.kind === 'off' ? 'cx-dim' : ''}`}>
-        <span className="cx-ico md">
-          <Ico n="file" size={14} />
-        </span>
-        <button type="button" className="cx-label cx-link-plain" title={it.title} onClick={() => open(id)}>
-          {it.name}
-        </button>
-        <StatusPill st={st} />
-        {st.kind === 'own' || st.kind === 'key' ? (
-          <button type="button" className="cx-row-act show" title={`Remove from ${who}`} aria-label={`Remove from ${who}`} onClick={() => void remove(id)}>
-            <Ico n="unlink" size={14} />
-          </button>
-        ) : canOff || st.kind === 'off' ? (
-          <Switch on={st.kind !== 'off'} label={st.kind === 'off' ? `Turn ${it.name} back on for ${who}` : `Turn ${it.name} off for ${who}`} onChange={(v) => void act.setOff(kind, id, !v, scope)} />
-        ) : null}
-      </div>
-    );
+  const status = new Map<number, Status>([...list.map((x) => [x.id, x.st] as const), ...off.map((id) => [id, { kind: 'off' } as Status] as const)]);
+
+  const add = (id: number) => (kind === 'context' ? (keyRow ? act.setKeyFile(keyRow, id, true) : act.attach(id, g.id)) : keyRow ? act.setKeyDoc(keyRow, id, true) : act.shareDoc(id, g.id));
+  const remove = (id: number) => (kind === 'context' ? (keyRow ? act.setKeyFile(keyRow, id, false) : act.detach(id, g.id)) : keyRow ? act.setKeyDoc(keyRow, id, false) : act.unshareDoc(id, g.id));
+  /** One switch for every row: own/key items are added or removed; inherited ones are switched off here (or back on). */
+  const flip = (id: number, on: boolean) => {
+    const st = status.get(id);
+    if (on) return st?.kind === 'off' ? act.setOff(kind, id, false, scope) : add(id);
+    if (st?.kind === 'own' || st?.kind === 'key') return remove(id);
+    if (st?.kind === 'inherited') return act.setOff(kind, id, true, scope);
   };
-  const applied = new Set(list.map((x) => x.id));
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const lib = items.filter((it) => words.every((w) => `${it.name} ${it.title}`.toLowerCase().includes(w)));
+  const create = () => (kind === 'context' ? act.createFile('new-file', g.id, keyRow) : act.createDoc('New doc', keyRow ? null : g.id, undefined, keyRow));
   const uploadFiles = async (files: FileList) => {
     await ui.run(async () => {
       for (const f of Array.from(files)) {
@@ -110,68 +147,80 @@ export function ScopeItems({ data, kind, g, keyRow, items, open, noun }: { data:
       }
     }, `Uploaded for ${who}`);
   };
-  return (
-    <>
-      <div className="cx-details-sec">
-        APPLIES TO {who.toUpperCase()} · {list.length}
-      </div>
-      {list.length === 0 && <p className="cx-details-empty">No {noun.many} yet. Add one from the library below, or create one.</p>}
-      {list.map((x) => row(x.id, x.st))}
-      {off.map((id) => row(id, { kind: 'off' }))}
-      <div className="cx-attach">
-        <button type="button" className="cx-btn sm pri" onClick={() => void create()}>
-          <Ico n="newFile" size={13} /> New {noun.one}
-        </button>
-        <button type="button" className="cx-btn sm" onClick={() => upload.current?.click()}>
-          <Ico n="upload" size={13} /> Upload .md
-        </button>
-        <input ref={upload} type="file" accept=".md,.markdown,.txt" multiple hidden onChange={(e) => e.target.files && void uploadFiles(e.target.files).then(() => (e.target.value = ''))} />
-      </div>
-      {list.some((x) => x.st.kind === 'inherited') && <p className="cx-details-empty">Switch an inherited {noun.one} off to leave it out for {who}{keyRow ? '' : ' and its sub-groups'}.</p>}
 
-      <div className="cx-details-sec">
-        ALL {noun.many.toUpperCase()} · {items.length}
+  const row = (it: Item | undefined) => {
+    if (!it) return null;
+    const st = status.get(it.id);
+    const on = !!st && st.kind !== 'off';
+    // The root has nothing inherited to switch off.
+    const locked = st?.kind === 'inherited' && !keyRow && g.parentId === null;
+    return (
+      <div
+        key={it.id}
+        className={`cx-prow ${nav.id === String(it.id) ? 'on' : ''} ${on ? '' : 'dim'}`}
+        draggable
+        title={`${it.title}. Drag onto a group or key on the left to add it there.`}
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', it.name);
+          setTreeDrag(`${kind === 'context' ? 'file' : 'doc'}:${it.id}`);
+        }}
+        onDragEnd={() => setTreeDrag(null)}
+      >
+        <Ico n="file" size={13} />
+        <button type="button" className="cx-prow-name" onClick={() => open(it.id)}>
+          {it.name}
+        </button>
+        <SourceTag st={st} />
+        <Switch on={on} disabled={locked} label={`${it.name} ${on ? 'on' : 'off'} for ${who}`} onChange={(v) => void flip(it.id, v)} />
       </div>
-      <div className="cx-attach">
-        <input className="cx-input sm" type="search" placeholder={`Search ${noun.many}`} value={q} onChange={(e) => setQ(e.target.value)} aria-label={`Search ${noun.many}`} />
-      </div>
-      <div className="cx-lib">
-        {lib.map((it) => {
-          const isOn = applied.has(it.id);
-          const isOff = off.includes(it.id);
-          return (
-            <div
-              key={it.id}
-              className="cx-li"
-              draggable
-              title={`${it.title}. Drag onto a group or key on the left to add it there.`}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/plain', it.name);
-                setTreeDrag(`${kind === 'context' ? 'file' : 'doc'}:${it.id}`);
-              }}
-              onDragEnd={() => setTreeDrag(null)}
-            >
-              <span className="cx-ico md">
-                <Ico n="file" size={14} />
-              </span>
-              <button type="button" className="cx-label cx-link-plain" onClick={() => open(it.id)}>
-                {it.name}
-              </button>
-              <span className="cx-meta">{it.meta}</span>
-              {isOn ? (
-                <Pill tone="ok">Added</Pill>
-              ) : isOff ? (
-                <Pill tone="warn">Off here</Pill>
-              ) : (
-                <button type="button" className="cx-btn sm" onClick={() => void add(it.id)}>
-                  Add
-                </button>
-              )}
-            </div>
-          );
-        })}
-        {lib.length === 0 && <p className="cx-details-empty">Nothing matches.</p>}
-      </div>
-    </>
+    );
+  };
+  const byId = (id: number) => items.find((x) => x.id === id);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const lib = items.filter((it) => words.every((w) => `${it.name} ${it.title}`.toLowerCase().includes(w)));
+  const tools = (
+    <div className="cx-ptools">
+      <ToolBtn icon="newFile" label={`New ${noun.one} for ${who}`} onClick={() => void create()} />
+      <ToolBtn icon="upload" label={`Upload .md for ${who}`} onClick={() => upload.current?.click()} />
+      <input ref={upload} type="file" accept=".md,.markdown,.txt" multiple hidden onChange={(e) => e.target.files && void uploadFiles(e.target.files).then(() => (e.target.value = ''))} />
+    </div>
+  );
+  return (
+    <div className="cx-scope-panel">
+      <ScopeLine g={g} keyRow={keyRow} />
+      <ScopeTabs<'active' | 'all'>
+        id={kind}
+        tabs={[
+          ['active', `Active (${list.length})`],
+          ['all', `All (${items.length})`],
+        ]}
+      >
+        {(tab) =>
+          tab === 'active' ? (
+            <>
+              <div className="cx-ptab-head">
+                <span>In effect for {who}, in order</span>
+                {tools}
+              </div>
+              {list.length === 0 && off.length === 0 && <p className="cx-details-empty">Nothing yet. Switch {noun.many} on in All, or create one.</p>}
+              {list.map((x) => row(byId(x.id)))}
+              {off.map((id) => row(byId(id)))}
+            </>
+          ) : (
+            <>
+              <div className="cx-ptab-head">
+                <input className="cx-input sm" type="search" placeholder={`Search ${noun.many}`} value={q} onChange={(e) => setQ(e.target.value)} aria-label={`Search ${noun.many}`} />
+                {tools}
+              </div>
+              {lib.map(row)}
+              {lib.length === 0 && <p className="cx-details-empty">Nothing matches.</p>}
+            </>
+          )
+        }
+      </ScopeTabs>
+      <ScopeFooter id={kind} text={footer}>
+        {footerExtra}
+      </ScopeFooter>
+    </div>
   );
 }

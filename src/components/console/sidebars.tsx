@@ -93,16 +93,16 @@ function GroupsSide({ data }: { data: Data }) {
 
   const showRight = () => window.dispatchEvent(new Event('cx-show-right'));
   const pickGroup = (g: GroupC) => {
+    showRight();
     if (view === 'groups') return nav.go(`${pathFor('groups', g.id)}?group=${g.id}`);
     if (view === 'keys') return nav.go(`${pathFor('keys')}?group=${g.id}`);
     // A section's own item page (a request, a layer) has nothing to do with the scope; its library or a file stays open.
     nav.setScope({ group: g.id });
-    showRight();
   };
   const pickKey = (k: KeyC) => {
+    showRight();
     if (view === 'keys' || view === 'groups') return nav.go(`${pathFor('keys', k.id)}?group=${k.groupId}&key=${k.id}`);
     nav.setScope({ group: k.groupId, key: k.id });
-    showRight();
   };
 
   const startCreate = (kind: 'group' | 'file', parent: number | null) => {

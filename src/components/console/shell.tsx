@@ -267,7 +267,7 @@ function Workbench() {
           </div>
         </main>
 
-        {showRight && nav.view !== 'overview' && (
+        {showRight && (
           <>
             <Sash onDrag={(d) => setRight((w) => Math.min(560, Math.max(220, w - d)))} />
             <Details width={right} />

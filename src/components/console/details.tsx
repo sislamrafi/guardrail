@@ -35,7 +35,7 @@ export function Details({ width }: { width: number }) {
       <div className="cx-side-head">
         <span>{head[nav.view] ?? (scenario ? 'REQUEST DEBUG' : 'GROUP DETAILS')}</span>
       </div>
-      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ''}`}>{body}</div>
+      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ['docs', 'context', 'guard'].includes(nav.view) ? 'tight' : ''}`}>{body}</div>
     </aside>
   );
 }

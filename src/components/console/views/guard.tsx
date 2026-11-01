@@ -16,6 +16,7 @@ import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
 import { useActions } from '../actions';
+import { ScopeFooter, ScopeLine, ScopeTabs } from '../scope-items';
 import type { Data, GroupC } from '../types';
 import { AddServer } from './servers';
 
@@ -120,7 +121,9 @@ export function LayersPanel({ data }: { data: Data }) {
           <Ico n={TYPE_ICON[l.type]} size={14} />
         </span>
         <span className="cx-label">{l.name}</span>
-        <span className={`cx-meta ${status === 'Own' || status === 'This key' ? 'own' : ''}`}>{status}</span>
+        <span className={`cx-src ${status === 'Own' ? 'own' : status === 'This key' ? 'key' : ''}`} title={status}>
+          {status === 'This key' ? 'Key' : status.startsWith('via ') ? `↳ ${status.slice(4)}` : status}
+        </span>
         <span onClick={(e) => e.stopPropagation()}>
           <Switch
             on={st.on}
@@ -131,35 +134,59 @@ export function LayersPanel({ data }: { data: Data }) {
       </div>
     );
   };
+  const who = key ? key.name : g.name;
+  const isOn = (l: GuardLayer) => (key && l.id in keyMap ? keyMap[l.id] : layerState(l, g, data.groups).on);
+  const active = layers.filter(isOn);
+  const ownCount = layers.filter((l) => (key ? l.id in keyMap : layerState(l, g, data.groups).own !== null)).length;
+  const anchor = (icon: 'key' | 'send' | 'forward', text: string) => (
+    <div className="cx-li static cx-anchor">
+      <Ico n={icon} size={14} /> <span className="cx-label">{text}</span> <Pill>locked</Pill>
+    </div>
+  );
   return (
-    <div className="cx-details">
-      <div className="cx-details-title static">
-        <Ico n={key ? 'key' : 'guard'} /> Layers for {key ? key.name : g.name}
-      </div>
-      <p className="cx-details-sub">
-        {key ? `Switches turn a layer on or off for this key only; the rest follows ${g.name}.` : `Drag to reorder. Switches turn a layer on or off for ${g.name} and its sub-groups.`} Click a layer to edit it.
-      </p>
-      <div className="cx-li static cx-anchor">
-        <Ico n="key" size={14} /> <span className="cx-label">After authentication</span> <Pill>locked</Pill>
-      </div>
-      {layers.map((l, i) => (l.stage === 'output' ? null : row(l, i)))}
-      <div className="cx-attach">
-        <button type="button" className="cx-btn sm pri" onClick={() => void add()}>
-          <Ico n="plus" size={14} /> Add layer
-        </button>
-      </div>
-      <div className="cx-li static cx-anchor">
-        <Ico n="send" size={14} /> <span className="cx-label">Add context, call the model</span> <Pill>locked</Pill>
-      </div>
-      {layers.map((l, i) => (l.stage === 'output' ? row(l, i) : null))}
-      <div className="cx-attach">
-        <button type="button" className="cx-btn sm" title="Checks the model's answer before the client sees it" onClick={() => void add('output')}>
-          <Ico n="plus" size={14} /> Add check after the model
-        </button>
-      </div>
-      <div className="cx-li static cx-anchor">
-        <Ico n="forward" size={14} /> <span className="cx-label">Return the answer to the client</span> <Pill>locked</Pill>
-      </div>
+    <div className="cx-scope-panel">
+      <ScopeLine g={g} keyRow={key} />
+      <ScopeTabs<'active' | 'all'>
+        id="guard"
+        tabs={[
+          ['active', `Active (${active.length})`],
+          ['all', `All (${layers.length})`],
+        ]}
+      >
+        {(tab) =>
+          tab === 'active' ? (
+            <>
+              <div className="cx-ptab-head">
+                <span>On for {who}, in pipeline order</span>
+              </div>
+              {active.length === 0 && <p className="cx-details-empty">No layer is on for {who}. Switch layers on in All.</p>}
+              {layers.map((l, i) => (isOn(l) && l.stage !== 'output' ? row(l, i) : null))}
+              {active.some((l) => l.stage === 'output') && anchor('send', 'Add context, call the model')}
+              {layers.map((l, i) => (isOn(l) && l.stage === 'output' ? row(l, i) : null))}
+            </>
+          ) : (
+            <>
+              <div className="cx-ptab-head">
+                <span>{key ? `Switches apply to this key only` : `Drag to reorder; switches apply to ${g.name} and its sub-groups`}</span>
+                <div className="cx-ptools">
+                  <button type="button" className="cx-tool" title="Add a layer before the model" aria-label="Add layer" onClick={() => void add()}>
+                    <Ico n="plus" size={14} />
+                  </button>
+                  <button type="button" className="cx-tool" title="Add a check after the model" aria-label="Add check after the model" onClick={() => void add('output')}>
+                    <Ico n="send" size={14} />
+                  </button>
+                </div>
+              </div>
+              {anchor('key', 'After authentication')}
+              {layers.map((l, i) => (l.stage === 'output' ? null : row(l, i)))}
+              {anchor('send', 'Add context, call the model')}
+              {layers.map((l, i) => (l.stage === 'output' ? row(l, i) : null))}
+              {anchor('forward', 'Return the answer to the client')}
+            </>
+          )
+        }
+      </ScopeTabs>
+      <ScopeFooter id="guard" text={`${active.length} on · ${layers.length - active.length} off · ${ownCount} set here${key ? ' (this key)' : ''}`} />
     </div>
   );
 }

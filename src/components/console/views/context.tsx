@@ -306,31 +306,21 @@ export function ContextPanel({ data }: { data: Data }) {
   const key = data.keys.find((k) => k.id === nav.key) ?? null;
   const g = data.groups.find((x) => x.id === (key?.groupId ?? nav.group)) ?? data.groups.find((x) => x.parentId === null);
   if (!g) return null;
-  const { list } = scopeItems(data, 'context', g, key);
+  const { list, off } = scopeItems(data, 'context', g, key);
   const files = list.map((x) => data.files.find((f) => f.id === x.id)).filter((f): f is FileC => !!f);
   const own = list.filter((x) => x.st.kind !== 'inherited').length;
   const q = key ? `?group=${g.id}&key=${key.id}` : `?group=${g.id}`;
+  const footer = `${files.length} file${files.length === 1 ? '' : 's'} · ${fmtTokens(files.reduce((a, f) => a + f.tokens, 0))} tokens · ${own} own · ${list.length - own} inherited${off.length ? ` · ${off.length} off` : ''}${key ? ` · caller line ${key.identity.key || key.identity.owner ? 'on' : 'off'}` : ''}`;
   return (
-    <div className="cx-details">
-      <div className="cx-details-title static">
-        <Ico n={key ? 'key' : 'folder'} /> {key ? key.name : g.name}
-      </div>
-      <p className="cx-details-sub">{key ? `${key.owner} · ${g.path}` : g.path}. Sent at the top of every request, in this order.</p>
-      <div className="cx-stats">
-        <Stat label="Files sent" value={files.length} />
-        <Stat label="Tokens" value={fmtTokens(files.reduce((a, f) => a + f.tokens, 0))} hint="Approximate tokens added to each request" />
-        <Stat label="Own / inherited" value={`${own} / ${list.length - own}`} />
-        <Stat label="Caller line" value={key ? (key.identity.key || key.identity.owner ? 'on' : 'off') : '–'} hint="The key's 'who is calling' line goes first" />
-      </div>
-      <ScopeItems
-        data={data}
-        kind="context"
-        g={g}
-        keyRow={key}
-        noun={{ one: 'file', many: 'files' }}
-        items={data.files.map((f) => ({ id: f.id, name: f.name, meta: fmtTokens(f.tokens), title: `${f.name} · ${f.tokens} tokens` }))}
-        open={(id) => nav.go(`${pathFor('context', id)}${q}`)}
-      />
-    </div>
+    <ScopeItems
+      data={data}
+      kind="context"
+      g={g}
+      keyRow={key}
+      noun={{ one: 'file', many: 'files' }}
+      footer={footer}
+      items={data.files.map((f) => ({ id: f.id, name: f.name, meta: fmtTokens(f.tokens), title: `${f.name} · ${f.tokens} tokens` }))}
+      open={(id) => nav.go(`${pathFor('context', id)}${q}`)}
+    />
   );
 }

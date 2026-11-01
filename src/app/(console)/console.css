@@ -759,3 +759,38 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-details .cx-li .cx-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cx-lib { max-height: 50vh; overflow: auto; }
 .cx-attach input.cx-input { flex: 1; min-width: 0; }
+
+/* Right panel: scope line, tabs, rows with switches, small footer */
+.cx-scope-panel { display: flex; flex-direction: column; min-height: 100%; }
+.cx-scope-line { padding: 8px 12px 6px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cx-scope-line b { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-scope-line span { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-ptabs { display: flex; gap: 2px; padding: 0 12px 0 12px; border-bottom: 1px solid var(--edge); }
+.cx-ptabs button { border: 0; background: none; color: var(--dim); font: inherit; font-size: 12px; padding: 6px 8px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.cx-ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+.cx-ptab-body { flex: 1; padding: 4px 0 8px; }
+.cx-ptab-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 16px; font-size: 11px; color: var(--dim); }
+.cx-ptab-head > span { flex: 1; }
+.cx-ptab-head .cx-input { flex: 1; min-width: 0; }
+.cx-ptools { display: flex; gap: 2px; margin-left: auto; }
+.cx-tool { border: 0; background: none; color: var(--dim); width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; cursor: pointer; }
+.cx-tool:hover { background: var(--hover); color: var(--fg); }
+.cx-prow { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 10px 0 16px; color: var(--dim); }
+.cx-prow:hover { background: var(--hover); }
+.cx-prow.on { background: var(--sel-soft); }
+.cx-prow.dim .cx-prow-name { opacity: 0.6; }
+.cx-prow-name { flex: 1; min-width: 0; text-align: left; border: 0; background: none; font: inherit; font-size: 13px; color: var(--fg); padding: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-prow-name:hover { text-decoration: underline; }
+.cx-src { flex: none; font-size: 10.5px; color: var(--faint); max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-src.own { color: var(--ok); font-weight: 600; }
+.cx-src.key { color: var(--info); font-weight: 600; }
+.cx-src.off { color: var(--warn); }
+.cx-prow .cx-switch { flex: none; transform: scale(0.85); }
+.cx-pfoot { position: sticky; bottom: 0; margin-top: auto; background: var(--side); border-top: 1px solid var(--edge); font-size: 11px; color: var(--dim); }
+.cx-pfoot-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: inherit; font: inherit; padding: 4px 12px; cursor: pointer; text-align: left; }
+.cx-pfoot-head svg { transform: rotate(90deg); transition: transform 0.1s; flex: none; }
+.cx-pfoot.closed .cx-pfoot-head svg { transform: rotate(-90deg); }
+.cx-pfoot.closed .cx-pfoot-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-pfoot-body { padding: 0 12px 6px; }
+.cx-pfoot-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-side-body.tight { padding-bottom: 0; }
