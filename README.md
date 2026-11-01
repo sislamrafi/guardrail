@@ -33,6 +33,7 @@ Agents only need a base URL and a key. There is no SDK, no plugin and no change 
 - [Documentation](#documentation)
 - [Project structure](#project-structure)
 - [Testing](#testing)
+- [License](#license)
 
 ## Why Opsara
 
@@ -597,3 +598,14 @@ npm run typecheck && npm run lint && npm test
 The gateway tests run against the mock vLLM server (`scripts/mock-vllm.mjs`), which also serves
 classifier, judge and decision endpoints. To watch streaming in the console, slow it down with
 `MOCK_TOKEN_MS=120 npm run mock:vllm`.
+
+## License
+
+Opsara AI is licensed under the [Apache License 2.0](LICENSE). You may use, modify and redistribute
+it, including commercially, under its terms.
+
+**Credit is required.** Under the license, every copy or derivative work you distribute must keep
+the [NOTICE](NOTICE) file and the copyright notices, crediting the original author:
+
+> Copyright 2026 S Islam Rafi ([github.com/sislamrafi](https://github.com/sislamrafi))
+

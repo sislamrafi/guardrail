@@ -2,6 +2,7 @@
   "name": "opsara-ai",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Opsara AI (formerly GuardRail): security gateway and agentic workspace for coding agents",
   "scripts": {
     "dev": "node server.mjs --dev -p 3000",
