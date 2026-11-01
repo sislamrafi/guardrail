@@ -13,6 +13,7 @@ import { getSettings, updateSettings } from './settings';
 import { allowedRoutes, clientIp } from './gateway';
 import { replayLog, runAsClient } from './client-run';
 import { getDb } from './db';
+import { publish, subscribe } from './events';
 import { agentModels, createChat, deleteChat, getChat, listChats, listMessages, resolvePending, sendMessage, updateChat, type AgentEvent } from './agent/run';
 import { applyUndo, listChanges, undoPlan } from './agent/changes';
 import { checkAdmin, listSessions, logoutEverywhere, recentAudit, revokeFamily } from './auth';
@@ -128,6 +129,9 @@ function groupScope(url: URL): number[] | undefined {
   }
   return [...ids];
 }
+
+/** Writes that change nothing worth refreshing for (tests, previews, detection). The agent's own writes are announced by its tools. */
+const QUIET = ['guard/test', 'guard/detect', 'keys/preview', 'schemas/detect', 'studio/plan', 'studio/live', 'studio/send', 'servers/discover', 'docs/test', 'agent/'];
 
 const routes: Record<string, Handler> = {
   // ---- servers and models ----
@@ -298,6 +302,36 @@ const routes: Record<string, Handler> = {
       if (Array.isArray(s?.value) && (s.value as number[]).includes(id)) setGroupSetting(g.id, 'context', { mode: s.mode, value: (s.value as number[]).filter((x) => x !== id) });
     }
     deleteFile(id);
+  },
+
+  // ---- live updates ----
+  // A server-sent event per change, so every open console view refreshes itself.
+  'GET events': ({ req }) => {
+    const enc = new TextEncoder();
+    let stop = () => {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        const send = (s: string) => {
+          try {
+            c.enqueue(enc.encode(s));
+          } catch {
+            stop();
+          }
+        };
+        send(': connected\n\n');
+        const off = subscribe((e) => send(`data: ${JSON.stringify(e)}\n\n`));
+        const ping = setInterval(() => send(': ping\n\n'), 25000);
+        stop = () => {
+          off();
+          clearInterval(ping);
+        };
+        req.signal?.addEventListener('abort', stop);
+      },
+      cancel() {
+        stop();
+      },
+    });
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   },
 
   // ---- agent ----
@@ -612,6 +646,8 @@ export async function dispatch(req: Request, parts: string[]): Promise<Response>
   }
   try {
     const out = await found.h({ params: found.params, body, url: new URL(req.url), req });
+    // Tell open consoles something changed (reads, tests and streams that change nothing are skipped).
+    if (req.method !== 'GET' && !QUIET.some((q) => parts.join('/').startsWith(q))) publish({ source: 'console', method: req.method, path: parts.join('/') });
     if (out instanceof Response) return out;
     return Response.json(out ?? { ok: true });
   } catch (e) {
@@ -645,6 +681,7 @@ export async function invoke<T = unknown>(method: string, path: string, body: Re
   if (!found) throw new HttpError(404, `No such action: ${method} ${p}`);
   const url = new URL(`http://internal/api/admin/${p}${q ? `?${q}` : ''}`);
   const out = await found.h({ params: found.params, body, url, req: new Request(url, { method }) });
+  if (method !== 'GET') publish({ source: 'agent', method, path: p });
   if (out instanceof Response) return (await out.json().catch(() => ({}))) as T;
   return (out ?? { ok: true }) as T;
 }

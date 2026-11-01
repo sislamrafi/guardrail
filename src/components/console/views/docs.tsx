@@ -315,6 +315,11 @@ function DocFile({ d, data }: { d: DocC; data: Data }) {
   const path = pathFor('docs', d.id);
   const text = nav.drafts[path] ?? d.body;
   const dirty = nav.drafts[path] !== undefined && nav.drafts[path] !== d.body;
+  // Someone else (another tab, the agent) saved a new version while this one has unsaved text.
+  const draftBase = useRef<number | null>(null);
+  if (!dirty) draftBase.current = null;
+  else draftBase.current ??= d.version;
+  const changedElsewhere = dirty && draftBase.current !== null && draftBase.current !== d.version;
   const [preview, setPreview] = usePreview(d.id);
   const [panel, setPanel] = usePref<'share' | 'history' | null>('docs.panel', 'share');
   const [meta, setMeta] = useState<Meta>(() => metaOf(d));
@@ -397,6 +402,11 @@ function DocFile({ d, data }: { d: DocC; data: Data }) {
           <input className="cx-input" value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} placeholder="How we deploy to production, step by step" />
         </Field>
       </div>
+      {changedElsewhere && (
+        <Note tone="warn">
+          {d.title} was changed elsewhere (now v{d.version}) while you were editing. Your text is kept; <b>Discard changes</b> to load the new version, or save to replace it.
+        </Note>
+      )}
       <div className="cx-file-body">
         {preview ? (
           <article className="cx-md" onClick={copyCode} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />

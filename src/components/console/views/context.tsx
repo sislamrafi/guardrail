@@ -139,6 +139,11 @@ function FileEditor({ f }: { f: FileC }) {
   const path = pathFor('context', f.id);
   const text = nav.drafts[path] ?? f.body;
   const dirty = nav.drafts[path] !== undefined && nav.drafts[path] !== f.body;
+  // Someone else (another tab, the agent) saved a new version while this one has unsaved text.
+  const draftBase = useRef<number | null>(null);
+  if (!dirty) draftBase.current = null;
+  else draftBase.current ??= f.version;
+  const changedElsewhere = dirty && draftBase.current !== null && draftBase.current !== f.version;
   const [preview, setPreview] = usePreview(f.id);
   const [history, setHistory] = useState(false);
   const [cur, setCur] = useState({ ln: 1, col: 1 });
@@ -203,6 +208,11 @@ function FileEditor({ f }: { f: FileC }) {
         <IconBtn icon="history" label="Version history" active={history} onClick={() => setHistory(!history)} />
         <IconBtn icon="trash" label="Delete file" onClick={() => void act.deleteFile(f)} />
       </div>
+      {changedElsewhere && (
+        <Note tone="warn">
+          {f.name} was changed elsewhere (now v{f.version}) while you were editing. Your text is kept; <b>Discard changes</b> to load the new version, or save to replace it.
+        </Note>
+      )}
       <div className="cx-file-body">
         {preview ? (
           <article className="cx-md" onClick={copyCode} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
