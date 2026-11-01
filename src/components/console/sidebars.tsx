@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useActions } from './actions';
 import { Ico, type IconName } from './icons';
 import { fmtTokens } from './kit';
@@ -81,11 +82,14 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const allKeys = mode === 'keys' && flat;
   const upload = useRef<HTMLInputElement>(null);
   // New groups, files and keys go inside the selected group (the one open in Groups, or the open key's).
-  const selId = selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
+  // MCP docs: the key picked in the tree (?key=), whose docs the right panel shows.
+  const params = useSearchParams();
+  const mcpKey = docs && nav.view === 'docs' ? (data.keys.find((k) => k.id === Number(params.get('key'))) ?? null) : null;
+  const selId = mcpKey?.groupId ?? selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
   const sel = data.groups.find((g) => g.id === selId) ?? null;
 
   // Reveal the open key or file: expand every group above it so its row (the selection) is visible.
-  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : lib && nav.view === mode && nav.id ? `f:${nav.id}` : null;
+  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : mcpKey ? `k:${mcpKey.id}` : lib && nav.view === mode && nav.id && /^\d+$/.test(nav.id) ? `f:${nav.id}` : null;
   useEffect(() => {
     if (!openItem) return;
     const id = Number(openItem.slice(2));
@@ -144,7 +148,7 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
         iconClass: 'md',
         meta: f.meta,
         title: `${f.title}${g ? ` · shared with ${g.name}` : ''}. Drag onto a group to share it.`,
-        selected: nav.path === path,
+        selected: nav.path === path && !mcpKey,
         onOpen: () => nav.go(path),
         onRename: (name) => void act.renameDoc(d, name),
         onDelete: () => void act.deleteDoc(d),
@@ -187,6 +191,32 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
     };
   };
 
+  /** A key in the MCP docs tree: opens its MCP view and shows its docs on the right. */
+  const mcpKeyNode = (k: KeyC): TreeNode => {
+    const path = `${pathFor('docs', `k${k.id}`)}?key=${k.id}`;
+    const off = !k.mcp || k.revoked;
+    return {
+      key: `k:${k.id}`,
+      label: k.name,
+      text: k.name,
+      icon: 'key',
+      iconClass: 'key',
+      meta: k.revoked ? 'revoked' : !k.mcp ? 'MCP off' : `${data.docKeys.find((x) => x.id === k.id)?.docs.length ?? 0} docs`,
+      dim: off,
+      title: `${k.name} · ${k.owner}${!k.mcp ? ' · MCP access off' : ''}. Click to see the docs it can read.`,
+      selected: mcpKey?.id === k.id,
+      onOpen: () => {
+        nav.go(path);
+        window.dispatchEvent(new Event('cx-show-right'));
+      },
+      menu: () => [
+        { label: 'Show its MCP docs', run: () => nav.go(path) },
+        { label: k.mcp ? 'Turn MCP access off' : 'Turn MCP access on', run: () => void act.setKeyMcp(k, !k.mcp) },
+        { label: 'Open key page', run: () => nav.go(pathFor('keys', k.id)) },
+      ],
+    };
+  };
+
   const keyNode = (k: KeyC, flatList: boolean): TreeNode => {
     const expired = !!k.expiresAt && k.expiresAt < Date.now();
     const state = k.revoked ? 'revoked' : expired ? 'expired' : null;
@@ -224,8 +254,9 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       kids.push(...(ownOf(g).map((fid) => fileNode(fid, g)).filter(Boolean) as TreeNode[]));
     }
     if (mode === 'keys') kids.push(...data.keys.filter((k) => k.groupId === g.id).map((k) => keyNode(k, false)));
+    if (docs) kids.push(...data.keys.filter((k) => k.groupId === g.id).map(mcpKeyNode));
     // One selection per tree: a group is highlighted only while no file or key below it is open.
-    const itemOpen = (lib && nav.view === mode && !!nav.id) || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
+    const itemOpen = (lib && nav.view === mode && !!nav.id) || !!mcpKey || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
     const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : !itemOpen && sel?.id === g.id;
     const items = (): MenuItem[] => [
       ...(mode !== 'groups' ? [{ label: 'Open group settings', run: () => nav.go(pathFor('groups', g.id)) }] : []),
@@ -248,6 +279,12 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       selected,
       children: kids,
       onOpen: () => {
+        if (docs && nav.view === 'docs') {
+          // Drop a picked key; keep the open doc (a key's own view goes back to the overview).
+          nav.go(`${nav.id && /^\d+$/.test(nav.id) ? pathFor('docs', nav.id) : pathFor('docs')}?group=${g.id}`);
+          window.dispatchEvent(new Event('cx-show-right'));
+          return;
+        }
         nav.setGroup(g.id);
         if (mode === 'groups') nav.go(pathFor('groups', g.id));
       },

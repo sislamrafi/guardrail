@@ -10,6 +10,7 @@ import { StudioDebug } from './studio-debug';
 import type { Data, FileC, GroupC } from './types';
 import { ActivityList } from './views/activity';
 import { LayersPanel } from './views/guard';
+import { McpPanel } from './views/docs';
 
 /** The secondary sidebar: stats for the open file, or for the selected group. */
 export function Details({ width }: { width: number }) {
@@ -25,9 +26,9 @@ export function Details({ width }: { width: number }) {
   return (
     <aside className="cx-side cx-right" style={{ width }} aria-label="Details">
       <div className="cx-side-head">
-        <span>{nav.view === 'guard' ? 'GUARD LAYERS' : nav.view === 'activity' ? 'REQUESTS' : scenario ? 'REQUEST DEBUG' : file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
+        <span>{nav.view === 'docs' ? 'MCP ACCESS' : nav.view === 'guard' ? 'GUARD LAYERS' : nav.view === 'activity' ? 'REQUESTS' : scenario ? 'REQUEST DEBUG' : file ? 'FILE DETAILS' : 'GROUP DETAILS'}</span>
       </div>
-      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ''}`}>{nav.view === 'activity' ? <ActivityList /> : nav.view === 'guard' ? <LayersPanel data={data} /> : scenario ? <StudioDebug key={scenario} id={scenario} /> : file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
+      <div className={`cx-side-body ${nav.view === 'activity' ? 'flush' : ''}`}>{nav.view === 'docs' ? <McpPanel data={data} /> : nav.view === 'activity' ? <ActivityList /> : nav.view === 'guard' ? <LayersPanel data={data} /> : scenario ? <StudioDebug key={scenario} id={scenario} /> : file ? <FileStats f={file} data={data} /> : group ? <GroupStats g={group} data={data} /> : null}</div>
     </aside>
   );
 }

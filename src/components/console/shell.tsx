@@ -12,7 +12,7 @@ import { DataProvider, UiProvider, useStore, useUi } from './store';
 import type { Data, View } from './types';
 import { ActivityHome, LogDetail } from './views/activity';
 import { ContextFileEditor, ContextHome } from './views/context';
-import { DocEditor, DocsHome } from './views/docs';
+import { DocEditor, DocsHome, KeyMcpView } from './views/docs';
 import { GroupEditor, GroupsHome } from './views/groups';
 import { GuardPage, LayerEditor } from './views/guard';
 import { KeyEditor, KeyNew, KeysHome } from './views/keys';
@@ -95,6 +95,12 @@ function Workbench() {
   const [right, setRight] = usePersisted('cx-right', 300);
   const [showLeft, setShowLeft] = usePref('show.left', true);
   const [showRight, setShowRight] = usePref('show.right', true);
+  // Picking something whose details live on the right (e.g. a key in MCP docs) opens that sidebar.
+  useEffect(() => {
+    const open = () => setShowRight(true);
+    window.addEventListener('cx-show-right', open);
+    return () => window.removeEventListener('cx-show-right', open);
+  }, [setShowRight]);
   const [quick, setQuick] = useState<string | null>(null);
   const [cursor, setCursor] = useState<{ ln: number; col: number } | null>(null);
   const [account, setAccount] = useState(false);
@@ -341,6 +347,7 @@ function tabInfo(p: string, data: Data | null): { title: string; icon: IconName;
     case 'context':
       return { title: data?.files.find((f) => f.id === n)?.name ?? 'File', icon: 'file', cls: 'md' };
     case 'docs':
+      if (id.startsWith('k')) return { title: `${data?.keys.find((k) => k.id === Number(id.slice(1)))?.name ?? 'Key'} · MCP`, icon: 'key', cls: 'key' };
       return { title: data?.docs.find((d) => d.id === n)?.title ?? 'Doc', icon: 'file', cls: 'md' };
     case 'groups':
       return { title: data?.groups.find((g) => g.id === n)?.name ?? 'Group', icon: 'folder', cls: 'folder' };
@@ -558,7 +565,7 @@ function Editor(): ReactNode {
     case 'rules':
       return id ? <RuleEditor id={id === 'new' ? 'new' : n} /> : <RulesHome />;
     case 'docs':
-      return id ? <DocEditor id={n} /> : <DocsHome />;
+      return id?.startsWith('k') ? <KeyMcpView id={Number(id.slice(1))} /> : id ? <DocEditor id={n} /> : <DocsHome />;
     case 'schemas':
       return <SchemasPage />;
     case 'studio':

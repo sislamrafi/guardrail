@@ -125,6 +125,22 @@ The **What each key sees** table on the MCP docs page shows each key's effective
 key** runs `list_docs`, `search_docs`, `read_doc` or `resources/list` as any key and shows exactly
 what its agent would get.
 
+## The explorer and the MCP access panel
+
+The MCP docs explorer shows the group tree with each group's own docs **and its API keys**. Keys
+with MCP access off, or revoked, are dimmed. Selecting a group or a key opens the right sidebar
+(**MCP access**) for it:
+
+- every doc it can read, marked **Own** (shared with this group), **This key** (shared with this
+  key only) or **Inherited · <group>** (change it on that group);
+- quick actions: share a doc with the group or key, or stop sharing an own doc;
+- for a key: its MCP access switch and **Test as this key**;
+- for a group: its keys, with how many docs each one sees.
+
+Clicking a doc opens it in the editor. Clicking a key opens its MCP view in the middle: the docs it
+can read and why, a **Test as a key** runner, and its recent MCP calls from Activity, with a link to
+the full key page.
+
 ## Editing
 
 Docs are Markdown with a title, slug, description and tags. The editor autosaves 5 seconds after
