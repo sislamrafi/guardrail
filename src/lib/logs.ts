@@ -180,6 +180,8 @@ const inList = (n: number) => `(${Array.from({ length: n }, () => '?').join(',')
 /** Log filters shared by lists, counts, the overview and exports. `groups` limits to those group ids. */
 export interface LogScope {
   groups?: number[];
+  /** One API key's requests only. */
+  key?: number;
   since?: number;
   until?: number;
   /** Studio and replay traffic is left out unless asked for. */
@@ -189,6 +191,10 @@ export interface LogScope {
 function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
   if ((scope.test ?? 'exclude') === 'exclude') where.push('test = 0');
   else if (scope.test === 'only') where.push('test = 1');
+  if (scope.key) {
+    where.push('key_id = ?');
+    args.push(scope.key);
+  }
   if (scope.groups) {
     where.push(scope.groups.length ? `group_id IN ${inList(scope.groups.length)}` : '0');
     args.push(...scope.groups);
@@ -203,10 +209,10 @@ function scopeWhere(scope: LogScope, where: string[], args: unknown[]) {
   }
 }
 
-export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; feedback?: string[]; test?: LogScope['test'] }) {
+export function queryLogs(opts: { filter?: string; q?: string; limit?: number; before?: number; since?: number; until?: number; groups?: number[]; key?: number; feedback?: string[]; test?: LogScope['test'] }) {
   const where: string[] = [];
   const args: unknown[] = [];
-  scopeWhere({ groups: opts.groups, until: opts.until, test: opts.test }, where, args);
+  scopeWhere({ groups: opts.groups, key: opts.key, until: opts.until, test: opts.test }, where, args);
   if (opts.feedback?.length) {
     where.push(`feedback IN ${inList(opts.feedback.length)}`);
     args.push(...opts.feedback);
@@ -236,10 +242,10 @@ export function queryLogs(opts: { filter?: string; q?: string; limit?: number; b
   return (getDb().prepare(sql).all(...args) as Row[]).map(parse);
 }
 
-export function countByFilter(since?: number, groups?: number[], test?: LogScope['test']) {
+export function countByFilter(since?: number, groups?: number[], test?: LogScope['test'], key?: number) {
   const where: string[] = [];
   const args: unknown[] = [];
-  scopeWhere({ since, groups, test }, where, args);
+  scopeWhere({ since, groups, test, key }, where, args);
   const rows = getDb()
     .prepare(`SELECT outcome, COUNT(*) n, SUM(path = '/mcp') mcp FROM request_logs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} GROUP BY outcome`)
     .all(...args) as { outcome: Outcome; n: number; mcp: number | null }[];
@@ -287,7 +293,7 @@ export const STAGE_LABELS: Record<string, string> = {
 /** Guard layer timings are stored as layer_<id> (older requests: piguard, oss). */
 const layerOfStage = (k: string) => (k.startsWith('layer_') ? k.slice(6) : k === 'piguard' ? 'piguard' : k === 'oss' ? 'judge' : null);
 
-export function overview(range = '24h', at = Date.now(), groups?: number[]) {
+export function overview(range = '24h', at = Date.now(), groups?: number[], key?: number) {
   const R = RANGES[range] ?? RANGES['24h'];
   const since = at - R.ms;
   const prevCounts = countByFilter(since - R.ms, groups);
@@ -295,7 +301,7 @@ export function overview(range = '24h', at = Date.now(), groups?: number[]) {
   const prevAll = prevCounts.all - counts.all;
   const where: string[] = [];
   const args: unknown[] = [];
-  scopeWhere({ since, groups }, where, args);
+  scopeWhere({ since, groups, key }, where, args);
   const rows = getDb()
     .prepare(`SELECT ts, outcome, stages FROM request_logs WHERE ${where.join(' AND ')} ORDER BY ts DESC LIMIT 20000`)
     .all(...args) as { ts: number; outcome: Outcome; stages: string }[];

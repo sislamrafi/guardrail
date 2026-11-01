@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useActions } from '../actions';
 import { Ico } from '../icons';
 import { Empty, Field, IconBtn, Loading, Note, Page, Pill, Section, Seg, Stat, Switch, ago, clock, ms } from '../kit';
@@ -12,6 +11,7 @@ import type { Data, DocC, GroupC, KeyC, LogEntry } from '../types';
 import { readPref, usePref, writePref } from '../prefs';
 import { SaveState, useAutoSave } from '../autosave';
 import { copyCode } from '../md-text';
+import { ScopeItems, scopeItems } from '../scope-items';
 
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n} B`);
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -148,7 +148,7 @@ export function DocsHome() {
         </div>
       </Section>
 
-      <Section title={`All docs · ${data.docs.length}`} hint="Create, upload and share docs from the sidebar: drag a doc onto a group to share it, right-click for more.">
+      <Section title={`All docs · ${data.docs.length}`} hint="The library. Pick a group or key on the left: the right panel shows the docs it can read (own or inherited) and shares or removes them. New docs and uploads go to the picked group or key.">
         {data.docs.length === 0 ? (
           <Empty icon="mcp" title="No MCP docs yet">
             Use the new-doc button in the sidebar, or upload .md files.
@@ -585,10 +585,9 @@ function targetDocs(data: Data, group: GroupC, key: KeyC | null): Target {
 
 /** The group or key picked in the MCP docs tree (?key= first, then ?group=, then the root). */
 function useTarget(data: Data): Target | null {
-  const params = useSearchParams();
   const nav = useNav();
   const fromPath = nav.id?.startsWith('k') ? Number(nav.id.slice(1)) : null;
-  const key = data.keys.find((k) => k.id === (Number(params.get('key')) || fromPath)) ?? null;
+  const key = data.keys.find((k) => k.id === (nav.key ?? fromPath)) ?? null;
   const group = data.groups.find((g) => g.id === (key?.groupId ?? nav.group)) ?? data.groups.find((g) => g.parentId === null);
   return group ? targetDocs(data, group, key) : null;
 }
@@ -596,7 +595,7 @@ function useTarget(data: Data): Target | null {
 function StatusChip({ st, keyName }: { st: Status; keyName?: string }) {
   if (st.kind === 'own') return <Pill tone="ok">Own</Pill>;
   if (st.kind === 'key') return <Pill tone="info" title={`Shared with ${keyName ?? 'this key'} only`}>This key</Pill>;
-  return <Pill title={st.from ? `Shared with ${st.from.path}; change it there` : undefined}>Inherited{st.from ? ` · ${st.from.name}` : ''}</Pill>;
+  return <Pill title={st.from ? `Inherited from ${st.from.path}; change it there` : 'Inherited'}>{st.from ? `via ${st.from.name}` : 'Inherited'}</Pill>;
 }
 
 /** Right sidebar on MCP docs: what the picked group or key can read, with quick share and remove. */
@@ -604,17 +603,16 @@ export function McpPanel({ data }: { data: Data }) {
   const t = useTarget(data);
   const nav = useNav();
   const act = useActions();
-  const [pick, setPick] = useState('');
   if (!t) return null;
   const { key, group } = t;
-  const q = key ? `?key=${key.id}` : `?group=${group.id}`;
+  const { list } = scopeItems(data, 'mcp_docs', group, key);
+  const docs = list.map((x) => data.docs.find((d) => d.id === x.id)).filter((d): d is DocC => !!d);
+  const q = key ? `?group=${group.id}&key=${key.id}` : `?group=${group.id}`;
   const reach = data.docKeys.filter((k) => !k.revoked && k.mcp && data.groups.some((g) => g.id === k.groupId && (g.id === group.id || g.path.startsWith(`${group.path} `))));
-  const ownCount = t.docs.filter((x) => x.st.kind !== 'inherited').length;
-  const share = (id: number) => (key ? act.setKeyDoc(key, id, true) : act.shareDoc(id, group.id));
-  const unshare = (id: number) => (key ? act.setKeyDoc(key, id, false) : act.unshareDoc(id, group.id));
+  const ownCount = list.filter((x) => x.st.kind !== 'inherited').length;
   return (
     <div className="cx-details">
-      <button type="button" className="cx-details-title" onClick={() => nav.go(key ? `${pathFor('docs', `k${key.id}`)}?key=${key.id}` : pathFor('groups', group.id))} title={key ? 'Open its MCP view' : 'Open group settings'}>
+      <button type="button" className="cx-details-title" onClick={() => nav.go(key ? `${pathFor('docs', `k${key.id}`)}?group=${key.groupId}&key=${key.id}` : pathFor('groups', group.id))} title={key ? 'Open its MCP view' : 'Open group settings'}>
         <Ico n={key ? 'key' : 'folder'} /> {key ? key.name : group.name}
       </button>
       <p className="cx-details-sub">{key ? `${key.owner} · ${group.path}` : group.path}</p>
@@ -625,54 +623,22 @@ export function McpPanel({ data }: { data: Data }) {
         </div>
       )}
       <div className="cx-stats">
-        <Stat label="Docs it can read" value={key && (!key.mcp || key.revoked) ? 0 : t.docs.length} />
-        <Stat label={key ? 'Own / inherited' : 'Own / inherited'} value={`${ownCount} / ${t.docs.length - ownCount}`} />
+        <Stat label="Docs it can read" value={key && (!key.mcp || key.revoked) ? 0 : docs.length} />
+        <Stat label="Own / inherited" value={`${ownCount} / ${list.length - ownCount}`} />
         {!key && <Stat label="Keys with MCP" value={reach.length} hint="Active keys in this group and its sub-groups with MCP access on" />}
-        {key && <Stat label="Size" value={size(t.docs.reduce((a, x) => a + bytes(x.d.body), 0))} />}
+        {key && <Stat label="Size" value={size(docs.reduce((a, d) => a + bytes(d.body), 0))} />}
       </div>
-      <div className="cx-details-sec">MCP DOCS · {t.docs.length}</div>
-      {t.docs.length === 0 && <p className="cx-details-empty">No docs yet. Share one below, or drag a doc onto {key ? 'its group' : 'this group'} in the tree.</p>}
-      {t.docs.map(({ d, st }) => (
-        <div key={d.id} className={`cx-li ${nav.id === String(d.id) ? 'on' : ''}`}>
-          <span className="cx-ico md">
-            <Ico n="file" size={14} />
-          </span>
-          <button type="button" className="cx-label cx-link-plain" title={d.description || d.slug} onClick={() => nav.go(`${pathFor('docs', d.id)}${q}`)}>
-            {d.title}
-          </button>
-          <StatusChip st={st} keyName={key?.name} />
-          {st.kind !== 'inherited' && (
-            <button type="button" className="cx-row-act show" title={key ? `Stop sharing with ${key.name}` : `Stop sharing with ${group.name}`} aria-label="Stop sharing" onClick={() => void unshare(d.id)}>
-              <Ico n="unlink" size={14} />
-            </button>
-          )}
-        </div>
-      ))}
-      <form
-        className="cx-attach"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (pick) void share(Number(pick));
-          setPick('');
-        }}
-      >
-        <select className="cx-input sm" value={pick} onChange={(e) => setPick(e.target.value)} aria-label={`Share a doc with ${key ? key.name : group.name}`}>
-          <option value="">Share a doc with {key ? 'this key' : 'this group'}…</option>
-          {data.docs
-            .filter((d) => !t.docs.some((x) => x.d.id === d.id))
-            .map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.title} ({d.slug})
-              </option>
-            ))}
-        </select>
-        <button type="submit" className="cx-btn sm pri" disabled={!pick}>
-          Share
-        </button>
-      </form>
-      {t.docs.some((x) => x.st.kind === 'inherited') && <p className="cx-details-empty">Inherited docs come from a parent group; remove them there.</p>}
+      <ScopeItems
+        data={data}
+        kind="mcp_docs"
+        g={group}
+        keyRow={key}
+        noun={{ one: 'doc', many: 'docs' }}
+        items={data.docs.map((d) => ({ id: d.id, name: d.title, meta: d.slug, title: `${d.title} · ${d.slug}${d.description ? ` · ${d.description}` : ''}` }))}
+        open={(id) => nav.go(`${pathFor('docs', id)}${q}`)}
+      />
       {key ? (
-        <button type="button" className="cx-btn sm cx-mcp-test" onClick={() => nav.go(`${pathFor('docs', `k${key.id}`)}?key=${key.id}`)}>
+        <button type="button" className="cx-btn sm cx-mcp-test" onClick={() => nav.go(`${pathFor('docs', `k${key.id}`)}?group=${key.groupId}&key=${key.id}`)}>
           <Ico n="studio" size={13} /> Test as this key
         </button>
       ) : (
@@ -681,7 +647,7 @@ export function McpPanel({ data }: { data: Data }) {
           {data.keys
             .filter((k) => k.groupId === group.id)
             .map((k) => (
-              <button key={k.id} type="button" className={`cx-li ${!k.mcp || k.revoked ? 'cx-dim' : ''}`} onClick={() => nav.go(`${pathFor('docs', `k${k.id}`)}?key=${k.id}`)}>
+              <button key={k.id} type="button" className={`cx-li ${!k.mcp || k.revoked ? 'cx-dim' : ''}`} onClick={() => nav.go(`${pathFor('docs', `k${k.id}`)}?group=${k.groupId}&key=${k.id}`)}>
                 <span className="cx-ico key">
                   <Ico n="key" size={14} />
                 </span>
@@ -712,7 +678,14 @@ export function KeyMcpView({ id }: { id: number }) {
   if (!data) return <Loading error={error} />;
   if (!k) return <Empty icon="key" title="This key was deleted" />;
   const group = data.groups.find((g) => g.id === k.groupId);
-  const t = group ? targetDocs(data, group, k) : null;
+  // Exclusions count: what the key really gets.
+  const t = group
+    ? {
+        docs: scopeItems(data, 'mcp_docs', group, k)
+          .list.map((x) => ({ d: data.docs.find((d) => d.id === x.id)!, st: x.st as Status }))
+          .filter((x) => !!x.d),
+      }
+    : null;
   return (
     <Page
       icon="mcp"
@@ -747,7 +720,7 @@ export function KeyMcpView({ id }: { id: number }) {
               </thead>
               <tbody>
                 {t.docs.map(({ d, st }) => (
-                  <tr key={d.id} className="click" onClick={() => nav.go(`${pathFor('docs', d.id)}?key=${k.id}`)}>
+                  <tr key={d.id} className="click" onClick={() => nav.go(`${pathFor('docs', d.id)}?group=${k.groupId}&key=${k.id}`)}>
                     <td>{d.title}</td>
                     <td className="mono small">{d.slug}</td>
                     <td>

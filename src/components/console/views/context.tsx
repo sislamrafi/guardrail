@@ -7,7 +7,8 @@ import { Empty, Field, IconBtn, Loading, Note, Page, Pill, Section, Seg, Stat, a
 import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
-import type { FileC } from '../types';
+import type { Data, FileC } from '../types';
+import { ScopeItems, scopeItems } from '../scope-items';
 import { readPref, usePref, writePref } from '../prefs';
 import { SaveState, useAutoSave } from '../autosave';
 import { copyCode } from '../md-text';
@@ -67,7 +68,7 @@ export function ContextHome() {
           </button>
         </div>
       </Section>
-      <Section title={`All files · ${data.files.length}`} hint="Create, upload, rename and attach files from the sidebar: right-click for more, drag a file onto a group to attach it.">
+      <Section title={`All files · ${data.files.length}`} hint="The library. Pick a group or key on the left: the right panel shows the files it sends, in order (own or inherited), and adds or removes them. New files and uploads go to the picked group or key.">
         {data.files.length === 0 ? (
           <Empty icon="context" title="No context files yet">
             Use the new-file button in the sidebar, or upload .md files.
@@ -295,5 +296,41 @@ function History({ f, onRestore, onClose }: { f: FileC; onRestore: (body: string
         </div>
       )}
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------- right sidebar: what the picked group or key sends
+
+export function ContextPanel({ data }: { data: Data }) {
+  const nav = useNav();
+  const key = data.keys.find((k) => k.id === nav.key) ?? null;
+  const g = data.groups.find((x) => x.id === (key?.groupId ?? nav.group)) ?? data.groups.find((x) => x.parentId === null);
+  if (!g) return null;
+  const { list } = scopeItems(data, 'context', g, key);
+  const files = list.map((x) => data.files.find((f) => f.id === x.id)).filter((f): f is FileC => !!f);
+  const own = list.filter((x) => x.st.kind !== 'inherited').length;
+  const q = key ? `?group=${g.id}&key=${key.id}` : `?group=${g.id}`;
+  return (
+    <div className="cx-details">
+      <div className="cx-details-title static">
+        <Ico n={key ? 'key' : 'folder'} /> {key ? key.name : g.name}
+      </div>
+      <p className="cx-details-sub">{key ? `${key.owner} · ${g.path}` : g.path}. Sent at the top of every request, in this order.</p>
+      <div className="cx-stats">
+        <Stat label="Files sent" value={files.length} />
+        <Stat label="Tokens" value={fmtTokens(files.reduce((a, f) => a + f.tokens, 0))} hint="Approximate tokens added to each request" />
+        <Stat label="Own / inherited" value={`${own} / ${list.length - own}`} />
+        <Stat label="Caller line" value={key ? (key.identity.key || key.identity.owner ? 'on' : 'off') : '–'} hint="The key's 'who is calling' line goes first" />
+      </div>
+      <ScopeItems
+        data={data}
+        kind="context"
+        g={g}
+        keyRow={key}
+        noun={{ one: 'file', many: 'files' }}
+        items={data.files.map((f) => ({ id: f.id, name: f.name, meta: fmtTokens(f.tokens), title: `${f.name} · ${f.tokens} tokens` }))}
+        open={(id) => nav.go(`${pathFor('context', id)}${q}`)}
+      />
+    </div>
   );
 }

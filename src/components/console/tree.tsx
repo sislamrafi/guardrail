@@ -37,6 +37,11 @@ export interface TreeNode {
 // The payload being dragged; dataTransfer can't be read during dragover.
 let dragging: string | null = null;
 
+/** Let something outside a tree (e.g. a library list) be dropped onto tree rows: "file:3", "doc:5". */
+export function setTreeDrag(payload: string | null) {
+  dragging = payload;
+}
+
 interface Flat {
   node: TreeNode;
   depth: number;

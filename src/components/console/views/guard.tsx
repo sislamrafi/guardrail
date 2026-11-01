@@ -15,6 +15,7 @@ import { Dialog, Empty, Field, GroupSelect, IconBtn, Loading, Note, Page, Pill, 
 import { renderMarkdown } from '../markdown';
 import { pathFor, useNav } from '../nav';
 import { api, useStore, useUi } from '../store';
+import { useActions } from '../actions';
 import type { Data, GroupC } from '../types';
 import { AddServer } from './servers';
 
@@ -70,7 +71,11 @@ export function LayersPanel({ data }: { data: Data }) {
   const ui = useUi();
   const toggle = useLayerToggle();
   const layers = data.settings.guard.layers;
-  const g = data.groups.find((x) => x.id === nav.group) ?? data.groups.find((x) => x.parentId === null)!;
+  const act = useActions();
+  // The picked key (its own switches win over its group's), else the picked group.
+  const key = data.keys.find((k) => k.id === nav.key) ?? null;
+  const g = data.groups.find((x) => x.id === (key?.groupId ?? nav.group)) ?? data.groups.find((x) => x.parentId === null)!;
+  const keyMap = (key?.exceptions.layers?.value ?? {}) as Record<string, boolean>;
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const move = async (from: number, to: number) => {
@@ -85,7 +90,12 @@ export function LayersPanel({ data }: { data: Data }) {
     if (await ui.run(() => saveLayers([...layers, l]), 'Layer added')) nav.go(pathFor('guard', l.id));
   };
   const row = (l: GuardLayer, i: number) => {
-    const st = layerState(l, g, data.groups);
+    const base = layerState(l, g, data.groups);
+    const mine = key && l.id in keyMap ? keyMap[l.id] : undefined;
+    const st = mine === undefined ? base : { on: mine, from: 'This key', own: mine };
+    const who = key ? key.name : g.name;
+    const inherited = base.from === 'Layer default' ? 'Default' : `via ${base.from}`;
+    const status = key ? (mine !== undefined ? 'This key' : inherited) : base.own !== null ? 'Own' : inherited;
     return (
       <div
         key={l.id}
@@ -103,16 +113,20 @@ export function LayersPanel({ data }: { data: Data }) {
           setDrag(null);
         }}
         onClick={() => nav.go(pathFor('guard', l.id))}
-        title={`${LAYER_TYPES[l.type]} · ${st.on ? 'on' : 'off'} for ${g.name} (from ${st.from})`}
+        title={`${LAYER_TYPES[l.type]} · ${st.on ? 'on' : 'off'} for ${who} (${status})`}
       >
         <span className="cx-layer-n">{i + 1}</span>
         <span className={`cx-ico ${st.on ? 'on' : ''}`}>
           <Ico n={TYPE_ICON[l.type]} size={14} />
         </span>
         <span className="cx-label">{l.name}</span>
-        <span className="cx-meta">{l.scope === 'flagged' ? 'if flagged' : ''}</span>
+        <span className={`cx-meta ${status === 'Own' || status === 'This key' ? 'own' : ''}`}>{status}</span>
         <span onClick={(e) => e.stopPropagation()}>
-          <Switch on={st.on} label={`${l.name} for ${g.name}`} onChange={(v) => void toggle(g, l, v === l.enabled && g.parentId === null ? 'inherit' : v ? 'on' : 'off')} />
+          <Switch
+            on={st.on}
+            label={`${l.name} for ${who}`}
+            onChange={(v) => void (key ? act.setKeyLayer(key, l.id, v === base.on ? null : v) : toggle(g, l, v === l.enabled && g.parentId === null ? 'inherit' : v ? 'on' : 'off'))}
+          />
         </span>
       </div>
     );
@@ -120,9 +134,11 @@ export function LayersPanel({ data }: { data: Data }) {
   return (
     <div className="cx-details">
       <div className="cx-details-title static">
-        <Ico n="guard" /> Layers for {g.name}
+        <Ico n={key ? 'key' : 'guard'} /> Layers for {key ? key.name : g.name}
       </div>
-      <p className="cx-details-sub">Drag to reorder. Switches turn a layer on or off for {g.name} and its sub-groups.</p>
+      <p className="cx-details-sub">
+        {key ? `Switches turn a layer on or off for this key only; the rest follows ${g.name}.` : `Drag to reorder. Switches turn a layer on or off for ${g.name} and its sub-groups.`} Click a layer to edit it.
+      </p>
       <div className="cx-li static cx-anchor">
         <Ico n="key" size={14} /> <span className="cx-label">After authentication</span> <Pill>locked</Pill>
       </div>
@@ -168,12 +184,16 @@ export function GuardPage() {
     save: () => quiet(() => api('settings', { method: 'PATCH', body: { guard: pick(g) } })),
   });
   if (!data || !g) return <Loading error={error} />;
-  const group = data.groups.find((x) => x.id === nav.group) ?? data.groups.find((x) => x.parentId === null)!;
+  const scopeKey = data.keys.find((k) => k.id === nav.key) ?? null;
+  const group = data.groups.find((x) => x.id === (scopeKey?.groupId ?? nav.group)) ?? data.groups.find((x) => x.parentId === null)!;
+  const keyLayers = (scopeKey?.exceptions.layers?.value ?? {}) as Record<string, boolean>;
+  const who = scopeKey ? scopeKey.name : group.name;
   const dirty = JSON.stringify({ scan: g.scan, reply: g.reply, unresolvedFlag: g.unresolvedFlag }) !== JSON.stringify({ scan: data.settings.guard.scan, reply: data.settings.guard.reply, unresolvedFlag: data.settings.guard.unresolvedFlag });
   const save = () => ui.run(() => api('settings', { method: 'PATCH', body: { guard: { scan: g.scan, reply: g.reply, unresolvedFlag: g.unresolvedFlag } } }), 'Guard settings saved');
   // One pipeline row: before-the-model layers above "call the model", after-the-model layers below it.
   const step = (l: GuardLayer, i: number) => {
-    const st = layerState(l, group, data.groups);
+    const base = layerState(l, group, data.groups);
+    const st = scopeKey && l.id in keyLayers ? { on: keyLayers[l.id], from: 'this key' } : base;
     return (
       <li key={l.id} className={st.on ? '' : 'off'}>
         <button type="button" className="cx-pipe-step" onClick={() => nav.go(pathFor('guard', l.id))}>
@@ -187,7 +207,7 @@ export function GuardPage() {
           {l.scope === 'flagged' && l.stage !== 'output' && <Pill>if flagged</Pill>}
           {l.type === 'router' ? <Pill tone="info">Picks the model</Pill> : <Pill tone={l.onFail === 'block' ? 'bad' : l.onFail === 'redact' ? 'warn' : 'info'}>{l.onFail === 'retry' ? `Ask the model to fix it (×${l.retries ?? 2})` : ON_FAIL[l.onFail]}</Pill>}
           <Pill tone={st.on ? 'ok' : ''} title={`From ${st.from}`}>
-            {st.on ? 'On' : 'Off'} for {group.name}
+            {st.on ? 'On' : 'Off'} for {who}
           </Pill>
         </button>
       </li>
@@ -196,8 +216,8 @@ export function GuardPage() {
   return (
     <Page
       icon="guard"
-      title={`Guard checks · ${group.name}`}
-      sub="Every request passes these layers in order, after the key is accepted and before context is added and the model is called. Pick a group on the left to see its pipeline."
+      title={`Guard checks · ${who}`}
+      sub="Every request passes these layers in order, after the key is accepted and before context is added and the model is called. Pick a group or key on the left to see its pipeline; switch layers on or off for it in the right panel."
       actions={
         <>
           {dirty && (

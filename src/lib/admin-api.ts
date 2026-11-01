@@ -74,7 +74,7 @@ function exportLogs(url: URL): Response {
   const p = url.searchParams;
   const day = (s: string | null, end = false) => (s ? new Date(`${s}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : undefined);
   const labels = (p.get('labels') ?? '').split(',').filter(Boolean);
-  const rows = queryLogs({ since: day(p.get('from')), until: day(p.get('to'), true), groups: groupScope(url), feedback: labels.length ? labels : undefined, filter: p.get('filter') || undefined, test: testScope(url), limit: 5000 });
+  const rows = queryLogs({ since: day(p.get('from')), until: day(p.get('to'), true), groups: groupScope(url), key: keyScope(url), feedback: labels.length ? labels : undefined, filter: p.get('filter') || undefined, test: testScope(url), limit: 5000 });
   const items = rows.map((r) => {
     const full = getLog(r.id) ?? r;
     return {
@@ -103,6 +103,9 @@ function exportLogs(url: URL): Response {
 
 /** ?test=include|only shows Studio and replay traffic too; by default it is left out. */
 const testScope = (url: URL) => (['include', 'only'].includes(url.searchParams.get('test') ?? '') ? (url.searchParams.get('test') as 'include' | 'only') : 'exclude');
+
+/** ?key=<id>: one key's requests only. */
+const keyScope = (url: URL) => Number(url.searchParams.get('key')) || undefined;
 
 /** ?group=<id> as that group and its sub-groups; the root group (or none) means every log. */
 function groupScope(url: URL): number[] | undefined {
@@ -266,7 +269,9 @@ const routes: Record<string, Handler> = {
           context: r.effective.context,
           own: Array.isArray(g.settings.context?.value) ? (g.settings.context!.value as number[]) : [],
           mode: g.settings.context?.mode ?? null,
+          ctxExclude: g.settings.context?.exclude ?? [],
           docs: r.effective.mcp_docs,
+          docsExclude: g.settings.mcp_docs?.exclude ?? [],
           ownDocs: Array.isArray(g.settings.mcp_docs?.value) ? (g.settings.mcp_docs!.value as number[]) : [],
           docsMode: g.settings.mcp_docs?.mode ?? null,
           keys: keys.filter((k) => k.groupId === g.id).map((k) => k.name),
@@ -412,13 +417,13 @@ const routes: Record<string, Handler> = {
   // ---- activity ----
   'GET overview': ({ url }) => {
     const servers = listServers();
-    return { ...overview(url.searchParams.get('range') ?? '24h', Date.now(), groupScope(url)), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
+    return { ...overview(url.searchParams.get('range') ?? '24h', Date.now(), groupScope(url), keyScope(url)), servers: servers.map((s) => ({ id: s.id, name: s.name, url: s.url, role: s.role, status: s.status, latency_ms: s.latency_ms })) };
   },
   'GET logs': ({ url }) => {
     const p = url.searchParams;
     return {
-      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url), test: testScope(url) }),
-      counts: countByFilter(undefined, groupScope(url), testScope(url)),
+      rows: queryLogs({ filter: p.get('filter') || undefined, q: p.get('q') || undefined, limit: Number(p.get('limit') ?? 200), before: p.get('before') ? Number(p.get('before')) : undefined, groups: groupScope(url), key: keyScope(url), test: testScope(url) }),
+      counts: countByFilter(undefined, groupScope(url), testScope(url), keyScope(url)),
     };
   },
   'GET logs/:id': ({ params }) => {

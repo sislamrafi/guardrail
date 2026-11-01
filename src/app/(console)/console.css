@@ -754,3 +754,8 @@ button.cx-li:hover, .cx-li:hover { background: var(--hover) !important; }
 .cx-mcp-switch { margin: 4px 20px 10px; gap: 8px; }
 .cx-mcp-test { margin: 10px 20px 0; }
 .cx-li.on { background: var(--sel-soft); }
+.cx-meta.own { color: var(--ok); font-weight: 600; }
+.cx-layer-row .cx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-details .cx-li .cx-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-lib { max-height: 50vh; overflow: auto; }
+.cx-attach input.cx-input { flex: 1; min-width: 0; }

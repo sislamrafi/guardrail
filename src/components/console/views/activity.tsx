@@ -86,14 +86,14 @@ export function ActivityList() {
   }, [q]);
   const load = useCallback(async () => {
     try {
-      const r = await api<{ rows: LogEntry[]; counts: Counts }>(`logs?filter=${filter}&q=${encodeURIComponent(query)}&limit=300${nav.group ? `&group=${nav.group}` : ''}${test ? '&test=only' : ''}`);
+      const r = await api<{ rows: LogEntry[]; counts: Counts }>(`logs?filter=${filter}&q=${encodeURIComponent(query)}&limit=300${nav.group ? `&group=${nav.group}` : ''}${nav.key ? `&key=${nav.key}` : ''}${test ? '&test=only' : ''}`);
       setRows(r.rows);
       setCounts(r.counts);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
     }
-  }, [filter, query, nav.group, test]);
+  }, [filter, query, nav.group, nav.key, test]);
   useEffect(() => {
     void load();
     if (!live) return;
@@ -196,6 +196,8 @@ export function ActivityHome() {
   const nav = useNav();
   const g = data?.groups.find((x) => x.id === nav.group);
   const scoped = g && g.parentId !== null ? g : null;
+  const scopeKey = data?.keys.find((k) => k.id === nav.key) ?? null;
+  const kq = scopeKey ? `&key=${scopeKey.id}` : '';
   const today = new Date().toISOString().slice(0, 10);
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const [from, setFrom] = useState(weekAgo);
@@ -206,13 +208,13 @@ export function ActivityHome() {
   const ui = useUi();
   const [counts, setCounts] = useState<Counts | null>(null);
   useEffect(() => {
-    api<{ counts: Counts }>(`logs?limit=1${scoped ? `&group=${scoped.id}` : ''}`).then((r) => setCounts(r.counts), () => setCounts(null));
-  }, [scoped]);
+    api<{ counts: Counts }>(`logs?limit=1${scoped ? `&group=${scoped.id}` : ''}${kq}`).then((r) => setCounts(r.counts), () => setCounts(null));
+  }, [scoped, kq]);
   const download = async () => {
     setBusy(true);
     try {
       const lab = labels === 'all' ? '' : labels === 'both' ? 'mistake,missed_attack' : labels;
-      const res = await fetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}`);
+      const res = await fetch(`/api/admin/logs-export?from=${from}&to=${to}&format=${format}${lab ? `&labels=${lab}` : ''}${scoped ? `&group=${scoped.id}` : ''}${kq}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Export failed (${res.status})`);
       const n = res.headers.get('x-row-count');
       const a = document.createElement('a');
@@ -227,7 +229,11 @@ export function ActivityHome() {
     }
   };
   return (
-    <Page icon="activity" title={scoped ? `Activity · ${scoped.name}` : 'Activity'} sub={`Pick a request in the list on the right to open its session. ${scoped ? `Showing ${scoped.path} and its sub-groups.` : 'Pick a group on the left to narrow the list.'}`}>
+    <Page
+      icon="activity"
+      title={scopeKey ? `Activity · ${scopeKey.name}` : scoped ? `Activity · ${scoped.name}` : 'Activity'}
+      sub={`Pick a request in the list on the right to open its session. ${scopeKey ? `Showing the key ${scopeKey.name} only.` : scoped ? `Showing ${scoped.path} and its sub-groups.` : 'Pick a group or key on the left to narrow the list.'}`}
+    >
       <div className="cx-stats wide">
         <Stat label="All requests" value={fmt(counts?.all)} />
         <Stat label="Clean" value={fmt(counts?.clean)} tone="ok" />

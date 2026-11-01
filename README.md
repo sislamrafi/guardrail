@@ -241,6 +241,18 @@ The console only shows that a key is saved.
 
 ### The console
 
+- **One groups-and-keys explorer** on the left in every section that works on a group or key
+  (Overview, Activity, Groups, API keys, Guard checks, Context files, MCP docs). Pick a group or a
+  key; it stays picked as you move between sections.
+- **The right panel shows what applies to it** in that section:
+  - Context files and MCP docs list each item as **Own**, **This key** or **via <group>**.
+    - Switch an inherited item **off here** for the group (and its sub-groups) or for one key.
+    - Add items from the library, or drag a library item onto a group or key.
+    - **New** and **Upload .md** assign the new item to the picked group or key.
+  - Guard checks has per-group and per-key layer switches.
+  - Activity lists that group's or key's requests.
+- **Click an item to open it in the middle.**
+
 - A VS Code-style layout: an activity bar, a tree for each section, editor tabs, a details panel
   on the right, a status bar and a command palette (`⌘P`).
 - Autosave: forms save 5 seconds after you stop typing.

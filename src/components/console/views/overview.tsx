@@ -33,12 +33,14 @@ export function OverviewPage() {
   const group = data?.groups.find((g) => g.id === nav.group);
   const scoped = group && group.parentId !== null ? group : null;
   const scopedId = scoped?.id ?? null;
+  const scopeKey = data?.keys.find((k) => k.id === nav.key) ?? null;
+  const scopeKeyId = scopeKey?.id ?? null;
   const [d, setD] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     const load = () =>
-      api<Overview>(`overview?range=${range}${scopedId ? `&group=${scopedId}` : ''}`).then(
+      api<Overview>(`overview?range=${range}${scopedId ? `&group=${scopedId}` : ''}${scopeKeyId ? `&key=${scopeKeyId}` : ''}`).then(
         (r) => live && (setD(r), setErr(null)),
         (e) => live && setErr((e as Error).message),
       );
@@ -48,14 +50,14 @@ export function OverviewPage() {
       live = false;
       clearInterval(t);
     };
-  }, [range, scopedId]);
+  }, [range, scopedId, scopeKeyId]);
   const max = Math.max(1, ...(d?.buckets.map((b) => b.total) ?? [1]));
   const maxStage = Math.max(1, ...(d?.stages.map((s) => s.p50) ?? [1]));
   const sum = data?.summary;
   return (
     <Page
       icon="overview"
-      title={scoped ? `Overview · ${scoped.name}` : 'Overview'}
+      title={scopeKey ? `Overview · ${scopeKey.name}` : scoped ? `Overview · ${scoped.name}` : 'Overview'}
       sub={scoped ? `Traffic from keys in ${scoped.path} and its sub-groups. Pick the root group to see everything.` : 'How the gateway is doing: traffic, what the checks caught, and where the time goes.'}
       wide
       actions={<Seg value={range} onChange={setRange} label="Time range" options={RANGES} />}

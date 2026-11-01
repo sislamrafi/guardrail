@@ -40,8 +40,6 @@ const BOTTOM: { view: View; label: string; icon: IconName; title: string }[] = [
   { view: 'studio', label: 'Studio', icon: 'studio', title: 'Studio: send test requests' },
   { view: 'schemas', label: 'Schemas', icon: 'braces', title: 'Schemas' },
 ];
-// Views that start on the root group when you open them from the activity bar.
-const GROUP_VIEWS: View[] = ['overview', 'activity', 'guard'];
 const VIEW_ICON: Record<View, IconName> = { overview: 'overview', activity: 'activity', guard: 'guard', servers: 'servers', groups: 'groups', keys: 'keys', context: 'context', rules: 'filter', docs: 'mcp', schemas: 'braces', studio: 'studio', settings: 'settings' };
 const VIEW_LABEL: Record<View, string> = { overview: 'Overview', activity: 'Activity', guard: 'Guard checks', servers: 'Servers', groups: 'Groups', keys: 'API keys', context: 'Context files', rules: 'Custom rules', docs: 'MCP docs', schemas: 'Schemas', studio: 'Studio', settings: 'Settings' };
 
@@ -158,8 +156,8 @@ function Workbench() {
   const pickView = (v: View) => {
     if (v === nav.view && showLeft && nav.path === pathFor(v)) return setShowLeft(false);
     setShowLeft(true);
-    const root = data?.groups.find((g) => g.parentId === null);
-    nav.go(GROUP_VIEWS.includes(v) && root ? `${pathFor(v)}?group=${root.id}` : pathFor(v));
+    // The picked group or key stays picked across sections.
+    nav.go(pathFor(v));
   };
 
   const sum = data?.summary;

@@ -27,11 +27,15 @@ export interface GroupC {
   /** Files attached to this group itself. */
   own: number[];
   mode: 'set' | 'add' | 'override' | null;
+  /** Inherited context files this group turns off (sub-groups inherit that). */
+  ctxExclude: number[];
   /** Effective MCP doc ids, inherited ones included. */
   docs: number[];
   /** MCP docs assigned to this group itself. */
   ownDocs: number[];
   docsMode: 'set' | 'add' | 'override' | null;
+  /** Inherited MCP docs this group turns off. */
+  docsExclude: number[];
 }
 
 /** A doc served to agents over MCP. */

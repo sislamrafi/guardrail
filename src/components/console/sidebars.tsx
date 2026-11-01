@@ -1,14 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { useActions } from './actions';
 import { Ico, type IconName } from './icons';
-import { fmtTokens } from './kit';
 import { pathFor, subtree, useNav } from './nav';
-import { selectedGroupId } from './paths';
-import { usePref } from './prefs';
-import { api, type MenuItem, useStore, useUi } from './store';
+import { api, useStore, useUi } from './store';
 import { Tree, type TreeNode, useExpanded } from './tree';
 import type { Data, GroupC, KeyC, View } from './types';
 
@@ -54,7 +50,7 @@ export function Sidebar({ width }: { width: number }) {
   else if (view === 'rules') body = <RulesSide data={data} />;
   else if (view === 'studio') body = <StudioSide data={data} />;
   else if (view === 'schemas' || view === 'settings') body = <OutlineSide view={view} />;
-  else body = <GroupsSide data={data} mode={view === 'groups' ? 'groups' : view === 'keys' ? 'keys' : view === 'context' ? 'context' : view === 'docs' ? 'docs' : 'filter'} />;
+  else body = <GroupsSide data={data} />;
   return (
     <aside className="cx-side" style={{ width }} aria-label={`${LABEL[view]} sidebar`}>
       {body}
@@ -62,182 +58,108 @@ export function Sidebar({ width }: { width: number }) {
   );
 }
 
-// ---------------------------------------------------------------- group trees (groups, keys, context, filters)
+// ---------------------------------------------------------------- the groups-and-keys explorer
+//
+// One tree for every section that works on a group or a key (Overview, Activity, Groups, API keys,
+// Guard checks, Context files, MCP docs): groups, and under each group its API keys. Picking one sets
+// the scope (?group= / ?key=) the section's right panel and pages work on; it stays picked across
+// sections. Groups and API keys open their settings page instead.
 
-function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'keys' | 'context' | 'docs' }) {
+function GroupsSide({ data }: { data: Data }) {
   const nav = useNav();
   const act = useActions();
   const ui = useUi();
   const root = data.groups.find((g) => g.parentId === null);
-  const { expanded, toggle, expand, collapseAll } = useExpanded(`groups-${mode}`, root ? [`g:${root.id}`] : []);
+  const { expanded, toggle, expand, collapseAll } = useExpanded('scope', root ? [`g:${root.id}`] : []);
   const [creating, setCreating] = useState<Creating>(null);
-  // Tree by group, or one flat list (Context files and API keys), remembered per explorer.
-  const [flat, setFlat] = usePref(`flat.${mode}`, false);
-  // Context files and MCP docs share one explorer: a library of Markdown items attached to groups.
-  const lib = mode === 'context' || mode === 'docs';
-  const docs = mode === 'docs';
-  const items = docs ? data.docs.map((d) => ({ id: d.id, name: d.title, body: d.body, meta: d.tags[0] ?? '', title: `${d.title} · ${d.slug}${d.description ? ` · ${d.description}` : ''} · ${d.reach} key${d.reach === 1 ? '' : 's'} can read it` })) : data.files.map((f) => ({ id: f.id, name: f.name, body: f.body, meta: fmtTokens(f.tokens), title: `${f.name} · ${f.tokens} tokens` }));
-  const ownOf = (g: GroupC) => (docs ? g.ownDocs : g.own);
-  const allFiles = lib && flat;
-  const allKeys = mode === 'keys' && flat;
   const upload = useRef<HTMLInputElement>(null);
-  // New groups, files and keys go inside the selected group (the one open in Groups, or the open key's).
-  // MCP docs: the key picked in the tree (?key=), whose docs the right panel shows.
-  const params = useSearchParams();
-  const mcpKey = docs && nav.view === 'docs' ? (data.keys.find((k) => k.id === Number(params.get('key'))) ?? null) : null;
-  const selId = mcpKey?.groupId ?? selectedGroupId({ view: nav.view, id: nav.id, group: nav.group }, data.groups, data.keys);
-  const sel = data.groups.find((g) => g.id === selId) ?? null;
+  const view = nav.view;
+  const editorKey = view === 'keys' && nav.id && nav.id !== 'new' ? Number(nav.id) : null;
+  const editorGroup = view === 'groups' && nav.id ? Number(nav.id) : null;
+  // The one selected row: the open group/key page in Groups and API keys, else the picked scope.
+  const selKey = view === 'groups' ? null : view === 'keys' ? editorKey : nav.key;
+  const keyRow = data.keys.find((k) => k.id === selKey) ?? null;
+  const selGroupId = editorGroup ?? keyRow?.groupId ?? (view === 'keys' && nav.id ? null : nav.group) ?? root?.id ?? null;
+  const sel = data.groups.find((g) => g.id === selGroupId) ?? root ?? null;
 
-  // Reveal the open key or file: expand every group above it so its row (the selection) is visible.
-  const openItem = mode === 'keys' && nav.view === 'keys' && nav.id && nav.id !== 'new' ? `k:${nav.id}` : mcpKey ? `k:${mcpKey.id}` : lib && nav.view === mode && nav.id && /^\d+$/.test(nav.id) ? `f:${nav.id}` : null;
+  // Keep the selection visible: open every group above it.
   useEffect(() => {
-    if (!openItem) return;
-    const id = Number(openItem.slice(2));
-    const home = openItem.startsWith('k:') ? [data.keys.find((k) => k.id === id)?.groupId] : data.groups.filter((g) => ownOf(g).includes(id)).map((g) => g.id);
+    if (!sel) return;
     const keys: string[] = [];
-    for (const gid of home) for (let g = data.groups.find((x) => x.id === gid); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
+    for (let g = keyRow ? sel : data.groups.find((x) => x.id === sel.parentId); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
     if (keys.length) expand(keys);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openItem]);
+  }, [sel?.id, keyRow?.id]);
+
+  const showRight = () => window.dispatchEvent(new Event('cx-show-right'));
+  const pickGroup = (g: GroupC) => {
+    if (view === 'groups') return nav.go(`${pathFor('groups', g.id)}?group=${g.id}`);
+    if (view === 'keys') return nav.go(`${pathFor('keys')}?group=${g.id}`);
+    // A section's own item page (a request, a layer) has nothing to do with the scope; its library or a file stays open.
+    nav.setScope({ group: g.id });
+    showRight();
+  };
+  const pickKey = (k: KeyC) => {
+    if (view === 'keys' || view === 'groups') return nav.go(`${pathFor('keys', k.id)}?group=${k.groupId}&key=${k.id}`);
+    nav.setScope({ group: k.groupId, key: k.id });
+    showRight();
+  };
+
   const startCreate = (kind: 'group' | 'file', parent: number | null) => {
     setCreating({ kind, parent });
-    // Open the parent and every folder above it so the name box is visible.
     const keys: string[] = [];
     for (let g = data.groups.find((x) => x.id === parent); g; g = data.groups.find((x) => x.id === g!.parentId)) keys.push(`g:${g.id}`);
     expand(keys);
   };
-  // Group names must be unique among siblings (the server checks too).
   const groupName = (parent: number | null, self?: number) => (name: string) =>
     data.groups.some((x) => x.parentId === parent && x.id !== self && x.name.toLowerCase() === name.toLowerCase()) ? `A group named "${name}" is already here.` : null;
-  const newNode = (kind: 'group' | 'file', parent: number | null): TreeNode => ({
-    key: `new:${kind}`,
+  const newGroupNode = (parent: number | null): TreeNode => ({
+    key: 'new:group',
     label: '',
     text: '',
-    icon: kind === 'group' ? 'folder' : 'file',
-    iconClass: kind === 'group' ? 'folder' : 'md',
+    icon: 'folder',
+    iconClass: 'folder',
     editing: true,
-    validate: kind === 'group' ? groupName(parent) : undefined,
+    validate: groupName(parent),
     onRename: async (name) => {
       setCreating(null);
-      if (kind === 'group') {
-        const g = await act.createGroup(name, parent);
-        if (g && mode === 'groups') nav.go(pathFor('groups', g.id));
-      } else if (docs) await act.createDoc(name, parent);
-      else await act.createFile(name, parent);
+      const g = await act.createGroup(name, parent);
+      if (g && view === 'groups') nav.go(`${pathFor('groups', g.id)}?group=${g.id}`);
+      else if (g) nav.setScope({ group: g.id });
     },
     onCancelEdit: () => setCreating(null),
   });
 
-  const fileNode = (fid: number, g: GroupC | null): TreeNode | null => {
-    const f = items.find((x) => x.id === fid);
-    if (!f) return null;
-    const path = pathFor(docs ? 'docs' : 'context', f.id);
-    const dirty = nav.drafts[path] !== undefined && nav.drafts[path] !== f.body;
-    if (docs) {
-      const d = data.docs.find((x) => x.id === fid)!;
-      return {
-        key: `f:${g?.id ?? 'x'}:${f.id}`,
-        label: (
-          <>
-            {f.name}
-            {dirty && <span className="cx-dot" aria-label="unsaved" />}
-          </>
-        ),
-        text: f.name,
-        icon: 'file',
-        iconClass: 'md',
-        meta: f.meta,
-        title: `${f.title}${g ? ` · shared with ${g.name}` : ''}. Drag onto a group to share it.`,
-        selected: nav.path === path && !mcpKey,
-        onOpen: () => nav.go(path),
-        onRename: (name) => void act.renameDoc(d, name),
-        onDelete: () => void act.deleteDoc(d),
-        drag: `doc:${f.id}:${g?.id ?? ''}`,
-        actions: g ? [{ icon: 'unlink', label: `Stop sharing with ${g.name}`, run: () => void act.unshareDoc(f.id, g.id) }] : [],
-        menu: () => [
-          { label: 'Open', run: () => nav.go(path) },
-          ...(g ? [{ label: `Stop sharing with ${g.name}`, run: () => void act.unshareDoc(f.id, g.id) }] : []),
-          { sep: true, label: '' },
-          { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteDoc(d) },
-        ],
-      };
-    }
-    const file = data.files.find((x) => x.id === fid)!;
-    return {
-      key: `f:${g?.id ?? 'x'}:${f.id}`,
-      label: (
-        <>
-          {f.name}
-          {dirty && <span className="cx-dot" aria-label="unsaved" />}
-        </>
-      ),
-      text: f.name,
-      icon: 'file',
-      iconClass: 'md',
-      meta: fmtTokens(file.tokens),
-      title: `${f.name} · ${file.tokens} tokens${g ? ` · in ${g.name}` : ''}. Drag onto a group to move it.`,
-      selected: nav.path === path,
-      onOpen: () => nav.go(path),
-      onRename: (name) => void act.renameFile(file, name),
-      onDelete: () => void act.deleteFile(file),
-      drag: `file:${f.id}:${g?.id ?? ''}`,
-      actions: g ? [{ icon: 'unlink', label: `Remove from ${g.name}`, run: () => void act.detach(f.id, g.id) }] : [],
-      menu: () => [
-        { label: 'Open', run: () => nav.go(path) },
-        ...(g ? [{ label: `Remove from ${g.name}`, run: () => void act.detach(f.id, g.id) }] : []),
-        { sep: true, label: '' },
-        { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteFile(file) },
-      ],
-    };
-  };
-
-  /** A key in the MCP docs tree: opens its MCP view and shows its docs on the right. */
-  const mcpKeyNode = (k: KeyC): TreeNode => {
-    const path = `${pathFor('docs', `k${k.id}`)}?key=${k.id}`;
-    const off = !k.mcp || k.revoked;
-    return {
-      key: `k:${k.id}`,
-      label: k.name,
-      text: k.name,
-      icon: 'key',
-      iconClass: 'key',
-      meta: k.revoked ? 'revoked' : !k.mcp ? 'MCP off' : `${data.docKeys.find((x) => x.id === k.id)?.docs.length ?? 0} docs`,
-      dim: off,
-      title: `${k.name} · ${k.owner}${!k.mcp ? ' · MCP access off' : ''}. Click to see the docs it can read.`,
-      selected: mcpKey?.id === k.id,
-      onOpen: () => {
-        nav.go(path);
-        window.dispatchEvent(new Event('cx-show-right'));
-      },
-      menu: () => [
-        { label: 'Show its MCP docs', run: () => nav.go(path) },
-        { label: k.mcp ? 'Turn MCP access off' : 'Turn MCP access on', run: () => void act.setKeyMcp(k, !k.mcp) },
-        { label: 'Open key page', run: () => nav.go(pathFor('keys', k.id)) },
-      ],
-    };
-  };
-
-  const keyNode = (k: KeyC, flatList: boolean): TreeNode => {
+  const keyNode = (k: KeyC): TreeNode => {
     const expired = !!k.expiresAt && k.expiresAt < Date.now();
     const state = k.revoked ? 'revoked' : expired ? 'expired' : null;
+    const mcpOff = view === 'docs' && !k.mcp;
     return {
       key: `k:${k.id}`,
       label: k.name,
       text: k.name,
       icon: 'key',
       iconClass: 'key',
-      meta: flatList ? [state, k.owner, data.groups.find((g) => g.id === k.groupId)?.name].filter(Boolean).join(' · ') : (state ?? k.owner),
-      dim: !!state,
+      meta: state ?? (mcpOff ? 'MCP off' : k.owner),
+      dim: !!state || mcpOff,
       title: `${k.name} · ${k.prefix}… · ${k.owner} · ${data.groups.find((g) => g.id === k.groupId)?.path ?? ''}`,
-      selected: nav.path === pathFor('keys', k.id),
-      onOpen: () => nav.go(pathFor('keys', k.id)),
+      selected: selKey === k.id,
+      onOpen: () => pickKey(k),
       onRename: (name) => void act.renameKey(k, name),
       onDelete: () => void act.deleteKey(k),
-      drag: flatList ? undefined : `key:${k.id}`,
+      drag: `key:${k.id}`,
+      // A file or doc dragged from the right panel's library is added to this key.
+      canDrop: (p) => (p.startsWith('file:') && view === 'context') || (p.startsWith('doc:') && view === 'docs'),
+      onDrop: (p) => {
+        const id = Number(p.split(':')[1]);
+        if (p.startsWith('file:')) void act.setKeyFile(k, id, true);
+        else void act.setKeyDoc(k, id, true);
+      },
       menu: () => [
-        { label: 'Open', run: () => nav.go(pathFor('keys', k.id)) },
+        { label: 'Open key settings', run: () => nav.go(`${pathFor('keys', k.id)}?group=${k.groupId}&key=${k.id}`) },
         { label: k.revoked ? 'Restore key' : 'Revoke key', run: () => void act.revokeKey(k) },
-        { label: 'Show activity', run: () => nav.go(pathFor('activity')) },
+        { label: k.mcp ? 'Turn MCP access off' : 'Turn MCP access on', run: () => void act.setKeyMcp(k, !k.mcp) },
+        { label: 'Show its activity', run: () => nav.go(`${pathFor('activity')}?group=${k.groupId}&key=${k.id}`) },
         { sep: true, label: '' },
         { label: 'Delete', hint: 'Del', danger: true, run: () => void act.deleteKey(k) },
       ],
@@ -247,47 +169,20 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
   const groupNode = (g: GroupC): TreeNode => {
     const isRoot = g.parentId === null;
     const kids: TreeNode[] = [];
-    if (creating?.parent === g.id && creating.kind === 'group') kids.push(newNode('group', g.id));
+    if (creating?.parent === g.id && creating.kind === 'group') kids.push(newGroupNode(g.id));
     kids.push(...data.groups.filter((c) => c.parentId === g.id).map(groupNode));
-    if (lib) {
-      if (creating?.parent === g.id && creating.kind === 'file') kids.push(newNode('file', g.id));
-      kids.push(...(ownOf(g).map((fid) => fileNode(fid, g)).filter(Boolean) as TreeNode[]));
-    }
-    if (mode === 'keys') kids.push(...data.keys.filter((k) => k.groupId === g.id).map((k) => keyNode(k, false)));
-    if (docs) kids.push(...data.keys.filter((k) => k.groupId === g.id).map(mcpKeyNode));
-    // One selection per tree: a group is highlighted only while no file or key below it is open.
-    const itemOpen = (lib && nav.view === mode && !!nav.id) || !!mcpKey || (mode === 'keys' && nav.view === 'keys' && !!nav.id && nav.id !== 'new');
-    const selected = mode === 'groups' ? nav.path === pathFor('groups', g.id) : !itemOpen && sel?.id === g.id;
-    const items = (): MenuItem[] => [
-      ...(mode !== 'groups' ? [{ label: 'Open group settings', run: () => nav.go(pathFor('groups', g.id)) }] : []),
-      { label: 'New sub-group', run: () => startCreate('group', g.id) },
-      ...(mode === 'context' ? [{ label: 'New context file here', run: () => startCreate('file', g.id) }] : []),
-      ...(docs ? [{ label: 'New MCP doc here', run: () => startCreate('file', g.id) }] : []),
-      ...(mode === 'keys' || mode === 'groups' ? [{ label: 'New API key here', run: () => nav.go(`/keys/new?group=${g.id}`) }] : []),
-      { label: 'Show activity', run: () => nav.go(`/activity?group=${g.id}`) },
-      { sep: true, label: '' },
-      { label: 'Delete', hint: 'Del', danger: true, disabled: isRoot, run: () => void act.deleteGroup(g) },
-    ];
+    kids.push(...data.keys.filter((k) => k.groupId === g.id).map(keyNode));
     return {
       key: `g:${g.id}`,
       label: g.name,
       text: g.name,
       icon: 'folder',
       iconClass: 'folder',
-      badge: mode === 'keys' ? g.keyCount || null : lib ? ownOf(g).length || null : null,
+      badge: g.keyCount || null,
       title: g.description || g.path,
-      selected,
+      selected: !selKey && sel?.id === g.id && !(view === 'keys' && editorKey === null && nav.id),
       children: kids,
-      onOpen: () => {
-        if (docs && nav.view === 'docs') {
-          // Drop a picked key; keep the open doc (a key's own view goes back to the overview).
-          nav.go(`${nav.id && /^\d+$/.test(nav.id) ? pathFor('docs', nav.id) : pathFor('docs')}?group=${g.id}`);
-          window.dispatchEvent(new Event('cx-show-right'));
-          return;
-        }
-        nav.setGroup(g.id);
-        if (mode === 'groups') nav.go(pathFor('groups', g.id));
-      },
+      onOpen: () => pickGroup(g),
       onRename: (name) => void act.renameGroup(g, name),
       validate: groupName(g.parentId, g.id),
       onDelete: isRoot ? undefined : () => void act.deleteGroup(g),
@@ -295,71 +190,49 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
       canDrop: (p) => {
         const [t, id] = p.split(':');
         if (t === 'group') return !subtree(Number(id), data.groups).has(g.id) && data.groups.find((x) => x.id === Number(id))?.parentId !== g.id;
-        if (t === 'file') return mode === 'context';
-        if (t === 'doc') return docs;
-        if (t === 'key') return mode === 'keys';
+        if (t === 'key') return data.keys.find((k) => k.id === Number(id))?.groupId !== g.id;
+        if (t === 'file') return view === 'context';
+        if (t === 'doc') return view === 'docs';
         return false;
       },
       onDrop: (p) => {
-        const [t, id, from] = p.split(':');
+        const [t, id] = p.split(':');
         if (t === 'group') {
           const moving = data.groups.find((x) => x.id === Number(id));
           if (moving) void act.moveGroup(moving, g.id);
-        } else if (t === 'file') void act.moveFile(Number(id), from ? Number(from) : null, g.id);
-        else if (t === 'doc') void act.moveDoc(Number(id), from ? Number(from) : null, g.id);
-        else if (t === 'key') {
+        } else if (t === 'key') {
           const k = data.keys.find((x) => x.id === Number(id));
           if (k) void act.moveKey(k, g.id);
-        }
+        } else if (t === 'file') void act.attach(Number(id), g.id);
+        else if (t === 'doc') void act.shareDoc(Number(id), g.id);
       },
-      menu: items,
+      menu: () => [
+        { label: 'Open group settings', run: () => nav.go(`${pathFor('groups', g.id)}?group=${g.id}`) },
+        { label: 'New sub-group', run: () => startCreate('group', g.id) },
+        { label: 'New API key here', run: () => nav.go(`/keys/new?group=${g.id}`) },
+        { label: 'Show activity', run: () => nav.go(`${pathFor('activity')}?group=${g.id}`) },
+        { sep: true, label: '' },
+        { label: 'Delete', hint: 'Del', danger: true, disabled: isRoot, run: () => void act.deleteGroup(g) },
+      ],
     };
   };
 
-  const unattached = items.filter((f) => !data.groups.some((g) => ownOf(g).includes(f.id)));
-  const nodes: TreeNode[] = root ? [groupNode(root)] : [];
   const parent = sel?.id ?? root?.id ?? null;
-
   const actions: { icon: IconName; label: string; run: () => void }[] = [];
-  if (mode === 'context') {
-    actions.push({ icon: 'newFile', label: 'New context file in the selected group', run: () => startCreate('file', allFiles ? null : parent) });
-    actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
+  if (view === 'context') {
+    actions.push({ icon: 'newFile', label: `New context file for ${keyRow ? keyRow.name : (sel?.name ?? 'this group')}`, run: () => void act.createFile('new-file', parent, keyRow) });
     actions.push({ icon: 'upload', label: 'Upload .md files', run: () => upload.current?.click() });
-    actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show files by group' : 'Show all files', run: () => setFlat(!flat) });
   }
-  if (docs) {
-    actions.push({ icon: 'newFile', label: 'New MCP doc in the selected group', run: () => startCreate('file', allFiles ? null : parent) });
-    actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
+  if (view === 'docs') {
+    actions.push({ icon: 'newFile', label: `New MCP doc for ${keyRow ? keyRow.name : (sel?.name ?? 'this group')}`, run: () => void act.createDoc('New doc', keyRow ? null : parent, undefined, keyRow) });
     actions.push({ icon: 'upload', label: 'Upload .md files as MCP docs', run: () => upload.current?.click() });
-    actions.push({ icon: allFiles ? 'tree' : 'list', label: allFiles ? 'Show docs by group' : 'Show all docs', run: () => setFlat(!flat) });
   }
-  if (mode === 'groups') actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
-  if (mode === 'keys') {
-    actions.push({ icon: 'plus', label: 'New API key in the selected group', run: () => nav.go(`/keys/new${parent ? `?group=${parent}` : ''}`) });
-    actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
-    actions.push({ icon: allKeys ? 'tree' : 'list', label: allKeys ? 'Show keys by group' : 'Show all keys', run: () => setFlat(!flat) });
-  }
+  actions.push({ icon: 'plus', label: 'New API key in the selected group', run: () => nav.go(`/keys/new${parent ? `?group=${parent}` : ''}`) });
+  actions.push({ icon: 'newFolder', label: 'New group inside the selected group', run: () => startCreate('group', parent) });
   actions.push({ icon: 'refresh', label: 'Refresh', run: () => void act.reload().then(() => ui.toast('Refreshed')) });
   actions.push({ icon: 'collapse', label: 'Collapse all', run: collapseAll });
 
   const uploadFiles = async (list: FileList) => {
-    const target = data.groups.find((g) => g.id === parent);
-    if (docs) {
-      await ui.run(async () => {
-        for (const f of Array.from(list)) {
-          if (!/\.(md|markdown|txt)$/i.test(f.name)) {
-            ui.toast(`${f.name} is not a Markdown file, skipped`, true);
-            continue;
-          }
-          const body = await f.text();
-          const title = f.name.replace(/\.(md|markdown|txt)$/i, '');
-          const existing = data.docs.find((x) => x.title === title);
-          if (existing) await api(`docs/${existing.id}`, { method: 'PATCH', body: { body } });
-          else await act.createDoc(title, allFiles ? null : (target?.id ?? null), body);
-        }
-      }, `Uploaded${target && !allFiles ? ` and shared with ${target.name}` : ''}`);
-      return;
-    }
     await ui.run(async () => {
       for (const f of Array.from(list)) {
         if (!/\.(md|markdown|txt)$/i.test(f.name)) {
@@ -367,71 +240,33 @@ function GroupsSide({ data, mode }: { data: Data; mode: 'filter' | 'groups' | 'k
           continue;
         }
         const body = await f.text();
-        const existing = data.files.find((x) => x.name === f.name);
-        if (existing) await api(`context/${existing.id}`, { method: 'PATCH', body: { body } });
-        else {
-          const made = await api<{ id: number }>('context', { body: { name: f.name, body } });
-          if (target) {
-            const own = [...target.own, made.id];
-            target.own = own;
-            await api(`groups/${target.id}/settings`, { method: 'PUT', body: { key: 'context', setting: { mode: target.mode ?? (target.parentId === null ? 'set' : 'add'), value: own } } });
-          }
+        if (view === 'docs') {
+          const title = f.name.replace(/\.(md|markdown|txt)$/i, '');
+          const existing = data.docs.find((x) => x.title === title);
+          if (existing) await api(`docs/${existing.id}`, { method: 'PATCH', body: { body } });
+          else await act.createDoc(title, keyRow ? null : parent, body, keyRow);
+        } else {
+          const existing = data.files.find((x) => x.name === f.name);
+          if (existing) await api(`context/${existing.id}`, { method: 'PATCH', body: { body } });
+          else await act.createFile(f.name, parent, keyRow, body);
         }
       }
-    }, `Uploaded${target ? ` into ${target.name}` : ''}`);
+    }, `Uploaded for ${keyRow ? keyRow.name : (sel?.name ?? 'the group')}`);
   };
 
-  const title = mode === 'filter' ? LABEL[nav.view] : mode === 'context' ? 'Context files' : docs ? 'MCP docs' : mode === 'keys' ? 'API keys' : 'Groups';
   return (
     <>
-      <Header title={title} actions={actions} />
+      <Header title="Groups & keys" actions={actions} />
       <input ref={upload} type="file" accept=".md,.markdown,.txt" multiple hidden onChange={(e) => e.target.files && void uploadFiles(e.target.files).then(() => (e.target.value = ''))} />
       <div className="cx-side-body">
-        {allKeys ? (
-          <>
-            <div className="cx-section">ALL KEYS · {data.keys.length}</div>
-            <Tree label="All API keys" nodes={[...data.keys].sort((a, b) => a.name.localeCompare(b.name)).map((k) => keyNode(k, true))} expanded={expanded} onToggle={toggle} empty={<span>No API keys yet.</span>} />
-          </>
-        ) : lib && allFiles ? (
-          <>
-            <div className="cx-section">
-              {docs ? 'ALL DOCS' : 'ALL FILES'} · {items.length}
-            </div>
-            <Tree
-              label={docs ? 'All MCP docs' : 'All context files'}
-              nodes={[...(creating?.kind === 'file' ? [newNode('file', null)] : []), ...(items.map((f) => fileNode(f.id, null)).filter(Boolean) as TreeNode[])]}
-              expanded={expanded}
-              onToggle={toggle}
-              empty={<span>{docs ? 'No MCP docs yet.' : 'No context files yet.'}</span>}
-            />
-          </>
-        ) : (
-          <>
-            <div className="cx-section">
-              GROUPS {mode === 'keys' && <span className="cx-badge">{data.keys.length}</span>}
-              {mode === 'filter' && <span className="cx-section-hint">pick one to narrow the view</span>}
-            </div>
-            <Tree label="Groups" nodes={nodes} expanded={expanded} onToggle={toggle} />
-            {lib && (
-              <>
-                <div className="cx-section gap">
-                  {docs ? 'NOT SHARED WITH A GROUP' : 'NOT IN ANY GROUP'} <span className="cx-badge">{unattached.length}</span>
-                </div>
-                <Tree
-                  label={docs ? 'Docs not shared with a group' : 'Files not in any group'}
-                  nodes={[...(creating?.kind === 'file' && creating.parent === null ? [newNode('file', null)] : []), ...(unattached.map((f) => fileNode(f.id, null)).filter(Boolean) as TreeNode[])]}
-                  expanded={expanded}
-                  onToggle={toggle}
-                  empty={<span>{docs ? 'Every doc is shared with a group.' : 'Every file is in a group. Drag a file here from the files list to see it.'}</span>}
-                />
-              </>
-            )}
-          </>
-        )}
+        <div className="cx-section">
+          GROUPS <span className="cx-badge">{data.groups.length}</span> KEYS <span className="cx-badge">{data.keys.length}</span>
+        </div>
+        <Tree label="Groups and API keys" nodes={root ? [groupNode(root)] : []} expanded={expanded} onToggle={toggle} />
       </div>
-      {sel && mode !== 'groups' && (
+      {sel && (
         <div className="cx-side-foot">
-          <Ico n="folder" size={13} /> {sel.path}
+          <Ico n={keyRow ? 'key' : 'folder'} size={13} /> {keyRow ? `${sel.path} › ${keyRow.name}` : sel.path}
         </div>
       )}
     </>

@@ -38,6 +38,11 @@ export type SettingValue = number[] | string[] | number | string | boolean | nul
 export interface StoredSetting {
   mode: Mode;
   value: SettingValue;
+  /**
+   * Context files / MCP docs: ids inherited from above that this group (or key) turns off. Applied after
+   * its own additions; sub-groups inherit the exclusion and can add an id back.
+   */
+  exclude?: number[];
 }
 export type GroupSettings = Partial<Record<SettingKey, StoredSetting>>;
 
@@ -131,6 +136,7 @@ export function resolveLayers(layers: Layer[], defaults: Defaults): Resolution {
       const additive = s.mode === 'add' && def.canAdd;
       row.cells.push({ state: additive ? 'add' : s.mode === 'set' ? 'set' : 'override', value: s.value });
       apply(eff, row.key, s.value, additive, layer.name);
+      if (s.exclude?.length && (row.key === 'context' || row.key === 'mcp_docs')) eff[row.key] = eff[row.key].filter((id) => !s.exclude!.includes(id));
       if (additive) sources[row.key] = sources[row.key][0] === 'Default' ? [layer.name] : [...sources[row.key], layer.name];
       else sources[row.key] = [layer.name];
     }
@@ -297,6 +303,10 @@ export function normalizeSetting(key: SettingKey, s: StoredSetting, isRoot: bool
     else if (!Array.isArray(value)) value = [];
     else if (key === 'models') value = uniq((value as unknown[]).map(String).filter(Boolean));
     else value = uniq((value as unknown[]).map(Number).filter(Number.isFinite));
+    if ((key === 'context' || key === 'mcp_docs') && Array.isArray(s.exclude) && !isRoot) {
+      const exclude = uniq(s.exclude.map(Number).filter(Number.isFinite));
+      if (exclude.length) return { mode, value, exclude };
+    }
   } else if (def.kind === 'number') {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${def.label} must be a positive number.`);

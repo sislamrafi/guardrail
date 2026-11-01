@@ -117,12 +117,23 @@ export function KeysHome() {
 
 // ---------------------------------------------------------------- shared form pieces
 
+/** Same settings, whatever the key order. */
+const canon = (e: GroupSettings) => JSON.stringify(Object.fromEntries(Object.entries(e).sort(([a], [b]) => a.localeCompare(b))));
+
 function useExceptions(init: GroupSettings = {}) {
   const [ctx, setCtx] = useState<number[]>((init.context?.value as number[]) ?? []);
   const [models, setModels] = useState<string[]>((init.models?.value as string[]) ?? []);
   const [rate, setRate] = useState<string>(init.rate_limit ? String(init.rate_limit.value) : '');
+  // Panels elsewhere (Context, Guard, MCP) also change a key's exceptions: follow the saved values.
+  const sig = JSON.stringify(init);
+  useEffect(() => {
+    setCtx((init.context?.value as number[]) ?? []);
+    setModels((init.models?.value as string[]) ?? []);
+    setRate(init.rate_limit ? String(init.rate_limit.value) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
   const value: GroupSettings = {};
-  if (ctx.length) value.context = { mode: 'add', value: ctx };
+  if (ctx.length || init.context?.mode === 'override') value.context = { mode: init.context?.mode === 'override' ? 'override' : 'add', value: ctx };
   if (models.length) value.models = { mode: 'add', value: models };
   if (rate) value.rate_limit = { mode: 'override', value: Number(rate) };
   return { ctx, setCtx, models, setModels, rate, setRate, value };
@@ -397,9 +408,11 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
   const [expires, setExpires] = useState(toDate(k.expiresAt));
   const [ips, setIps] = useState(k.ipAllow.join(', '));
   const ex = useExceptions(k.exceptions);
-  // MCP docs shared with this key are edited on the doc (and saved at once), so keep the current ones.
-  const exAll = { ...ex.value, ...(k.exceptions.mcp_docs ? { mcp_docs: k.exceptions.mcp_docs } : {}) };
-  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(exAll) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
+  // Layer switches and MCP docs for this key are edited in their own panels (and saved at once): keep them.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { context: _c, models: _m, rate_limit: _r, ...kept } = k.exceptions;
+  const exAll = { ...kept, ...ex.value };
+  const dirty = name !== k.name || owner !== k.owner || groupId !== k.groupId || expires !== toDate(k.expiresAt) || canon(exAll) !== canon(k.exceptions) || ips !== k.ipAllow.join(', ');
   const save = () => ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner, groupId, exceptions: exAll, expiresAt: fromDate(expires), ipAllow: ips } }), `${name} saved`);
   // Name and owner save themselves. Group, expiry, IPs and exceptions change what the key can do: Save.
   const quiet = useQuietSave();
@@ -409,7 +422,7 @@ function KeyForm({ k, data }: { k: KeyC; data: Data }) {
     invalid: !name.trim() ? 'Give the key a name.' : !owner.trim() ? 'Say who uses this key.' : null,
     save: () => quiet(() => api(`keys/${k.id}`, { method: 'PATCH', body: { name, owner } })),
   });
-  const accessDirty = groupId !== k.groupId || expires !== toDate(k.expiresAt) || JSON.stringify(exAll) !== JSON.stringify(k.exceptions) || ips !== k.ipAllow.join(', ');
+  const accessDirty = groupId !== k.groupId || expires !== toDate(k.expiresAt) || canon(exAll) !== canon(k.exceptions) || ips !== k.ipAllow.join(', ');
   return (
     <Page
       icon="key"

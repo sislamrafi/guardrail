@@ -12,10 +12,15 @@ interface Nav {
   path: string;
   view: View;
   id: string | null;
+  /** The group picked in the groups-and-keys explorer (?group=). */
   group: number | null;
+  /** The API key picked in the explorer (?key=), if any; its group is then `group`. */
+  key: number | null;
   tabs: string[];
   go: (path: string, opts?: { replace?: boolean }) => void;
   setGroup: (id: number | null) => void;
+  /** Pick a group, or a key (with its group), keeping the open page. */
+  setScope: (s: { group: number | null; key?: number | null }) => void;
   closeTab: (path: string) => void;
   closeOthers: (path: string) => void;
   /** Unsaved editor text, keyed by tab path. */
@@ -33,7 +38,13 @@ export function NavProvider({ children }: { children: ReactNode }) {
   // One canonical path per editor (so "/overview" and "/" are the same tab).
   const pathname = pathFor(parsePath(raw).view, parsePath(raw).id);
   const params = useSearchParams();
-  const group = params.get('group') ? Number(params.get('group')) : null;
+  // The scope (group or key) lives in the URL; a page opened without one reuses the last one picked.
+  const urlKey = params.get('key') ? Number(params.get('key')) : null;
+  const urlGroup = params.get('group') ? Number(params.get('group')) : null;
+  const remembered = readPref<{ group: number | null; key: number | null }>('scope', { group: null, key: null });
+  const hasScope = urlKey !== null || urlGroup !== null;
+  const key = hasScope ? urlKey : remembered.key;
+  const group = hasScope ? urlGroup : remembered.group;
   const { view, id } = parsePath(pathname);
   const [tabs, setTabs] = useState<string[]>(() => {
     try {
@@ -54,8 +65,12 @@ export function NavProvider({ children }: { children: ReactNode }) {
     writePref(TABS_KEY, tabs);
   }, [tabs]);
 
+  useEffect(() => {
+    if (hasScope) writePref('scope', { group: urlGroup, key: urlKey });
+  }, [hasScope, urlGroup, urlKey]);
+  const scopeQuery = useCallback((g: number | null, k: number | null) => [g ? `group=${g}` : '', k ? `key=${k}` : ''].filter(Boolean).join('&'), []);
   // A path that brings its own query (e.g. "/keys/new?group=3") keeps it.
-  const withGroup = useCallback((p: string, g: number | null) => (g && !p.includes('?') ? `${p}?group=${g}` : p), []);
+  const withGroup = useCallback((p: string, g: number | null, k: number | null = key) => (p.includes('?') || (!g && !k) ? p : `${p}?${scopeQuery(g, k)}`), [key, scopeQuery]);
   const go = useCallback(
     (p: string, opts?: { replace?: boolean }) => {
       if (!opts?.replace) return router.push(withGroup(p, group));
@@ -66,7 +81,8 @@ export function NavProvider({ children }: { children: ReactNode }) {
     },
     [router, group, withGroup, pathname],
   );
-  const setGroup = useCallback((g: number | null) => router.replace(withGroup(pathname, g)), [router, pathname, withGroup]);
+  const setGroup = useCallback((g: number | null) => router.replace(withGroup(pathname, g, null)), [router, pathname, withGroup]);
+  const setScope = useCallback((s: { group: number | null; key?: number | null }) => router.replace(withGroup(pathname, s.group, s.key ?? null)), [router, pathname, withGroup]);
 
   const closeTab = useCallback(
     (p: string) => {
@@ -104,8 +120,8 @@ export function NavProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ path: pathname, view, id, group, tabs, go, setGroup, closeTab, closeOthers, drafts, setDraft }),
-    [pathname, view, id, group, tabs, go, setGroup, closeTab, closeOthers, drafts, setDraft],
+    () => ({ path: pathname, view, id, group, key, tabs, go, setGroup, setScope, closeTab, closeOthers, drafts, setDraft }),
+    [pathname, view, id, group, key, tabs, go, setGroup, setScope, closeTab, closeOthers, drafts, setDraft],
   );
   return <NavCtx.Provider value={value}>{children}</NavCtx.Provider>;
 }

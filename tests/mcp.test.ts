@@ -175,3 +175,45 @@ describe('MCP docs: access', () => {
     expect(rows.some((r) => r.status_code === 401)).toBe(true);
   });
 });
+
+describe('key-level overrides', () => {
+  it('turns a layer off for one key and changes its context, last in the chain', async () => {
+    const { resolveGroup } = await import('@/lib/groups');
+    const { createFile } = await import('@/lib/context');
+    const root = listGroups()[0];
+    const a = createFile('a.md', 'A').id;
+    const b = createFile('b.md', 'B').id;
+    setGroupSetting(root.id, 'context', { mode: 'set', value: [a, b] });
+    setGroupSetting(root.id, 'layers', { mode: 'set', value: { judge: true } });
+    const k = createKey({ name: 'one-key', owner: 'o', groupId: root.id, exceptions: { layers: { mode: 'override', value: { judge: false } }, context: { mode: 'override', value: [b] } } }).key;
+    const r = resolveGroup(k.groupId, k.exceptions);
+    expect(r.effective.layers.judge).toBe(false);
+    expect(r.effective.context).toEqual([b]);
+    expect(r.sources.layers).toContain('This key');
+    const other = createKey({ name: 'other', owner: 'o', groupId: root.id, exceptions: { context: { mode: 'add', value: [a] } } }).key;
+    expect(resolveGroup(other.groupId, other.exceptions).effective).toMatchObject({ context: [a, b], layers: { judge: true } });
+  });
+});
+
+describe('exclusions', () => {
+  it('turns an inherited file or doc off for a group and its sub-groups, and lets a child add it back', async () => {
+    const { resolveGroup } = await import('@/lib/groups');
+    const { createFile } = await import('@/lib/context');
+    const root = listGroups()[0];
+    const x = createFile('x.md', 'X').id;
+    const y = createFile('y.md', 'Y').id;
+    setGroupSetting(root.id, 'context', { mode: 'set', value: [x, y] });
+    const mid = createGroup({ name: 'Mid', parentId: root.id });
+    const leaf = createGroup({ name: 'Leaf', parentId: mid.id });
+    const back = createGroup({ name: 'Back', parentId: mid.id });
+    setGroupSetting(mid.id, 'context', { mode: 'add', value: [], exclude: [x] });
+    setGroupSetting(back.id, 'context', { mode: 'add', value: [x] });
+    expect(resolveGroup(mid.id).effective.context).toEqual([y]);
+    expect(resolveGroup(leaf.id).effective.context).toEqual([y]);
+    expect(resolveGroup(back.id).effective.context).toEqual([y, x]);
+    // A key can turn one off for itself only, and that reaches MCP too.
+    const k = createKey({ name: 'ex-key', owner: 'o', groupId: root.id, exceptions: { mcp_docs: { mode: 'add', value: [], exclude: [ids.deploy] } } }).key;
+    expect(resolveGroup(k.groupId, k.exceptions).effective.context).toEqual([x, y]);
+    expect(docsForKey(k).map((d) => d.id)).not.toContain(ids.deploy);
+  });
+});

@@ -93,6 +93,11 @@ For each setting, a group stores either nothing (inherit) or one of these modes:
 | `add` | parent's list plus these | — |
 | `override` | replaces the parent's list | replaces the value |
 
+A `context` or `mcp_docs` setting can also carry `exclude: [ids]`: inherited items the group (or key)
+turns off. They are removed after the group's own additions, sub-groups inherit that, and a
+sub-group that adds an id back gets it again. A key's exceptions work the same way, and so do its
+own layer switches (`layers`), which are applied last, as "This key".
+
 `resolveLayers` walks the chain from the root to the leaf, starting from the global defaults, and
 applies the key's exceptions last ("This key"). It returns the effective values, which group
 contributed each one (`sources`), and the matrix the Groups page shows as **Effective**.

@@ -14,11 +14,22 @@ export function useActions() {
   return useMemo(() => {
     const groups = data?.groups ?? [];
     const root = groups.find((g) => g.parentId === null);
-    const contextSetting = (g: GroupC, value: number[]) =>
-      // The root sets the list; a sub-group adds to its parent's unless it already replaces it.
-      value.length || g.parentId === null ? { mode: g.mode ?? (g.parentId === null ? 'set' : 'add'), value } : null;
+    const contextSetting = (g: GroupC, value: number[], exclude = g.ctxExclude) =>
+      // The root sets the list; a sub-group adds to its parent's unless it already replaces it. Exclusions stay.
+      value.length || exclude.length || g.parentId === null ? { mode: g.mode ?? (g.parentId === null ? 'set' : 'add'), value, ...(exclude.length && g.parentId !== null ? { exclude } : {}) } : null;
 
-    const docsSetting = (g: GroupC, value: number[]) => (value.length || g.parentId === null ? { mode: g.docsMode ?? (g.parentId === null ? 'set' : 'add'), value } : null);
+    const docsSetting = (g: GroupC, value: number[], exclude = g.docsExclude) =>
+      value.length || exclude.length || g.parentId === null ? { mode: g.docsMode ?? (g.parentId === null ? 'set' : 'add'), value, ...(exclude.length && g.parentId !== null ? { exclude } : {}) } : null;
+    // A key's own list for a list setting (context files, MCP docs), added on top of its group's.
+    const keyList = (k: KeyC, key: 'context' | 'mcp_docs') => (Array.isArray(k.exceptions[key]?.value) ? (k.exceptions[key]!.value as number[]) : []);
+    const putKeyList = (k: KeyC, key: 'context' | 'mcp_docs', ids: number[]) => {
+      const exceptions = { ...k.exceptions };
+      // A key that replaces its group's list keeps replacing it; its exclusions stay.
+      const exclude = k.exceptions[key]?.exclude ?? [];
+      if (ids.length || exclude.length || k.exceptions[key]?.mode === 'override') exceptions[key] = { mode: k.exceptions[key]?.mode === 'override' ? 'override' : 'add', value: [...new Set(ids)], ...(exclude.length ? { exclude } : {}) };
+      else delete exceptions[key];
+      return api(`keys/${k.id}`, { method: 'PATCH', body: { exceptions } });
+    };
     const putDocs = (g: GroupC, value: number[]) => api(`groups/${g.id}/settings`, { method: 'PUT', body: { key: 'mcp_docs', setting: docsSetting(g, value) } });
 
     return {
@@ -52,16 +63,58 @@ export function useActions() {
       saveSetting: (g: GroupC, key: string, setting: unknown, ok = 'Saved') => ui.run(() => api(`groups/${g.id}/settings`, { method: 'PUT', body: { key, setting } }), ok),
 
       // ---------------- context files
-      createFile: async (name: string, groupId: number | null) => {
-        const n = /\.[a-z]+$/i.test(name) ? name : `${name}.md`;
+      /** New file, given to one key (as its own exception) or else to a group. A free name is picked. */
+      createFile: async (name: string, groupId: number | null, key?: KeyC | null, body?: string) => {
+        let n = /\.[a-z]+$/i.test(name) ? name : `${name}.md`;
+        if (body === undefined) for (let i = 2; data?.files.some((f) => f.name === n); i++) n = `${name.replace(/\.[a-z]+$/i, '')}-${i}.md`;
         let made: FileC | null = null;
         await ui.run(async () => {
-          made = await api<FileC>('context', { body: { name: n, body: `# ${n.replace(/\.[a-z]+$/i, '')}\n\n` } });
+          made = await api<FileC>('context', { body: { name: n, body: body ?? `# ${n.replace(/\.[a-z]+$/i, '')}\n\n` } });
           const g = groups.find((x) => x.id === groupId);
-          if (g && made) await api(`groups/${g.id}/settings`, { method: 'PUT', body: { key: 'context', setting: contextSetting(g, [...g.own, made.id]) } });
+          if (key && made) await putKeyList(key, 'context', [...keyList(key, 'context'), (made as FileC).id]);
+          else if (g && made) await api(`groups/${g.id}/settings`, { method: 'PUT', body: { key: 'context', setting: contextSetting(g, [...g.own, (made as FileC).id]) } });
         }, `${n} created`);
-        if (made) nav.go(pathFor('context', (made as FileC).id));
+        if (made && body === undefined) nav.go(pathFor('context', (made as FileC).id));
         return made as FileC | null;
+      },
+      /** Give one key a context file on top of its group's, or take that back. */
+      setKeyFile: (k: KeyC, fileId: number, on: boolean) => {
+        const cur = keyList(k, 'context');
+        return ui.run(() => putKeyList(k, 'context', on ? [...new Set([...cur, fileId])] : cur.filter((i) => i !== fileId)), on ? `Added for ${k.name}` : `Removed from ${k.name}`);
+      },
+      /** Turn an inherited context file or MCP doc off (or back on) for a group or a key. Sub-groups inherit it. */
+      setOff: (kind: 'context' | 'mcp_docs', id: number, off: boolean, scope: { group?: GroupC; key?: KeyC | null }) => {
+        const name = (kind === 'context' ? data?.files.find((f) => f.id === id)?.name : data?.docs.find((d) => d.id === id)?.title) ?? 'It';
+        const toggle = (cur: number[]) => (off ? [...new Set([...cur, id])] : cur.filter((i) => i !== id));
+        if (scope.key) {
+          const k = scope.key;
+          const cur = k.exceptions[kind];
+          const exclude = toggle(cur?.exclude ?? []);
+          const value = Array.isArray(cur?.value) ? (cur!.value as number[]) : [];
+          const exceptions = { ...k.exceptions };
+          if (value.length || exclude.length || cur?.mode === 'override') exceptions[kind] = { mode: cur?.mode === 'override' ? 'override' : 'add', value, ...(exclude.length ? { exclude } : {}) };
+          else delete exceptions[kind];
+          return ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { exceptions } }), `${name} ${off ? 'off' : 'back on'} for ${k.name}`);
+        }
+        const g = scope.group;
+        if (!g || g.parentId === null) return ui.toast('The root group has nothing inherited to turn off; remove the item instead.', true);
+        const setting = kind === 'context' ? contextSetting(g, g.own, toggle(g.ctxExclude)) : docsSetting(g, g.ownDocs, toggle(g.docsExclude));
+        return ui.run(() => api(`groups/${g.id}/settings`, { method: 'PUT', body: { key: kind, setting } }), `${name} ${off ? 'off' : 'back on'} for ${g.name}`);
+      },
+      /** Replace the context files one key gets (e.g. to leave out an inherited file for that key only). */
+      setKeyFiles: (k: KeyC, ids: number[], ok: string) => {
+        const exceptions = { ...k.exceptions, context: { mode: 'override' as const, value: ids } };
+        return ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { exceptions } }), ok);
+      },
+      /** Turn a guard layer on or off for one key, or back to its group's choice (null). */
+      setKeyLayer: (k: KeyC, layerId: string, on: boolean | null) => {
+        const cur = { ...((k.exceptions.layers?.value as Record<string, boolean> | undefined) ?? {}) };
+        if (on === null) delete cur[layerId];
+        else cur[layerId] = on;
+        const exceptions = { ...k.exceptions };
+        if (Object.keys(cur).length) exceptions.layers = { mode: 'override', value: cur };
+        else delete exceptions.layers;
+        return ui.run(() => api(`keys/${k.id}`, { method: 'PATCH', body: { exceptions } }), on === null ? `${k.name} follows its group again` : `${on ? 'On' : 'Off'} for ${k.name}`);
       },
       renameFile: (f: FileC, name: string) => {
         patch((d) => ({ ...d, files: d.files.map((x) => (x.id === f.id ? { ...x, name } : x)) }));
@@ -99,13 +152,14 @@ export function useActions() {
       },
 
       // ---------------- MCP docs
-      createDoc: async (title: string, groupId: number | null, body?: string) => {
+      createDoc: async (title: string, groupId: number | null, body?: string, key?: KeyC | null) => {
         let made: DocC | null = null;
         const t = title.replace(/\.(md|markdown|txt)$/i, '');
         await ui.run(async () => {
           made = await api<DocC>('docs', { body: { title: t, body: body ?? `# ${t}\n\n` } });
           const g = groups.find((x) => x.id === groupId);
-          if (g && made) await putDocs(g, [...g.ownDocs, (made as DocC).id]);
+          if (key && made) await putKeyList(key, 'mcp_docs', [...keyList(key, 'mcp_docs'), (made as DocC).id]);
+          else if (g && made) await putDocs(g, [...g.ownDocs, (made as DocC).id]);
         }, `${t} created`);
         if (made && body === undefined) nav.go(pathFor('docs', (made as DocC).id));
         return made as DocC | null;
